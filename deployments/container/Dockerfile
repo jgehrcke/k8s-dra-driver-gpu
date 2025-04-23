@@ -14,7 +14,7 @@
 
 ARG GOLANG_VERSION=1.23.8
 # We use an ubuntu20.04 base image to allow for a more efficient multi-arch builds.
-FROM --platform=${BUILDOS}/amd64 nvcr.io/nvidia/cuda:12.8.1-base-ubuntu20.04 AS build
+FROM  nvcr.io/nvidia/cuda:12.8.1-base-ubuntu20.04 AS build
 
 RUN apt-get update && \
     apt-get install -y wget make git gcc-aarch64-linux-gnu gcc \
@@ -22,7 +22,17 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 ARG GOLANG_VERSION=x.x.x
-RUN wget -nv -O - https://storage.googleapis.com/golang/go${GOLANG_VERSION}.linux-amd64.tar.gz \
+
+RUN set -eux; \
+    \
+    arch="$(uname -m)"; \
+    case "${arch##*-}" in \
+        x86_64 | amd64) ARCH='amd64' ;; \
+        ppc64el | ppc64le) ARCH='ppc64le' ;; \
+        aarch64) ARCH='arm64' ;; \
+        *) echo "unsupported architecture" ; exit 1 ;; \
+    esac; \
+    wget -nv -O - https://storage.googleapis.com/golang/go${GOLANG_VERSION}.linux-${ARCH}.tar.gz \
     | tar -C /usr/local -xz
 
 ENV GOPATH /go
@@ -59,8 +69,8 @@ LABEL com.nvidia.git-commit="${GIT_COMMIT}"
 LABEL release="N/A"
 LABEL summary="NVIDIA DRA Driver for GPUs"
 LABEL description="NVIDIA DRA Driver for GPUs"
-LABEL org.opencontainers.image.description "NVIDIA DRA Driver for GPUs"
-LABEL org.opencontainers.image.source "https://github.com/NVIDIA/k8s-dra-driver-gpu"
+LABEL org.opencontainers.image.description="NVIDIA DRA Driver for GPUs"
+LABEL org.opencontainers.image.source="https://github.com/NVIDIA/k8s-dra-driver-gpu"
 
 RUN mkdir /licenses && mv /NGC-DL-CONTAINER-LICENSE /licenses/NGC-DL-CONTAINER-LICENSE
 
