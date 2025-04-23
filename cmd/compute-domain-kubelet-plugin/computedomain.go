@@ -325,7 +325,7 @@ func (m *ComputeDomainManager) GetNodeIPs(ctx context.Context, cdUID string) ([]
 	}
 
 	if cd.Status.Nodes == nil {
-		return nil, fmt.Errorf("error getting status of nodes in ComputeDomain: %w", err)
+		return nil, fmt.Errorf("no nodes set for ComputeDomain")
 	}
 
 	if len(cd.Status.Nodes) != cd.Spec.NumNodes {
