@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ARG GOLANG_VERSION=1.23.1
+ARG GOLANG_VERSION=1.23.8
 # We use an ubuntu20.04 base image to allow for a more efficient multi-arch builds.
 FROM --platform=${BUILDOS}/amd64 nvcr.io/nvidia/cuda:12.8.0-base-ubuntu20.04 AS build
 
@@ -51,15 +51,15 @@ ENV NVIDIA_DRIVER_CAPABILITIES=utility
 ARG VERSION="N/A"
 ARG GIT_COMMIT="unknown"
 
-LABEL io.k8s.display-name="NVIDIA DRA Driver"
-LABEL name="NVIDIA DRA Driver"
+LABEL io.k8s.display-name="NVIDIA DRA Driver for GPUs"
+LABEL name="NVIDIA DRA Driver for GPUs"
 LABEL vendor="NVIDIA"
 LABEL version=${VERSION}
 LABEL com.nvidia.git-commit="${GIT_COMMIT}"
 LABEL release="N/A"
-LABEL summary="NVIDIA DRA driver for Kubernetes"
-LABEL description="See summary"
-LABEL org.opencontainers.image.description "NVIDIA GPU DRA driver for Kubernetes"
+LABEL summary="NVIDIA DRA Driver for GPUs"
+LABEL description="NVIDIA DRA Driver for GPUs"
+LABEL org.opencontainers.image.description "NVIDIA DRA Driver for GPUs"
 LABEL org.opencontainers.image.source "https://github.com/NVIDIA/k8s-dra-driver-gpu"
 
 RUN mkdir /licenses && mv /NGC-DL-CONTAINER-LICENSE /licenses/NGC-DL-CONTAINER-LICENSE
