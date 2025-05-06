@@ -143,6 +143,7 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 	preparedRawClaims := checkpoint.V1.PreparedRawClaims
 
 	// Has previously been prepared by us.
+	// (Under which circumstances does this get called again?)
 	if preparedClaims[claimUID] != nil {
 		return preparedClaims[claimUID].GetDevices(), nil
 	}
@@ -156,9 +157,9 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 		return nil, fmt.Errorf("unable to create CDI spec file for claim: %w", err)
 	}
 
-	// Add ResourceClaim API object to checkpoint so that upon Unprepare() only
-	// local state is required for cleanup (ResourceClaim object might have been
-	// deleted in the API server).
+	// Add ResourceClaim API object to checkpoint so that for Unprepare() only
+	// local state is required (ResourceClaim object might have been deleted
+	// from the API server).
 	preparedRawClaims[claimUID] = *claim
 	preparedClaims[claimUID] = preparedDevices
 	if err := s.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFile, checkpoint); err != nil {
@@ -185,16 +186,16 @@ func (s *DeviceState) Unprepare(ctx context.Context, claimRef kubeletplugin.Name
 
 	claim, found := preparedRawClaims[claimUID]
 	if !found {
-		// claimRef.String() contains namespace, name, UID.
-		return fmt.Errorf("unprepare failed: claim not found in checkpoint data: %v", claimRef.String())
+		// Not an error: if this claim UID is not in the checkpoint then this
+		// device was never prepared (assume that Prepare+Checkpoint are done
+		// transactionally). Note that claimRef.String() contains namespace,
+		// name, UID.
+		klog.Infof("unprepare noop: claim not found in checkpoint data: %v", claimRef.String())
+		return nil
 	}
 
 	if err := s.unprepareDevices(ctx, &claim); err != nil {
 		return fmt.Errorf("unprepare devices failed: %w", err)
-	}
-
-	if preparedClaims[claimUID] == nil {
-		return nil
 	}
 
 	err := s.cdi.DeleteClaimSpecFile(claimUID)
