@@ -17,12 +17,16 @@
 package main
 
 import (
+	resourceapi "k8s.io/api/resource/v1beta1"
 	drapbv1 "k8s.io/kubelet/pkg/apis/dra/v1beta1"
 )
 
 type PreparedDeviceList []PreparedDevice
 type PreparedDevices []*PreparedDeviceGroup
+
+// key: stringified claim UUID
 type PreparedClaims map[string]PreparedDevices
+type PreparedRawClaims map[string]resourceapi.ResourceClaim
 
 type PreparedDevice struct {
 	Channel *PreparedComputeDomainChannel `json:"channel"`

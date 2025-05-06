@@ -12,14 +12,16 @@ type Checkpoint struct {
 }
 
 type CheckpointV1 struct {
-	PreparedClaims PreparedClaims `json:"preparedClaims,omitempty"`
+	PreparedClaims    PreparedClaims    `json:"preparedClaims,omitempty"`
+	PreparedRawClaims PreparedRawClaims `json:"preparedRawClaims,omitempty"`
 }
 
 func newCheckpoint() *Checkpoint {
 	pc := &Checkpoint{
 		Checksum: 0,
 		V1: &CheckpointV1{
-			PreparedClaims: make(PreparedClaims),
+			PreparedClaims:    make(PreparedClaims),
+			PreparedRawClaims: make(PreparedRawClaims),
 		},
 	}
 	return pc

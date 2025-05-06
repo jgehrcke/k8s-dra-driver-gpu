@@ -24,6 +24,7 @@ import (
 
 	resourceapi "k8s.io/api/resource/v1beta1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/klog/v2"
 	drapbv1 "k8s.io/kubelet/pkg/apis/dra/v1beta1"
 	"k8s.io/kubernetes/pkg/kubelet/checkpointmanager"
@@ -136,10 +137,12 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 
 	checkpoint := newCheckpoint()
 	if err := s.checkpointManager.GetCheckpoint(DriverPluginCheckpointFile, checkpoint); err != nil {
-		return nil, fmt.Errorf("unable to sync from checkpoint: %v", err)
+		return nil, fmt.Errorf("unable to get checkpoint: %w", err)
 	}
 	preparedClaims := checkpoint.V1.PreparedClaims
+	preparedRawClaims := checkpoint.V1.PreparedRawClaims
 
+	// Has previously been prepared by us.
 	if preparedClaims[claimUID] != nil {
 		return preparedClaims[claimUID].GetDevices(), nil
 	}
@@ -153,29 +156,42 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 		return nil, fmt.Errorf("unable to create CDI spec file for claim: %w", err)
 	}
 
+	// Add ResourceClaim API object to checkpoint so that upon Unprepare() only
+	// local state is required for cleanup (ResourceClaim object might have been
+	// deleted in the API server).
+	preparedRawClaims[claimUID] = *claim
 	preparedClaims[claimUID] = preparedDevices
 	if err := s.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFile, checkpoint); err != nil {
-		return nil, fmt.Errorf("unable to sync to checkpoint: %v", err)
+		return nil, fmt.Errorf("unable to create checkpoint: %w", err)
 	}
+	klog.Infof("checkpoint written for claim %v", claimUID)
 
 	return preparedClaims[claimUID].GetDevices(), nil
 }
 
-func (s *DeviceState) Unprepare(ctx context.Context, claim *resourceapi.ResourceClaim) error {
+func (s *DeviceState) Unprepare(ctx context.Context, claimRef kubeletplugin.NamespacedObject) error {
 	s.Lock()
 	defer s.Unlock()
 
-	claimUID := string(claim.UID)
+	claimUID := string(claimRef.UID)
 
-	if err := s.unprepareDevices(ctx, claim); err != nil {
-		return fmt.Errorf("unprepare devices failed: %w", err)
-	}
-
+	// Rely on local checkpoint state for ability to clean up.
 	checkpoint := newCheckpoint()
 	if err := s.checkpointManager.GetCheckpoint(DriverPluginCheckpointFile, checkpoint); err != nil {
-		return fmt.Errorf("unable to sync from checkpoint: %v", err)
+		return fmt.Errorf("unable to get checkpoint: %w", err)
 	}
 	preparedClaims := checkpoint.V1.PreparedClaims
+	preparedRawClaims := checkpoint.V1.PreparedRawClaims
+
+	claim, found := preparedRawClaims[claimUID]
+	if !found {
+		// claimRef.String() contains namespace, name, UID.
+		return fmt.Errorf("unprepare failed: claim not found in checkpoint data: %v", claimRef.String())
+	}
+
+	if err := s.unprepareDevices(ctx, &claim); err != nil {
+		return fmt.Errorf("unprepare devices failed: %w", err)
+	}
 
 	if preparedClaims[claimUID] == nil {
 		return nil
@@ -187,8 +203,10 @@ func (s *DeviceState) Unprepare(ctx context.Context, claim *resourceapi.Resource
 	}
 
 	delete(preparedClaims, claimUID)
+	delete(preparedRawClaims, claimUID)
+
 	if err := s.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFile, checkpoint); err != nil {
-		return fmt.Errorf("unable to sync to checkpoint: %v", err)
+		return fmt.Errorf("create checkpoint failed: %w", err)
 	}
 
 	return nil
