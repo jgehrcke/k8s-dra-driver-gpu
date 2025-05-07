@@ -25,8 +25,8 @@ type PreparedDeviceList []PreparedDevice
 type PreparedDevices []*PreparedDeviceGroup
 
 // key: stringified claim UUID
-type PreparedClaims map[string]PreparedDevices
-type PreparedRawClaims map[string]resourceapi.ResourceClaim
+type PreparedDevicesByClaimUID map[string]PreparedDevices
+type PreparedClaims map[string]resourceapi.ResourceClaim
 
 type PreparedDevice struct {
 	Channel *PreparedComputeDomainChannel `json:"channel"`

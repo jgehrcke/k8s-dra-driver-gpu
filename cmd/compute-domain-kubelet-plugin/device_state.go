@@ -139,13 +139,13 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 	if err := s.checkpointManager.GetCheckpoint(DriverPluginCheckpointFile, checkpoint); err != nil {
 		return nil, fmt.Errorf("unable to get checkpoint: %w", err)
 	}
+	preparedDevicesByClaimUID := checkpoint.V1.PreparedDevicesByClaimUID
 	preparedClaims := checkpoint.V1.PreparedClaims
-	preparedRawClaims := checkpoint.V1.PreparedRawClaims
 
 	// Has previously been prepared by us.
 	// (Under which circumstances does this get called again?)
-	if preparedClaims[claimUID] != nil {
-		return preparedClaims[claimUID].GetDevices(), nil
+	if preparedDevicesByClaimUID[claimUID] != nil {
+		return preparedDevicesByClaimUID[claimUID].GetDevices(), nil
 	}
 
 	preparedDevices, err := s.prepareDevices(ctx, claim)
@@ -160,14 +160,14 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 	// Add ResourceClaim API object to checkpoint so that for Unprepare() only
 	// local state is required (ResourceClaim object might have been deleted
 	// from the API server).
-	preparedRawClaims[claimUID] = *claim
-	preparedClaims[claimUID] = preparedDevices
+	preparedClaims[claimUID] = *claim
+	preparedDevicesByClaimUID[claimUID] = preparedDevices
 	if err := s.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFile, checkpoint); err != nil {
 		return nil, fmt.Errorf("unable to create checkpoint: %w", err)
 	}
 	klog.Infof("checkpoint written for claim %v", claimUID)
 
-	return preparedClaims[claimUID].GetDevices(), nil
+	return preparedDevicesByClaimUID[claimUID].GetDevices(), nil
 }
 
 func (s *DeviceState) Unprepare(ctx context.Context, claimRef kubeletplugin.NamespacedObject) error {
@@ -181,10 +181,10 @@ func (s *DeviceState) Unprepare(ctx context.Context, claimRef kubeletplugin.Name
 	if err := s.checkpointManager.GetCheckpoint(DriverPluginCheckpointFile, checkpoint); err != nil {
 		return fmt.Errorf("unable to get checkpoint: %w", err)
 	}
+	preparedDevicesByClaimUID := checkpoint.V1.PreparedDevicesByClaimUID
 	preparedClaims := checkpoint.V1.PreparedClaims
-	preparedRawClaims := checkpoint.V1.PreparedRawClaims
 
-	claim, found := preparedRawClaims[claimUID]
+	claim, found := preparedClaims[claimUID]
 	if !found {
 		// Not an error: if this claim UID is not in the checkpoint then this
 		// device was never prepared (assume that Prepare+Checkpoint are done
@@ -203,8 +203,8 @@ func (s *DeviceState) Unprepare(ctx context.Context, claimRef kubeletplugin.Name
 		return fmt.Errorf("unable to delete CDI spec file for claim: %w", err)
 	}
 
+	delete(preparedDevicesByClaimUID, claimUID)
 	delete(preparedClaims, claimUID)
-	delete(preparedRawClaims, claimUID)
 
 	if err := s.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFile, checkpoint); err != nil {
 		return fmt.Errorf("create checkpoint failed: %w", err)
