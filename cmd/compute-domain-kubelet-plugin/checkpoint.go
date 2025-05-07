@@ -12,8 +12,8 @@ type Checkpoint struct {
 }
 
 type CheckpointV1 struct {
-	PreparedDevicesByClaimUID PreparedDevicesByClaimUID `json:"preparedClaims,omitempty"`
-	PreparedClaims            PreparedClaims            `json:"preparedRawClaims,omitempty"`
+	PreparedDevicesByClaimUID PreparedDevicesByClaimUID `json:"PreparedDevicesByClaimUID,omitempty"`
+	PreparedClaims            PreparedClaims            `json:"preparedClaims,omitempty"`
 }
 
 func newCheckpoint() *Checkpoint {
