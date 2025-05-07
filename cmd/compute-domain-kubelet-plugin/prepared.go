@@ -18,7 +18,7 @@ package main
 
 import (
 	resourceapi "k8s.io/api/resource/v1beta1"
-	drapbv1 "k8s.io/kubelet/pkg/apis/dra/v1beta1"
+	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 )
 
 type PreparedDeviceList []PreparedDevice
@@ -35,12 +35,12 @@ type PreparedDevice struct {
 
 type PreparedComputeDomainChannel struct {
 	Info   *ComputeDomainChannelInfo `json:"info"`
-	Device *drapbv1.Device           `json:"device"`
+	Device *kubeletplugin.Device     `json:"device"`
 }
 
 type PreparedComputeDomainDaemon struct {
 	Info   *ComputeDomainDaemonInfo `json:"info"`
-	Device *drapbv1.Device          `json:"device"`
+	Device *kubeletplugin.Device    `json:"device"`
 }
 
 type PreparedDeviceGroup struct {
@@ -98,22 +98,22 @@ func (l PreparedDeviceList) ComputeDomainDaemons() PreparedDeviceList {
 	return devices
 }
 
-func (d PreparedDevices) GetDevices() []*drapbv1.Device {
-	var devices []*drapbv1.Device
+func (d PreparedDevices) GetDevices() []kubeletplugin.Device {
+	var devices []kubeletplugin.Device
 	for _, group := range d {
 		devices = append(devices, group.GetDevices()...)
 	}
 	return devices
 }
 
-func (g *PreparedDeviceGroup) GetDevices() []*drapbv1.Device {
-	var devices []*drapbv1.Device
+func (g *PreparedDeviceGroup) GetDevices() []kubeletplugin.Device {
+	var devices []kubeletplugin.Device
 	for _, device := range g.Devices {
 		switch device.Type() {
 		case ComputeDomainChannelType:
-			devices = append(devices, device.Channel.Device)
+			devices = append(devices, *device.Channel.Device)
 		case ComputeDomainDaemonType:
-			devices = append(devices, device.Daemon.Device)
+			devices = append(devices, *device.Daemon.Device)
 		}
 	}
 	return devices

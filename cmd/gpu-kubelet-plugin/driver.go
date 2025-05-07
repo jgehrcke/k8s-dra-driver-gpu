@@ -120,19 +120,8 @@ func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.Res
 		}
 	}
 
-	var prepDevs []kubeletplugin.Device
-	for _, d := range devs {
-		device := kubeletplugin.Device{
-			Requests:     d.RequestNames,
-			PoolName:     d.PoolName,
-			DeviceName:   d.DeviceName,
-			CDIDeviceIDs: d.CDIDeviceIDs,
-		}
-		prepDevs = append(prepDevs, device)
-	}
-
-	klog.Infof("Returning newly prepared devices for claim '%v': %v", claim.UID, prepDevs)
-	return kubeletplugin.PrepareResult{Devices: prepDevs}
+	klog.Infof("Returning newly prepared devices for claim '%v': %v", claim.UID, devs)
+	return kubeletplugin.PrepareResult{Devices: devs}
 }
 
 func (d *driver) nodeUnprepareResource(ctx context.Context, claimNs kubeletplugin.NamespacedObject) error {

@@ -24,8 +24,8 @@ import (
 
 	resourceapi "k8s.io/api/resource/v1beta1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/klog/v2"
-	drapbv1 "k8s.io/kubelet/pkg/apis/dra/v1beta1"
 	"k8s.io/kubernetes/pkg/kubelet/checkpointmanager"
 	cdiapi "tags.cncf.io/container-device-interface/pkg/cdi"
 
@@ -125,7 +125,7 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 	return state, nil
 }
 
-func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceClaim) ([]*drapbv1.Device, error) {
+func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceClaim) ([]kubeletplugin.Device, error) {
 	s.Lock()
 	defer s.Unlock()
 
@@ -301,8 +301,8 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 				cdiDevices = append(cdiDevices, d)
 			}
 
-			device := &drapbv1.Device{
-				RequestNames: []string{result.Request},
+			device := &kubeletplugin.Device{
+				Requests:     []string{result.Request},
 				PoolName:     result.Pool,
 				DeviceName:   result.Device,
 				CDIDeviceIDs: cdiDevices,

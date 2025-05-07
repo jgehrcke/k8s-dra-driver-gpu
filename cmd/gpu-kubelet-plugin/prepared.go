@@ -19,7 +19,7 @@ package main
 import (
 	"slices"
 
-	drapbv1 "k8s.io/kubelet/pkg/apis/dra/v1beta1"
+	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 )
 
 type PreparedDeviceList []PreparedDevice
@@ -32,13 +32,13 @@ type PreparedDevice struct {
 }
 
 type PreparedGpu struct {
-	Info   *GpuInfo        `json:"info"`
-	Device *drapbv1.Device `json:"device"`
+	Info   *GpuInfo              `json:"info"`
+	Device *kubeletplugin.Device `json:"device"`
 }
 
 type PreparedMigDevice struct {
-	Info   *MigDeviceInfo  `json:"info"`
-	Device *drapbv1.Device `json:"device"`
+	Info   *MigDeviceInfo        `json:"info"`
+	Device *kubeletplugin.Device `json:"device"`
 }
 
 type PreparedDeviceGroup struct {
@@ -96,22 +96,22 @@ func (l PreparedDeviceList) MigDevices() PreparedDeviceList {
 	return devices
 }
 
-func (d PreparedDevices) GetDevices() []*drapbv1.Device {
-	var devices []*drapbv1.Device
+func (d PreparedDevices) GetDevices() []kubeletplugin.Device {
+	var devices []kubeletplugin.Device
 	for _, group := range d {
 		devices = append(devices, group.GetDevices()...)
 	}
 	return devices
 }
 
-func (g *PreparedDeviceGroup) GetDevices() []*drapbv1.Device {
-	var devices []*drapbv1.Device
+func (g *PreparedDeviceGroup) GetDevices() []kubeletplugin.Device {
+	var devices []kubeletplugin.Device
 	for _, device := range g.Devices {
 		switch device.Type() {
 		case GpuDeviceType:
-			devices = append(devices, device.Gpu.Device)
+			devices = append(devices, *device.Gpu.Device)
 		case MigDeviceType:
-			devices = append(devices, device.Mig.Device)
+			devices = append(devices, *device.Mig.Device)
 		}
 	}
 	return devices
