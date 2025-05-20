@@ -381,6 +381,7 @@ func (m *ComputeDomainManager) AddNodeLabel(ctx context.Context, cdUID string) e
 	if _, err = m.config.clientsets.Core.CoreV1().Nodes().Update(ctx, newNode, metav1.UpdateOptions{}); err != nil {
 		return fmt.Errorf("error updating Node with label: %w", err)
 	}
+	klog.V(6).Infof("Added node label on %s for CD %s", m.config.flags.nodeName, cdUID)
 
 	return nil
 }

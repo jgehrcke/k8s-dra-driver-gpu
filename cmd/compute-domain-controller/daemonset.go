@@ -335,6 +335,8 @@ func (m *DaemonSetManager) onAddOrUpdate(ctx context.Context, obj any) error {
 		return fmt.Errorf("error updating nodes in ComputeDomain status: %w", err)
 	}
 
+	klog.V(6).Infof("ComputeDomain marked as Ready: %s/%s-%s", cd.Namespace, cd.Name, cd.UID)
+
 	return nil
 }
 

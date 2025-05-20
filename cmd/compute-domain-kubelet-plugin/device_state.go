@@ -356,6 +356,7 @@ func (s *DeviceState) applyComputeDomainChannelConfig(ctx context.Context, confi
 		if err := s.computeDomainManager.AddNodeLabel(ctx, config.DomainID); err != nil {
 			return nil, fmt.Errorf("error adding Node label for ComputeDomain: %w", err)
 		}
+
 		if err := s.computeDomainManager.AssertComputeDomainReady(ctx, config.DomainID); err != nil {
 			return nil, fmt.Errorf("error asserting ComputeDomain Ready: %w", err)
 		}
