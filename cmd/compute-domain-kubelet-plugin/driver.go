@@ -54,31 +54,48 @@ type driver struct {
 	state        *DeviceState
 }
 
-// Use this function to protect the work in nodePrepareResource() and
+// Use this to protect the work in nodePrepareResource() and
 // nodeUnprepareResource() under a lock. A file-based lock was chosen because
-// more than one driver pod may be running on a single node, but at most one
-// such function must execute at any given time.
+// more than one driver pod may be running on a node, but at most one such
+// function must execute at any given time.
 func acquirePrepUnprepLock() (func(), error) {
+	path := DriverPluginPath + "/pu.lock"
+
 	// The descripter does not need to be maintained across calls: flock(2)
 	// documents that when using more than one descriptor for the same file
 	// (path), they still represent the same lock.
-	f, err := os.OpenFile(DriverPluginPath+"/pu.lock", os.O_RDWR|os.O_CREATE, 0666)
-	if err != nil {
-		return nil, err
+	f, oerr := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0666)
+	if oerr != nil {
+		return nil, fmt.Errorf("error opening lock file (%s): %w", path, oerr)
 	}
 
-	// Block until exclusive lock is acquired.
-	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		f.Close()
-		return nil, err
-	}
+	done := make(chan error, 1)
+	go func() {
+		// Block until exclusive lock is acquired.
+		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
+		done <- err
+	}()
 
-	// Return release function. An exclusive flock() lock gets released when its
-	// file descriptor gets closed (also true when the lock-holding process
-	// crashes).
-	return func() {
+	select {
+	case <-time.After(time.Second * 10):
+		// Cautious close (can there be a race where we acquire the lock _and_
+		// the timeout criterion is hit?). In any case, this would close the
+		// fd underneath the (still running) Flock system call, and hence
+		// force it into a "bad file descriptor" error?
 		f.Close()
-	}, nil
+		return nil, fmt.Errorf("timeout acquiring lock (%s)", path)
+	case flerr := <-done:
+		if flerr != nil {
+			f.Close()
+			return nil, fmt.Errorf("error acquiring lock (%s): %w", path, flerr)
+		}
+		// Return release function. An exclusive flock() lock gets released when
+		// its file descriptor gets closed (also true when the lock-holding
+		// process crashes).
+		return func() {
+			f.Close()
+		}, nil
+	}
 }
 
 func NewDriver(ctx context.Context, config *Config) (*driver, error) {
