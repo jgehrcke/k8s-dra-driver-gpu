@@ -54,14 +54,13 @@ type driver struct {
 	state        *DeviceState
 }
 
-// Use this to protect the work in nodePrepareResource() and
-// nodeUnprepareResource() under a lock. This is based on a file-based lock
-// because more than one driver pod may be running on a node, but at most one
-// such function must execute at any given time.
+// Protect the work in nodePrepareResource() and nodeUnprepareResource() under a
+// lock. Use a file-based lock because more than one driver pod may be running
+// on a node, but at most one such function must execute at any given time.
 func acquirePrepUnprepLock() (func(), error) {
 	path := DriverPluginPath + "/pu.lock"
 
-	// The descripter does not need to be maintained across calls: flock(2)
+	// The descriptor does not need to be maintained across calls: flock(2)
 	// documents that when using more than one descriptor for the same file
 	// (path), they still represent the same lock.
 	f, oerr := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0666)
@@ -80,8 +79,8 @@ func acquirePrepUnprepLock() (func(), error) {
 	case <-time.After(time.Second * 10):
 		// Cautious close (can there be a race where we acquire the lock _and_
 		// the timeout criterion is hit?). In any case, this would close the fd
-		// underneath the (still running) Flock system call, and hence force it
-		// into a "bad file descriptor" error?
+		// underneath the (still running) flock() system call (and hence force
+		// it into a "bad file descriptor" error).
 		f.Close()
 		return nil, fmt.Errorf("timeout acquiring lock (%s)", path)
 	case flerr := <-done:
