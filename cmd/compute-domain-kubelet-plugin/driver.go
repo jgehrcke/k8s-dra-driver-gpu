@@ -55,9 +55,9 @@ type driver struct {
 }
 
 // Use this to protect the work in nodePrepareResource() and
-// nodeUnprepareResource() under a lock. A file-based lock was chosen because
-// more than one driver pod may be running on a node, but at most one such
-// function must execute at any given time.
+// nodeUnprepareResource() under a lock. This is based on a file-based lock
+// because more than one driver pod may be running on a node, but at most one
+// such function must execute at any given time.
 func acquirePrepUnprepLock() (func(), error) {
 	path := DriverPluginPath + "/pu.lock"
 
@@ -79,9 +79,9 @@ func acquirePrepUnprepLock() (func(), error) {
 	select {
 	case <-time.After(time.Second * 10):
 		// Cautious close (can there be a race where we acquire the lock _and_
-		// the timeout criterion is hit?). In any case, this would close the
-		// fd underneath the (still running) Flock system call, and hence
-		// force it into a "bad file descriptor" error?
+		// the timeout criterion is hit?). In any case, this would close the fd
+		// underneath the (still running) Flock system call, and hence force it
+		// into a "bad file descriptor" error?
 		f.Close()
 		return nil, fmt.Errorf("timeout acquiring lock (%s)", path)
 	case flerr := <-done:
@@ -89,9 +89,9 @@ func acquirePrepUnprepLock() (func(), error) {
 			f.Close()
 			return nil, fmt.Errorf("error acquiring lock (%s): %w", path, flerr)
 		}
-		// Return release function. An exclusive flock() lock gets released when
-		// its file descriptor gets closed (also true when the lock-holding
-		// process crashes).
+		// Lock acquired. Return release function. An exclusive flock() lock
+		// gets released when its file descriptor gets closed (also true when
+		// the lock-holding process crashes).
 		return func() {
 			f.Close()
 		}, nil
