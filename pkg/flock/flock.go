@@ -71,7 +71,7 @@ func (l *Flock) Acquire(ctx context.Context, opts ...AcquireOption) (func(), err
 	}
 
 	t0 := time.Now()
-	ticker := time.NewTicker(200 * time.Millisecond)
+	ticker := time.NewTicker(cfg.pollPeriod)
 	defer ticker.Stop()
 
 	// Use non-blocking peek with LOCK_NB flag and polling; trade-off:
