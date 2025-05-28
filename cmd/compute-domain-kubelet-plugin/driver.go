@@ -76,12 +76,17 @@ func acquirePrepUnprepLock() (func(), error) {
 	}()
 
 	select {
-	case <-time.After(time.Second * 10):
+	case <-time.After(time.Second * 5):
 		// Cautious close (can there be a race where we acquire the lock _and_
 		// the timeout criterion is hit?). In any case, this would close the fd
 		// underneath the (still running) flock() system call (and hence force
 		// it into a "bad file descriptor" error).
+		klog.V(6).Infof("close fd under flock")
 		f.Close()
+
+		// Expect flock() to return (fail) after above's close().
+		flerr := <-done
+		klog.V(6).Infof("closed fd under flock: %s", flerr)
 		return nil, fmt.Errorf("timeout acquiring lock (%s)", path)
 	case flerr := <-done:
 		if flerr != nil {
