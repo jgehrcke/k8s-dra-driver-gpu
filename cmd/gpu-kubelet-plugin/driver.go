@@ -19,9 +19,9 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
-	"syscall"
+	"time"
 
+	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/flock"
 	resourceapi "k8s.io/api/resource/v1beta1"
 	"k8s.io/apimachinery/pkg/types"
 	coreclientset "k8s.io/client-go/kubernetes"
@@ -34,33 +34,7 @@ type driver struct {
 	client       coreclientset.Interface
 	pluginhelper *kubeletplugin.Helper
 	state        *DeviceState
-}
-
-// Use this function to protect the work in nodePrepareResource() and
-// nodeUnprepareResource() under a lock. A file-based lock was chosen because
-// more than one driver pod may be running on a single node, but at most one
-// such function must execute at any given time.
-func acquirePrepUnprepLock() (func(), error) {
-	// The descripter does not need to be maintained across calls: flock(2)
-	// documents that when using more than one descriptor for the same file
-	// (path), they still represent the same lock.
-	f, err := os.OpenFile(DriverPluginPath+"/pu.lock", os.O_RDWR|os.O_CREATE, 0666)
-	if err != nil {
-		return nil, err
-	}
-
-	// Block until exclusive lock is acquired.
-	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		f.Close()
-		return nil, err
-	}
-
-	// Return release function. An exclusive flock() lock gets released when its
-	// file descriptor gets closed (also true when the lock-holding process
-	// crashes).
-	return func() {
-		f.Close()
-	}, nil
+	pulock       *flock.Flock
 }
 
 func NewDriver(ctx context.Context, config *Config) (*driver, error) {
@@ -71,6 +45,7 @@ func NewDriver(ctx context.Context, config *Config) (*driver, error) {
 	driver := &driver{
 		client: config.clientsets.Core,
 		state:  state,
+		pulock: flock.NewFlock(DriverPluginPath + "/pu.lock"),
 	}
 
 	helper, err := kubeletplugin.Start(
@@ -137,7 +112,7 @@ func (d *driver) UnprepareResourceClaims(ctx context.Context, claimRefs []kubele
 }
 
 func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
-	release, err := acquirePrepUnprepLock()
+	release, err := d.pulock.Acquire(ctx, 10*time.Second)
 	if err != nil {
 		return kubeletplugin.PrepareResult{
 			Err: fmt.Errorf("error acquiring prep/unprep lock: %w", err),
@@ -158,7 +133,7 @@ func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.Res
 }
 
 func (d *driver) nodeUnprepareResource(ctx context.Context, claimNs kubeletplugin.NamespacedObject) error {
-	release, err := acquirePrepUnprepLock()
+	release, err := d.pulock.Acquire(ctx, 10*time.Second)
 	if err != nil {
 		return fmt.Errorf("error acquiring prep/unprep lock: %w", err)
 	}
