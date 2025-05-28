@@ -52,53 +52,89 @@ type driver struct {
 	client       coreclientset.Interface
 	pluginhelper *kubeletplugin.Helper
 	state        *DeviceState
+	pulock       *Flock
 }
 
-// Protect the work in nodePrepareResource() and nodeUnprepareResource() under a
-// lock. Use a file-based lock because more than one driver pod may be running
-// on a node, but at most one such function must execute at any given time.
-func acquirePrepUnprepLock() (func(), error) {
-	path := DriverPluginPath + "/pu.lock"
+type Flock struct {
+	path       string
+	PollPeriod time.Duration
+}
 
-	// The descriptor does not need to be maintained across calls: flock(2)
-	// documents that when using more than one descriptor for the same file
-	// (path), they still represent the same lock.
-	f, oerr := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0666)
+func NewFlock(path string) *Flock {
+	return &Flock{
+		path: path,
+		// Short default period to keep lock acquisition rather responsive;
+		// adjust on a per-use case basis.
+		PollPeriod: 200 * time.Millisecond,
+	}
+}
+
+// Acquire attempts to acquire an exclusive file lock, polling with the configured
+// PollPeriod until whichever comes first:
+//
+// - lock successfully acquired
+// - timeout (if provided)
+// - external cancellation of context
+//
+// Returns a release function that must be called to unlock the file, typically
+// with defer().
+//
+// Introduced to protect the work in nodePrepareResource() and
+// nodeUnprepareResource() under a file-based lock because more than one driver
+// pod may be running on a node, but at most one such function must execute at
+// any given time.
+func (l *Flock) Acquire(ctx context.Context, timeout ...time.Duration) (func(), error) {
+	f, oerr := os.OpenFile(l.path, os.O_RDWR|os.O_CREATE, 0644)
 	if oerr != nil {
-		return nil, fmt.Errorf("error opening lock file (%s): %w", path, oerr)
+		return nil, fmt.Errorf("error opening lock file (%s): %w", l.path, oerr)
 	}
 
-	done := make(chan error, 1)
-	go func() {
-		// Block until exclusive lock is acquired.
-		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
-		done <- err
-	}()
+	t0 := time.Now()
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
 
-	select {
-	case <-time.After(time.Second * 5):
-		// Cautious close (can there be a race where we acquire the lock _and_
-		// the timeout criterion is hit?). In any case, this would close the fd
-		// underneath the (still running) flock() system call (and hence force
-		// it into a "bad file descriptor" error).
-		klog.V(6).Infof("close fd under flock")
-		f.Close()
-
-		// Expect flock() to return (fail) after above's close().
-		flerr := <-done
-		klog.V(6).Infof("closed fd under flock: %s", flerr)
-		return nil, fmt.Errorf("timeout acquiring lock (%s)", path)
-	case flerr := <-done:
-		if flerr != nil {
-			f.Close()
-			return nil, fmt.Errorf("error acquiring lock (%s): %w", path, flerr)
+	// Use non-blocking peek with LOCK_NB flag and polling; trade-off:
+	//
+	// - pro: no need for having to reliably cancel a potentially long-blocking
+	//   flock() system call (can only be done with signals).
+	// - con: lock acquisition time after a release is not immediate, but may
+	//   take up to PollPeriod amount of time. Not an issue in this context.
+	for {
+		flerr := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if flerr == nil {
+			// Lock acquired. Return release function. An exclusive flock() lock
+			// gets released when its file descriptor gets closed (also true
+			// when the lock-holding process crashes).
+			return func() {
+				f.Close()
+			}, nil
 		}
-		// Lock acquired. Return release function. An exclusive flock() lock
-		// gets released when its file descriptor gets closed (also true when
-		// the lock-holding process crashes).
-		return func() {
+
+		if flerr != syscall.EWOULDBLOCK {
+			// May be EBADF, EINTR, EINVAl, ENOLCK, and
+			// in general we want an outer retry mechanism
+			// to retry in view of any of those.
 			f.Close()
-		}, nil
+			return nil, fmt.Errorf("error acquiring lock (%s): %w", l.path, flerr)
+		}
+
+		// Lock is currently held by other entity. Check for exit criteria;
+		// otherwise retry lock acquisition upon next tick.
+
+		if len(timeout) > 0 {
+			if time.Since(t0) >= timeout[0] {
+				f.Close()
+				return nil, fmt.Errorf("timeout acquiring lock (%s)", l.path)
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			f.Close()
+			return nil, ctx.Err()
+		case <-ticker.C:
+			// Retry flock().
+		}
 	}
 }
 
@@ -111,6 +147,7 @@ func NewDriver(ctx context.Context, config *Config) (*driver, error) {
 	driver := &driver{
 		client: config.clientsets.Core,
 		state:  state,
+		pulock: NewFlock(DriverPluginPath + "/pu.lock"),
 	}
 
 	helper, err := kubeletplugin.Start(
@@ -233,7 +270,7 @@ func (d *driver) UnprepareResourceClaims(ctx context.Context, claimRefs []kubele
 }
 
 func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.ResourceClaim) (bool, kubeletplugin.PrepareResult) {
-	release, err := acquirePrepUnprepLock()
+	release, err := d.pulock.Acquire(ctx, 10*time.Second)
 	if err != nil {
 		res := kubeletplugin.PrepareResult{
 			Err: fmt.Errorf("error acquiring prep/unprep lock: %w", err),
@@ -262,7 +299,7 @@ func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.Res
 }
 
 func (d *driver) nodeUnprepareResource(ctx context.Context, claimRef kubeletplugin.NamespacedObject) (bool, error) {
-	release, err := acquirePrepUnprepLock()
+	release, err := d.pulock.Acquire(ctx, 10*time.Second)
 	if err != nil {
 		return false, fmt.Errorf("error acquiring prep/unprep lock: %w", err)
 	}
