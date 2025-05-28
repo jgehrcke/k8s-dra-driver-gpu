@@ -9,8 +9,26 @@ import (
 )
 
 type Flock struct {
-	path       string
-	PollPeriod time.Duration
+	path string
+}
+
+type AcquireOption func(*acquireConfig)
+
+type acquireConfig struct {
+	timeout    time.Duration
+	pollPeriod time.Duration
+}
+
+func WithTimeout(timeout time.Duration) AcquireOption {
+	return func(cfg *acquireConfig) {
+		cfg.timeout = timeout
+	}
+}
+
+func WithPollPeriod(period time.Duration) AcquireOption {
+	return func(cfg *acquireConfig) {
+		cfg.pollPeriod = period
+	}
 }
 
 func NewFlock(path string) *Flock {
@@ -18,7 +36,7 @@ func NewFlock(path string) *Flock {
 		path: path,
 		// Short default period to keep lock acquisition rather responsive;
 		// adjust on a per-use case basis.
-		PollPeriod: 200 * time.Millisecond,
+		// PollPeriod: 200 * time.Millisecond,
 	}
 }
 
@@ -36,7 +54,17 @@ func NewFlock(path string) *Flock {
 // nodeUnprepareResource() under a file-based lock because more than one driver
 // pod may be running on a node, but at most one such function must execute at
 // any given time.
-func (l *Flock) Acquire(ctx context.Context, timeout ...time.Duration) (func(), error) {
+func (l *Flock) Acquire(ctx context.Context, opts ...AcquireOption) (func(), error) {
+	cfg := &acquireConfig{
+		// Default: short period to keep lock acquisition rather responsive
+		pollPeriod: 200 * time.Millisecond,
+		// Default: timeout disabled
+		timeout: 0,
+	}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
 	f, oerr := os.OpenFile(l.path, os.O_RDWR|os.O_CREATE, 0644)
 	if oerr != nil {
 		return nil, fmt.Errorf("error opening lock file (%s): %w", l.path, oerr)
@@ -74,8 +102,8 @@ func (l *Flock) Acquire(ctx context.Context, timeout ...time.Duration) (func(), 
 		// Lock is currently held by other entity. Check for exit criteria;
 		// otherwise retry lock acquisition upon next tick.
 
-		if len(timeout) > 0 {
-			if time.Since(t0) >= timeout[0] {
+		if cfg.timeout > 0 {
+			if time.Since(t0) > cfg.timeout {
 				f.Close()
 				return nil, fmt.Errorf("timeout acquiring lock (%s)", l.path)
 			}

@@ -21,13 +21,14 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/flock"
 	resourceapi "k8s.io/api/resource/v1beta1"
 	"k8s.io/apimachinery/pkg/types"
 	coreclientset "k8s.io/client-go/kubernetes"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
 	"k8s.io/klog/v2"
+
+	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/flock"
 )
 
 type driver struct {
@@ -112,7 +113,7 @@ func (d *driver) UnprepareResourceClaims(ctx context.Context, claimRefs []kubele
 }
 
 func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
-	release, err := d.pulock.Acquire(ctx, 10*time.Second)
+	release, err := d.pulock.Acquire(ctx, flock.WithTimeout(10*time.Second))
 	if err != nil {
 		return kubeletplugin.PrepareResult{
 			Err: fmt.Errorf("error acquiring prep/unprep lock: %w", err),
@@ -133,7 +134,7 @@ func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.Res
 }
 
 func (d *driver) nodeUnprepareResource(ctx context.Context, claimNs kubeletplugin.NamespacedObject) error {
-	release, err := d.pulock.Acquire(ctx, 10*time.Second)
+	release, err := d.pulock.Acquire(ctx, flock.WithTimeout(10*time.Second))
 	if err != nil {
 		return fmt.Errorf("error acquiring prep/unprep lock: %w", err)
 	}

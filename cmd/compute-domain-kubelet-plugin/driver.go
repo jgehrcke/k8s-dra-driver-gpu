@@ -186,7 +186,7 @@ func (d *driver) UnprepareResourceClaims(ctx context.Context, claimRefs []kubele
 }
 
 func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.ResourceClaim) (bool, kubeletplugin.PrepareResult) {
-	release, err := d.pulock.Acquire(ctx, 10*time.Second)
+	release, err := d.pulock.Acquire(ctx, flock.WithTimeout(10*time.Second))
 	if err != nil {
 		res := kubeletplugin.PrepareResult{
 			Err: fmt.Errorf("error acquiring prep/unprep lock: %w", err),
@@ -215,7 +215,7 @@ func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.Res
 }
 
 func (d *driver) nodeUnprepareResource(ctx context.Context, claimRef kubeletplugin.NamespacedObject) (bool, error) {
-	release, err := d.pulock.Acquire(ctx, 10*time.Second)
+	release, err := d.pulock.Acquire(ctx, flock.WithTimeout(10*time.Second))
 	if err != nil {
 		return false, fmt.Errorf("error acquiring prep/unprep lock: %w", err)
 	}
