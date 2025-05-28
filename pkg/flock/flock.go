@@ -34,9 +34,6 @@ func WithPollPeriod(period time.Duration) AcquireOption {
 func NewFlock(path string) *Flock {
 	return &Flock{
 		path: path,
-		// Short default period to keep lock acquisition rather responsive;
-		// adjust on a per-use case basis.
-		// PollPeriod: 200 * time.Millisecond,
 	}
 }
 
