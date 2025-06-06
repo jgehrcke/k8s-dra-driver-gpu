@@ -145,7 +145,7 @@ fi
 # and leaves only upon success, with code 0.
 while true
 do
-    printf '%b' "\n$(date --iso-8601): starting check\n"
+    printf '%b' "\n$(date +"%Y-%m-%dT%H:%M:%S%z"): starting check\n"
     validate_and_exit_on_success
     echo "retry in 30 s"
     sleep 30
