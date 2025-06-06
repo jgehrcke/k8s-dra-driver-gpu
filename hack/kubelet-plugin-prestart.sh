@@ -29,10 +29,13 @@ validate_and_exit_on_success () {
     echo "NVIDIA_DRIVER_ROOT: $NVIDIA_DRIVER_ROOT"
 
     # Search specific set of directories (don't resursively go through all of
-    # /driver-root because that may be a big filesystem). Limit to first
-    # result (multiple results are a bit of a pathological state, but instead
-    # of erroring out we can try to continue with validation logic). Suppress
-    # find stderr: some of those directories are expected to be "not found".
+    # /driver-root because that may be a big filesystem). Limit to first result
+    # (multiple results are a bit of a pathological state, but instead of
+    # erroring out we can try to continue with validation logic). Suppress find
+    # stderr: some of those directories are expected to be "not found". Limit to
+    # maxdepth 1 to keep search predictable, and to protect against any
+    # potential symlink loop (we're suppressing find's stderr, so we'd never see
+    # messages like 'Too many levels of symbolic links').
 
     echo "find1-debug"
     NV_PATH=$( \
@@ -41,21 +44,20 @@ validate_and_exit_on_success () {
             /driver-root/sbin \
             /driver-root/usr/bin \
             /driver-root/sbin \
-        -type f -name "nvidia-smi" 2> /dev/null | head -n1
+        -maxdepth 1 -type f -name "nvidia-smi" 2> /dev/null | head -n1
     )
 
     echo "find2-debug"
     # Follow symlinks (-L).
     NV_LIB_PATH=$( \
         find -L \
-            /driver-root/ \
             /driver-root/usr/lib64 \
             /driver-root/usr/lib/x86_64-linux-gnu \
             /driver-root/usr/lib/aarch64-linux-gnu \
             /driver-root/lib64 \
             /driver-root/lib/x86_64-linux-gnu \
             /driver-root/lib/aarch64-linux-gnu \
-        -type f -name "libnvidia-ml.so.1" | head -n1
+        -maxdepth 1 -type f -name "libnvidia-ml.so.1" 2> /dev/null | head -n1
     )
     echo "done-debug"
 
