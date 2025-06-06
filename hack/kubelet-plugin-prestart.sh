@@ -28,6 +28,10 @@ emit_common_err () {
 validate_and_exit_on_success () {
     echo "NVIDIA_DRIVER_ROOT (path on host): $NVIDIA_DRIVER_ROOT"
 
+    set -x
+    stat /driver-root
+    set +x
+
     # Search specific set of directories (don't resursively go through all of
     # /driver-root because that may be a big filesystem). Limit to first result
     # (multiple results are a bit of a pathological state, but instead of
