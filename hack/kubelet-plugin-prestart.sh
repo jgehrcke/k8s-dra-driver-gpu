@@ -26,7 +26,7 @@ emit_common_err () {
 # Make each check interation contain full output (so that interesting log output
 # does not over time get rotated away).
 validate_and_exit_on_success () {
-    echo "NVIDIA_DRIVER_ROOT: $NVIDIA_DRIVER_ROOT"
+    echo "NVIDIA_DRIVER_ROOT (path on host): $NVIDIA_DRIVER_ROOT"
 
     # Search specific set of directories (don't resursively go through all of
     # /driver-root because that may be a big filesystem). Limit to first result
@@ -117,7 +117,6 @@ validate_and_exit_on_success () {
         "Hint: /run/nvidia/driver/usr/bin/nvidia-smi exists on the host, you " \
         "may want to re-install the DRA driver Helm chart with " \
         "--set nvidiaDriverRoot=/run/nvidia/driver\n"
-        exit 1
     fi
 
     if [ "${NVIDIA_DRIVER_ROOT}" == "/run/nvidia/driver" ]; then
