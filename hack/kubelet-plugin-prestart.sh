@@ -128,6 +128,15 @@ validate_and_exit_on_success () {
     fi
 }
 
+if [ "${NVIDIA_DRIVER_ROOT}" != "/run/nvidia/driver" ]; then
+    ln -s /host-driver-root /driver-root
+else
+    # link heals when operator is done mounting driver rootfs to host
+    set -x
+    ln -s /host-run-nvidia/driver /driver-root
+    set +x
+fi
+
 # Design goal: long-running init container that retries at constant frequency,
 # and leaves only upon success, with code 0.
 while true

@@ -63,7 +63,11 @@ spec:
           value: void
         volumeMounts:
         - name: driver-root
-          mountPath: /driver-root
+          mountPath: /host-driver-root
+          readOnly: true
+        volumeMounts:
+        - name: host-run-nvidia
+          mountPath: /host-run-nvidia
           readOnly: true
       containers:
       {{- if .Values.resources.computeDomains.enabled }}
@@ -194,6 +198,10 @@ spec:
           # given path, an empty directory will be created there as needed with
           # permission set to 0755, having the same group and ownership with
           # Kubelet."
+          type: DirectoryOrCreate
+      - name: host-run-nvidia
+        hostPath:
+          path: /run/nvidia
           type: DirectoryOrCreate
       - name: host-dev
         hostPath:
