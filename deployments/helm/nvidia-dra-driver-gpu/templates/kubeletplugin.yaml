@@ -61,16 +61,21 @@ spec:
         # Explicit "void"; otherwise we inherit "all".
         - name: NVIDIA_VISIBLE_DEVICES
           value: void
+      # Mount host driver location only when this is not a containerized GPU
+      # driver
       {{- if not (eq "/run/nvidia/driver" .Values.nvidiaDriverRoot) }}
         volumeMounts:
         - name: driver-root
           mountPath: /host-driver-root
           readOnly: true
-      {{- end }}
+      {{- else }}
+      # And mount /run/nvidia from host when this is a containerized GPU
+      # driver.
         volumeMounts:
         - name: host-run-nvidia
           mountPath: /host-run-nvidia
           readOnly: true
+      {{- end }}
       containers:
       {{- if .Values.resources.computeDomains.enabled }}
       - name: compute-domains
@@ -201,10 +206,14 @@ spec:
           # permission set to 0755, having the same group and ownership with
           # Kubelet."
           type: DirectoryOrCreate
+      # Conditionally mount in host's /run/nvidia in case
+      # of operator-provided driver
+      {{- if eq "/run/nvidia/driver" .Values.nvidiaDriverRoot }}
       - name: host-run-nvidia
         hostPath:
           path: /run/nvidia
           type: DirectoryOrCreate
+      {{- end }}
       - name: host-dev
         hostPath:
           path: /dev

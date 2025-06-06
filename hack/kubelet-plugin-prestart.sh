@@ -11,7 +11,7 @@ if [ -z "$NVIDIA_DRIVER_ROOT" ]; then
     export NVIDIA_DRIVER_ROOT="/"
 fi
 
-_attempt=0
+_attempt=-1
 
 emit_common_err () {
     printf '%b' \
@@ -101,10 +101,9 @@ validate_and_exit_on_success () {
     find /driver-root -maxdepth 1 -type d | tr '\n' ' '
     set -x
     ls -A /driver-root
-    ls -ahltr /host-run-nvidia
+    #ls -ahltr /host-run-nvidia
     set +x
 
-    _attempt=$((_attempt+1))
     if [ $((_attempt % 10)) -ne 0 ]; then
         # Do not log long err msgs and hint for every attempt.
         return
@@ -163,4 +162,5 @@ do
     validate_and_exit_on_success
     echo "retry in 20 s"
     sleep 20
+    _attempt=$((_attempt+1))
 done
