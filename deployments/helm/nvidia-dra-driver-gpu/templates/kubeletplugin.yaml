@@ -205,14 +205,14 @@ spec:
           # given path, an empty directory will be created there as needed with
           # permission set to 0755, having the same group and ownership with
           # Kubelet."
-          type: DirectoryOrCreate
+          #type: DirectoryOrCreate
       # Conditionally mount in host's /run/nvidia in case
       # of operator-provided driver
       {{- if eq "/run/nvidia/driver" .Values.nvidiaDriverRoot }}
       - name: host-run-nvidia
         hostPath:
           path: /run/nvidia
-          type: DirectoryOrCreate
+          #type: DirectoryOrCreate
       {{- end }}
       - name: host-dev
         hostPath:

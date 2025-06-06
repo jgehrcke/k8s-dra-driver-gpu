@@ -11,7 +11,7 @@ if [ -z "$NVIDIA_DRIVER_ROOT" ]; then
     export NVIDIA_DRIVER_ROOT="/"
 fi
 
-_attempt=-1
+_attempt=0
 
 emit_common_err () {
     printf '%b' \
