@@ -54,17 +54,27 @@ spec:
         image: {{ include "nvidia-dra-driver-gpu.fullimage" . }}
         securityContext:
           privileged: true
-        command: [sh, /usr/bin/kubelet-plugin-prestart.sh]
+        command: [bash, /usr/bin/kubelet-plugin-prestart.sh]
         env:
         - name: NVIDIA_DRIVER_ROOT
           value: "{{ .Values.nvidiaDriverRoot }}"
-        # Explicit "void"; otherwise we inherit "all".
+        # Use runc: explicit "void"; otherwise we inherit "all".
         - name: NVIDIA_VISIBLE_DEVICES
           value: void
+      # Mount host driver path only when this is not the operator-provided
+      # driver. Otherwise mount /run (because then in the init container we can
+      # detect the moment in time when the operator-provided driver pops up at
+      # /run/nvidia/driver).
+      {{- if not (eq "/run/nvidia/driver" .Values.nvidiaDriverRoot) }}
         volumeMounts:
         - name: driver-root
-          mountPath: /driver-root
+          mountPath: /host-driver-root
           readOnly: true
+      {{- else }}
+        volumeMounts:
+        - name: host-run
+          mountPath: /host-run
+      {{- end }}
       containers:
       {{- if .Values.resources.computeDomains.enabled }}
       - name: compute-domains
@@ -114,11 +124,12 @@ spec:
           mountPropagation: Bidirectional
         - name: cdi
           mountPath: /var/run/cdi
-        # We always mount the driver root at /driver-root in the container.
         - name: driver-root
           mountPath: /driver-root
           readOnly: true
-        # Pragmatic solution for host-managed drivers located not at /.
+        # For host-managed drivers located not at /.
+        # TODO: make this more surgical, see discussion in
+        # https://github.com/NVIDIA/k8s-dra-driver-gpu/pull/307.
         - name: host-dev
           mountPath: /dev
       {{- end }}
@@ -172,7 +183,6 @@ spec:
           mountPropagation: Bidirectional
         - name: cdi
           mountPath: /var/run/cdi
-        # We always mount the driver root at /driver-root in the container.
         - name: driver-root
           mountPath: /driver-root
           readOnly: true
@@ -187,13 +197,35 @@ spec:
       - name: cdi
         hostPath:
           path: /var/run/cdi
+      {{- if eq "/run/nvidia/driver" .Values.nvidiaDriverRoot }}
+      - name: driver-root
+        hostPath:
+          # This cannot be /run/nvidia/driver because then the ds-controlled
+          # pods get deleted and recreated in the very moment when GPU operator
+          # creates mountpoint at /run/nvidia on the host.
+          #
+          path: /tmp/driver-root-dummy-test
+
+          # In case of an operator-provided driver: if the driver is provided
+          # after this pod starts then this directory will never pick up that
+          # driver.
+          type: DirectoryOrCreate
+      {{- else }}
       - name: driver-root
         hostPath:
           path: {{ .Values.nvidiaDriverRoot }}
-          # Note: default `type`: no checks are performed before mounting the
-          # hostPath volume. Setting this to `Directory` explicitly requires
-          # this directory to exist.
-          type: Directory
+          type: DirectoryOrCreate
+      {{- end }}
+      {{- if eq "/run/nvidia/driver" .Values.nvidiaDriverRoot }}
+      # Mount in host's /run in case of operator-provided driver.
+      # Goal: detect in container when operator is done providing
+      # driver.
+      - name: host-run
+        hostPath:
+          path: /run
+          # Highly likely to exist, but not guaranteed by POSIX.
+          type: DirectoryOrCreate
+      {{- end }}
       - name: host-dev
         hostPath:
           path: /dev
