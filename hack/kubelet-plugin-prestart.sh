@@ -13,7 +13,7 @@ fi
 
 emit_common_err () {
     printf '%b' \
-        "nvidia-smi probe failed (see error above). " \
+        "nvidia-smi probe failed (see details above). " \
         "Has the NVIDIA GPU driver been set up? " \
         "The GPU driver is expected to be installed under " \
         "NVIDIA_DRIVER_ROOT (currently set to '${NVIDIA_DRIVER_ROOT}') " \
@@ -103,7 +103,7 @@ validate_and_exit_on_success () {
         # Not empty, but at least one of the binaries not found: this is a
         # rather pathotlogical state.
         if [ -z "${NV_PATH}" ] || [ -z "${NV_LIB_PATH}" ]; then
-            echo "Hint: Directory $NVIDIA_DRIVER_ROOT is not empty but one of the binaries wasn't found"
+            echo "Hint: Directory $NVIDIA_DRIVER_ROOT is not empty but at least one of the binaries wasn't found."
         fi
     fi
 
@@ -111,7 +111,7 @@ validate_and_exit_on_success () {
         printf '%b' \
             "Hint: NVIDIA_DRIVER_ROOT is /run/nvidia/driver " \
             "which typically means that the NVIDIA GPU Operator " \
-            "manages the GPU driver. Mamake sure that the Operator " \
+            "manages the GPU driver. Make sure that the Operator " \
             "is deployed and healthy.\n"
     fi
 }
