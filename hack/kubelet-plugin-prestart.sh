@@ -55,8 +55,9 @@ validate_and_exit_on_success () {
             /driver-root/lib64 \
             /driver-root/lib/x86_64-linux-gnu \
             /driver-root/lib/aarch64-linux-gnu \
-        -type f -name "libnvidia-ml.so.1" 2> /dev/null | head -n1
+        -type f -name "libnvidia-ml.so.1" | head -n1
     )
+    echo "done-debug"
 
     if [ -z "${NV_PATH}" ]; then
         echo "nvidia-smi not found in NVIDIA_DRIVER_ROOT"
