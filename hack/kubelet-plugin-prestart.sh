@@ -28,10 +28,6 @@ emit_common_err () {
 validate_and_exit_on_success () {
     echo "NVIDIA_DRIVER_ROOT (path on host): $NVIDIA_DRIVER_ROOT"
 
-    set -x
-    stat /driver-root
-    set +x
-
     # Search specific set of directories (don't resursively go through all of
     # /driver-root because that may be a big filesystem). Limit to first result
     # (multiple results are a bit of a pathological state, but instead of
@@ -97,6 +93,11 @@ validate_and_exit_on_success () {
         fi
     fi
 
+    # List current set of top-level directories in /driver-root (valuable
+    # debug information)
+    echo "directories in /driver-root: "
+    find /driver-root -maxdepth 1 -type d | tr '\n' ' '
+
     # nvidia-smi binaries not found, or execution failed. First, provide generic
     # error message. Then, try to provide actional hints for common problems.
     emit_common_err
@@ -136,9 +137,9 @@ if [ "${NVIDIA_DRIVER_ROOT}" != "/run/nvidia/driver" ]; then
     ln -s /host-driver-root /driver-root
 else
     # link heals when operator is done mounting driver rootfs to host
-    set -x
+    echo "create symlink: /driver-root -> /host-run-nvidia/driver"
     ln -s /host-run-nvidia/driver /driver-root
-    set +x
+    stat /driver-root
 fi
 
 # Design goal: long-running init container that retries at constant frequency,
