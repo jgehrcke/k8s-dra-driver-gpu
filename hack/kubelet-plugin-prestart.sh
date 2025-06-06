@@ -101,6 +101,7 @@ validate_and_exit_on_success () {
     find /driver-root -maxdepth 1 | tr '\n' ' '
     set -x
     ls -A /driver-root
+    ls -ahltr /host-run-nvidia
     set +x
 
     _attempt=$((_attempt+1))
