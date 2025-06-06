@@ -97,14 +97,27 @@ validate_and_exit_on_success () {
     # error message. Then, try to provide actional hints for common problems.
     emit_common_err
 
-    if [ -z "$( ls -A /driver-root )" ]; then
-        echo "Hint: Directory $NVIDIA_DRIVER_ROOT on the host is empty"
-    else
-        # Not empty, but at least one of the binaries not found: this is a
-        # rather pathotlogical state.
-        if [ -z "${NV_PATH}" ] || [ -z "${NV_LIB_PATH}" ]; then
-            echo "Hint: Directory $NVIDIA_DRIVER_ROOT is not empty but at least one of the binaries wasn't found."
+    # For non-canonical host-provided driver locations (non-/), provide
+    # feedback for two special cases.
+    if [ "${NVIDIA_DRIVER_ROOT}" != "/" ]; then
+        if [ -z "$( ls -A /driver-root )" ]; then
+            echo "Hint: Directory $NVIDIA_DRIVER_ROOT on the host is empty"
+        else
+            # Not empty, but at least one of the binaries not found: this is a
+            # rather pathotlogical state.
+            if [ -z "${NV_PATH}" ] || [ -z "${NV_LIB_PATH}" ]; then
+                echo "Hint: Directory $NVIDIA_DRIVER_ROOT is not empty but at least one of the binaries wasn't found."
+            fi
         fi
+    fi
+
+    # Common mistake: driver container, but forgot -set nvidiaDriverRoot
+    if [ "${NVIDIA_DRIVER_ROOT}" == "/" ] && [ -f /driver-root/run/nvidia/driver/usr/bin/nvidia-smi ]; then
+        printf '%b' \
+        "Hint: /run/nvidia/driver/usr/bin/nvidia-smi exists on the host, you " \
+        "may want to re-install the DRA driver Helm chart with " \
+        "--set nvidiaDriverRoot=/run/nvidia/driver\n"
+        exit 1
     fi
 
     if [ "${NVIDIA_DRIVER_ROOT}" == "/run/nvidia/driver" ]; then
