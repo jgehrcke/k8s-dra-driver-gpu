@@ -11,61 +11,114 @@ if [ -z "$NVIDIA_DRIVER_ROOT" ]; then
     export NVIDIA_DRIVER_ROOT="/"
 fi
 
-echo "NVIDIA_DRIVER_ROOT set to: $NVIDIA_DRIVER_ROOT"
-
-# This may be slow or hang, in a bad setup.
-echo "run: chroot /driver-root nvidia-smi"
-
-# chroot passes on the exit code of the invoked command.
-chroot /driver-root nvidia-smi
-RCODE="$?"
-
-# For checking GPU driver health: for now, rely on nvidia-smi's exit code.
-# Rely on code 0 meaning that the driver is properly set up. For example,
-# code 9 means that the GPU driver is not loaded; see section 'RETURN VALUE'
-# in the man page.
-if [ ${RCODE} -eq 0 ]
-then
-    echo "chrooted nvidia-smi returned with code 0: success, leave"
-    exit 0
-fi
-
-printf '%b' \
-"nvidia-smi failed (see error above). " \
-"Has the NVIDIA GPU driver been set up? " \
-"The GPU driver is expected to be installed under " \
-"NVIDIA_DRIVER_ROOT (currently set to '${NVIDIA_DRIVER_ROOT}') " \
-"in the host filesystem. If that path appears to be unexpected: " \
-"review and adjust the 'nvidiaDriverRoot' Helm chart variable. " \
-"If the value is expected: review if the GPU driver has " \
-"actually been installed under NVIDIA_DRIVER_ROOT.\n"
-
-if [ "${NVIDIA_DRIVER_ROOT}" == "/run/nvidia/driver" ]; then
+emit_common_err () {
     printf '%b' \
-    "Hint: you may want the NVIDIA GPU Operator to manage the GPU driver " \
-    "(NVIDIA_DRIVER_ROOT is set to /run/nvidia/driver): " \
-    "make sure that Operator is deployed and healthy.\n"
-fi
+        "nvidia-smi failed (see error above). " \
+        "Has the NVIDIA GPU driver been set up? " \
+        "The GPU driver is expected to be installed under " \
+        "NVIDIA_DRIVER_ROOT (currently set to '${NVIDIA_DRIVER_ROOT}') " \
+        "in the host filesystem. If that path appears to be unexpected: " \
+        "review and adjust the 'nvidiaDriverRoot' Helm chart variable. " \
+        "If the value is expected: review if the GPU driver has " \
+        "actually been installed under NVIDIA_DRIVER_ROOT.\n"
+}
 
-# Specific, common mistake.
-if   [ "${NVIDIA_DRIVER_ROOT}" == "/" ] && [ -f /driver-root/run/nvidia/driver/usr/bin/nvidia-smi ]; then
-    printf '%b' \
-    "Hint: /run/nvidia/driver/usr/bin/nvidia-smi exists on the host, you " \
-    "may want to re-install the DRA driver Helm chart with " \
-    "--set nvidiaDriverRoot=/run/nvidia/driver\n"
-    exit 1
-fi
+# Make each check interation contain full output (so that interesting log output
+# does not over time get rotated away).
+validate_and_exit_on_success () {
+    echo "NVIDIA_DRIVER_ROOT: $NVIDIA_DRIVER_ROOT"
 
-# Rely on k8s hostPath type `Directory` for this mount (this directory actually
-# existed on the host).
-if [ -z "$( ls -A /driver-root )" ]; then
-    echo "Hint: Directory $NVIDIA_DRIVER_ROOT on the host appears to be empty"
-    exit 1
-fi
+    # Search specific set of directories (don't resursively go through all of
+    # /driver-root because that may be a big filesystem). Limit to first
+    # result (multiple results are a bit of a pathological state, but instead
+    # of erroring out we can try to continue with validation logic). Suppress
+    # find stderr: some of those directories are expected to be "not found".
 
-# Seen in the wild: orphaned and incomplete /driver-root with contents from a
-# previous operator-provided driver setup.
-if [ ! -f "/driver-root/usr/bin/nvidia-smi" ]; then
-    echo "Hint: Directory $NVIDIA_DRIVER_ROOT not empty, but does not seem to contain GPU driver binaries"
-fi
-exit 1
+    NV_PATH=$( \
+        find \
+            /driver-root/bin \
+            /driver-root/sbin \
+            /driver-root/usr/bin \
+            /driver-root/sbin \
+        -type f -name "nvidia-smi" 2> /dev/null | head -n1
+    )
+
+    # Follow symlinks (-L).
+    NV_LIB_PATH=$( \
+        find -L \
+            /driver-root/ \
+            /driver-root/usr/lib64 \
+            /driver-root/usr/lib/x86_64-linux-gnu \
+            /driver-root/usr/lib/aarch64-linux-gnu \
+            /driver-root/lib64 \
+            /driver-root/lib/x86_64-linux-gnu \
+            /driver-root/lib/aarch64-linux-gnu \
+        -type f -name "libnvidia-ml.so.1" 2> /dev/null | head -n1
+    )
+
+    if [ -z "${NV_PATH}" ]; then
+        echo "nvidia-smi not found"
+    else
+        echo "found: ${NV_PATH}"
+    fi
+
+    if [ -z "${NV_LIB_PATH}" ]; then
+        echo "libnvidia-ml.so.1 not found"
+    else
+        echo "found: ${NV_LIB_PATH}"
+    fi
+
+    # Run nvidia-smi with clean environment (only set LD_PRELOAD, nvidia-smi has
+    # only this dependency). As this may be slow or hang in a bad setup, emit
+    # message before invocation.
+    echo "invoke: env -i LD_PRELOAD=${NV_LIB_PATH} ${NV_PATH}"
+    env -i LD_PRELOAD="${NV_LIB_PATH}" "${NV_PATH}"
+    RCODE="$?"
+
+    # For checking GPU driver health: rely on nvidia-smi's exit code. Rely on
+    # code 0 signaling that the driver is properly set up. For error codes; see
+    # section 'RETURN VALUE' in the nvidia-smi man page.
+    if [ ${RCODE} -eq 0 ]; then
+        echo "nvidia-smi returned with code 0: success, leave"
+
+        # Exit this script, indicating success.
+        exit 0
+    else
+        echo "exit code: ${RCODE}"
+    fi
+
+    # When we're here: nvidia-smi binaries not found, or execution failed.
+    # First, provide generic error message.
+    emit_common_err
+
+    # Next up, try to provide actional hints for common problems.
+    if [ -z "$( ls -A /driver-root )" ]; then
+        echo "Hint: Directory $NVIDIA_DRIVER_ROOT on the host is empty"
+    else
+        # Not empty, but at least one of the binaries not found: this is a
+        # rather pathotlogical state.
+        if [ -z "${NV_PATH}" ] || [ -z "${NV_LIB_PATH}" ]; then
+            echo "Hint: Directory $NVIDIA_DRIVER_ROOT is not empty but one of the binaries wasn't found"
+        fi
+    fi
+
+    if [ "${NVIDIA_DRIVER_ROOT}" == "/run/nvidia/driver" ]; then
+        printf '%b' \
+            "Hint: NVIDIA_DRIVER_ROOT is /run/nvidia/driver " \
+            "which typically means that the NVIDIA GPU Operator " \
+            "manages the GPU driver. Mamake sure that the Operator " \
+            "is deployed and healthy.\n"
+    fi
+
+    # Hand over to retry loop, indicating failure.
+    return 1
+}
+
+# Design goal: long-running init container that retries at constant frequency,
+# and leaves only upon success, with code 0.
+while true
+do
+	validate_and_exit_on_success
+    echo "retry in 30 s"
+	sleep 30
+done
