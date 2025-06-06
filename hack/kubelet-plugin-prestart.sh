@@ -98,7 +98,7 @@ validate_and_exit_on_success () {
     # List current set of top-level directories in /driver-root (valuable
     # debug information)
     echo "entries in /driver-root: "
-    find /driver-root -maxdepth 1 | tr '\n' ' '
+    find /driver-root -maxdepth 1 -type d | tr '\n' ' '
     set -x
     ls -A /driver-root
     ls -ahltr /host-run-nvidia
@@ -161,6 +161,6 @@ while true
 do
     printf '%b' "\n$(date +"%Y-%m-%dT%H:%M:%S%z"): starting check\n"
     validate_and_exit_on_success
-    echo "retry in 5 s"
-    sleep 5
+    echo "retry in 20 s"
+    sleep 20
 done

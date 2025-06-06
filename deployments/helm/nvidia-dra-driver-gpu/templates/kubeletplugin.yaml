@@ -61,10 +61,12 @@ spec:
         # Explicit "void"; otherwise we inherit "all".
         - name: NVIDIA_VISIBLE_DEVICES
           value: void
+      {{- if not eq "/run/nvidia/driver" .Values.nvidiaDriverRoot }}
         volumeMounts:
         - name: driver-root
           mountPath: /host-driver-root
           readOnly: true
+      {{- end }}
         volumeMounts:
         - name: host-run-nvidia
           mountPath: /host-run-nvidia
