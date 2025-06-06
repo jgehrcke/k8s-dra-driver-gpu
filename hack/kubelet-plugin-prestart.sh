@@ -13,7 +13,7 @@ fi
 
 emit_common_err () {
     printf '%b' \
-        "nvidia-smi failed (see error above). " \
+        "nvidia-smi probe failed (see error above). " \
         "Has the NVIDIA GPU driver been set up? " \
         "The GPU driver is expected to be installed under " \
         "NVIDIA_DRIVER_ROOT (currently set to '${NVIDIA_DRIVER_ROOT}') " \
@@ -34,6 +34,7 @@ validate_and_exit_on_success () {
     # of erroring out we can try to continue with validation logic). Suppress
     # find stderr: some of those directories are expected to be "not found".
 
+    echo "find1-debug"
     NV_PATH=$( \
         find \
             /driver-root/bin \
@@ -43,6 +44,7 @@ validate_and_exit_on_success () {
         -type f -name "nvidia-smi" 2> /dev/null | head -n1
     )
 
+    echo "find2-debug"
     # Follow symlinks (-L).
     NV_LIB_PATH=$( \
         find -L \
