@@ -11,6 +11,8 @@ if [ -z "$NVIDIA_DRIVER_ROOT" ]; then
     export NVIDIA_DRIVER_ROOT="/"
 fi
 
+_attempt=0
+
 emit_common_err () {
     printf '%b' \
         "nvidia-smi probe failed (see details above). " \
@@ -95,8 +97,17 @@ validate_and_exit_on_success () {
 
     # List current set of top-level directories in /driver-root (valuable
     # debug information)
-    echo "directories in /driver-root: "
-    find /driver-root -maxdepth 1 -type d | tr '\n' ' '
+    echo "entries in /driver-root: "
+    find /driver-root -maxdepth 1 | tr '\n' ' '
+    set -x
+    ls -A /driver-root
+    set +x
+
+    _attempt=$((_attempt+1))
+    if [ $((_attempt % 10)) -ne 0 ]; then
+        # Do not log long err msgs and hint for every attempt.
+        return
+    fi
 
     # nvidia-smi binaries not found, or execution failed. First, provide generic
     # error message. Then, try to provide actional hints for common problems.
@@ -134,6 +145,7 @@ validate_and_exit_on_success () {
 }
 
 if [ "${NVIDIA_DRIVER_ROOT}" != "/run/nvidia/driver" ]; then
+    echo "create symlink: /driver-root -> /host-driver-root"
     ln -s /host-driver-root /driver-root
 else
     # link heals when operator is done mounting driver rootfs to host
@@ -148,6 +160,6 @@ while true
 do
     printf '%b' "\n$(date +"%Y-%m-%dT%H:%M:%S%z"): starting check\n"
     validate_and_exit_on_success
-    echo "retry in 30 s"
-    sleep 30
+    echo "retry in 5 s"
+    sleep 5
 done
