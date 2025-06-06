@@ -190,13 +190,10 @@ spec:
       - name: driver-root
         hostPath:
           path: {{ .Values.nvidiaDriverRoot }}
-          # Goal: if an operator-provided driver container is bringing in the
-          # driver _after_ we have started, we want to detect that _within_ the
-          # init container. (not yet tested). Note that `DirectoryOrCreate` is
-          # making this explicit (same behavior as not defining this?). "If
-          # nothing exists at the given path, an empty directory will be created
-          # there as needed with permission set to 0755, having the same group
-          # and ownership with Kubelet."
+          # `DirectoryOrCreate` is making explicit: "If nothing exists at the
+          # given path, an empty directory will be created there as needed with
+          # permission set to 0755, having the same group and ownership with
+          # Kubelet."
           type: DirectoryOrCreate
       - name: host-dev
         hostPath:

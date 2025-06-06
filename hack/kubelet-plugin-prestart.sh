@@ -132,7 +132,8 @@ validate_and_exit_on_success () {
 # and leaves only upon success, with code 0.
 while true
 do
-	validate_and_exit_on_success
+    printf '%b' "\n$(date --iso-8601): starting check\n"
+    validate_and_exit_on_success
     echo "retry in 30 s"
-	sleep 30
+    sleep 30
 done
