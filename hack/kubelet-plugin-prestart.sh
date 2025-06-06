@@ -37,7 +37,6 @@ validate_and_exit_on_success () {
     # potential symlink loop (we're suppressing find's stderr, so we'd never see
     # messages like 'Too many levels of symbolic links').
 
-    echo "find1-debug"
     NV_PATH=$( \
         find \
             /driver-root/bin \
@@ -47,7 +46,6 @@ validate_and_exit_on_success () {
         -maxdepth 1 -type f -name "nvidia-smi" 2> /dev/null | head -n1
     )
 
-    echo "find2-debug"
     # Follow symlinks (-L).
     NV_LIB_PATH=$( \
         find -L \
@@ -59,7 +57,6 @@ validate_and_exit_on_success () {
             /driver-root/lib/aarch64-linux-gnu \
         -maxdepth 1 -type f -name "libnvidia-ml.so.1" 2> /dev/null | head -n1
     )
-    echo "done-debug"
 
     if [ -z "${NV_PATH}" ]; then
         echo "nvidia-smi not found in NVIDIA_DRIVER_ROOT"
@@ -117,9 +114,6 @@ validate_and_exit_on_success () {
             "manages the GPU driver. Mamake sure that the Operator " \
             "is deployed and healthy.\n"
     fi
-
-    # Hand over to retry loop, indicating failure.
-    return 1
 }
 
 # Design goal: long-running init container that retries at constant frequency,
