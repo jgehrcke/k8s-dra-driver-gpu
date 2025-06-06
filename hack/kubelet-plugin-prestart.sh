@@ -57,41 +57,44 @@ validate_and_exit_on_success () {
     )
 
     if [ -z "${NV_PATH}" ]; then
-        echo "nvidia-smi not found"
+        echo "nvidia-smi not found in NVIDIA_DRIVER_ROOT"
     else
         echo "found: ${NV_PATH}"
     fi
 
     if [ -z "${NV_LIB_PATH}" ]; then
-        echo "libnvidia-ml.so.1 not found"
+        echo "libnvidia-ml.so.1 not found in NVIDIA_DRIVER_ROOT"
     else
         echo "found: ${NV_LIB_PATH}"
     fi
 
-    # Run nvidia-smi with clean environment (only set LD_PRELOAD, nvidia-smi has
-    # only this dependency). As this may be slow or hang in a bad setup, emit
-    # message before invocation.
-    echo "invoke: env -i LD_PRELOAD=${NV_LIB_PATH} ${NV_PATH}"
-    env -i LD_PRELOAD="${NV_LIB_PATH}" "${NV_PATH}"
-    RCODE="$?"
+    # If both binaries found: attempt to run nvidia-smi
+    if [ -n "${NV_PATH}" ] && [ -n "${NV_LIB_PATH}" ]; then
 
-    # For checking GPU driver health: rely on nvidia-smi's exit code. Rely on
-    # code 0 signaling that the driver is properly set up. For error codes; see
-    # section 'RETURN VALUE' in the nvidia-smi man page.
-    if [ ${RCODE} -eq 0 ]; then
-        echo "nvidia-smi returned with code 0: success, leave"
+        # Run with clean environment (only set LD_PRELOAD, nvidia-smi has only
+        # this dependency). As this may be slow or hang in a bad setup, emit
+        # message before invocation.
+        echo "invoke: env -i LD_PRELOAD=${NV_LIB_PATH} ${NV_PATH}"
+        env -i LD_PRELOAD="${NV_LIB_PATH}" "${NV_PATH}"
+        RCODE="$?"
 
-        # Exit this script, indicating success.
-        exit 0
-    else
-        echo "exit code: ${RCODE}"
+        # For checking GPU driver health: rely on nvidia-smi's exit code. Rely
+        # on code 0 signaling that the driver is properly set up. For error
+        # codes; see section 'RETURN VALUE' in the nvidia-smi man page.
+        if [ ${RCODE} -eq 0 ]; then
+            echo "nvidia-smi returned with code 0: success, leave"
+
+            # Exit script indicating success.
+            exit 0
+        else
+            echo "exit code: ${RCODE}"
+        fi
     fi
 
-    # When we're here: nvidia-smi binaries not found, or execution failed.
-    # First, provide generic error message.
+    # nvidia-smi binaries not found, or execution failed. First, provide generic
+    # error message. Then, try to provide actional hints for common problems.
     emit_common_err
 
-    # Next up, try to provide actional hints for common problems.
     if [ -z "$( ls -A /driver-root )" ]; then
         echo "Hint: Directory $NVIDIA_DRIVER_ROOT on the host is empty"
     else
