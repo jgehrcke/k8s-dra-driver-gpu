@@ -198,13 +198,13 @@ spec:
       - name: cdi
         hostPath:
           path: /var/run/cdi
-      - name: driver-root
-        hostPath:
-          path: {{ .Values.nvidiaDriverRoot }}
-          # In case of an operator-provided driver: if the driver is provided
-          # after this pod starts then this directory will never pick up that
-          # driver.
-          type: DirectoryOrCreate
+      # - name: driver-root
+      #   hostPath:
+      #     path: {{ .Values.nvidiaDriverRoot }}
+      #     # In case of an operator-provided driver: if the driver is provided
+      #     # after this pod starts then this directory will never pick up that
+      #     # driver.
+      #     type: DirectoryOrCreate
       {{- if eq "/run/nvidia/driver" .Values.nvidiaDriverRoot }}
       # Conditionally mount in host's /run in case of operator-provided driver
       - name: host-run
