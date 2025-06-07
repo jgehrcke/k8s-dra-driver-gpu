@@ -58,7 +58,7 @@ spec:
         env:
         - name: NVIDIA_DRIVER_ROOT
           value: "{{ .Values.nvidiaDriverRoot }}"
-        # Explicit "void"; otherwise we inherit "all".
+        # Use runc: explicit "void"; otherwise we inherit "all".
         - name: NVIDIA_VISIBLE_DEVICES
           value: void
       # Mount host driver path only when this is not the operator-provided
@@ -198,15 +198,29 @@ spec:
       - name: cdi
         hostPath:
           path: /var/run/cdi
-      # - name: driver-root
-      #   hostPath:
-      #     path: {{ .Values.nvidiaDriverRoot }}
-      #     # In case of an operator-provided driver: if the driver is provided
-      #     # after this pod starts then this directory will never pick up that
-      #     # driver.
-      #     type: DirectoryOrCreate
       {{- if eq "/run/nvidia/driver" .Values.nvidiaDriverRoot }}
-      # Conditionally mount in host's /run in case of operator-provided driver
+      - name: driver-root
+        hostPath:
+          # This cannot be /run/nvidia/driver because then the ds-controlled
+          # pods get deleted and recreated in the very moment when GPU operator
+          # creates mountpoint at /run/nvidia on the host.
+          #
+          path: /tmp/driver-root-dummy-test
+
+          # In case of an operator-provided driver: if the driver is provided
+          # after this pod starts then this directory will never pick up that
+          # driver.
+          type: DirectoryOrCreate
+      {{- else }}
+      - name: driver-root
+        hostPath:
+          path: {{ .Values.nvidiaDriverRoot }}
+          type: DirectoryOrCreate
+      {{- end }}
+      {{- if eq "/run/nvidia/driver" .Values.nvidiaDriverRoot }}
+      # Mount in host's /run in case of operator-provided driver.
+      # Goal: detect in container when operator is done providing
+      # driver.
       - name: host-run
         hostPath:
           path: /run
