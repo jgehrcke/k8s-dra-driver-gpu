@@ -30,8 +30,7 @@ fi
 
 emit_common_err () {
     printf '%b' \
-        "check failed (see details above). " \
-        "Has the NVIDIA GPU driver been set up? " \
+        "Check failed. Has the NVIDIA GPU driver been set up? " \
         "The GPU driver is expected to be installed under " \
         "NVIDIA_DRIVER_ROOT (currently set to '${NVIDIA_DRIVER_ROOT}') " \
         "in the host filesystem. If that path appears to be unexpected: " \
@@ -75,13 +74,13 @@ validate_and_exit_on_success () {
     )
 
     if [ -z "${NV_PATH}" ]; then
-        echo "nvidia-smi not found in NVIDIA_DRIVER_ROOT"
+        echo "nvidia-smi not found"
     else
         echo "found: ${NV_PATH}"
     fi
 
     if [ -z "${NV_LIB_PATH}" ]; then
-        echo "libnvidia-ml.so.1 not found in NVIDIA_DRIVER_ROOT"
+        echo "libnvidia-ml.so.1 not found"
     else
         echo "found: ${NV_LIB_PATH}"
     fi
@@ -109,7 +108,7 @@ validate_and_exit_on_success () {
     fi
 
     # List current set of top-level directories in /driver-root.
-    echo "dirs in /driver-root: $(cd /driver-root && find -L . -maxdepth 1 -type d 2>/dev/null | tr '\n' ' ')"
+    echo "NVIDIA_DRIVER_ROOT contents: $(/bin/ls -A1 /driver-root 2>/dev/null | tr '\n' ' ')"
 
     # Reduce log volume: log long msgs only every Nth attempt.
     if [ $((_ATTEMPT % 5)) -ne 0 ]; then
@@ -120,8 +119,7 @@ validate_and_exit_on_success () {
     # error message. Then, try to provide actional hints for common problems.
     emit_common_err
 
-    # For non-canonical host-provided driver locations (non-/), provide
-    # feedback for two special cases.
+    # For host-provided driver not at / provide feedback for two special cases.
     if [ "${NVIDIA_DRIVER_ROOT}" != "/" ]; then
         if [ -z "$( ls -A /driver-root )" ]; then
             echo "Hint: Directory $NVIDIA_DRIVER_ROOT on the host is empty"
@@ -151,16 +149,23 @@ validate_and_exit_on_success () {
     fi
 }
 
+shutdown() {
+  echo "$(date -u +"%Y-%m-%dT%H:%M:%SZ"): received SIGTERM"
+  exit 0
+}
+
+trap 'shutdown' SIGTERM
+
 
 # Design goal: long-running init container that retries at constant frequency,
-# and leaves only upon success, with code 0.
+# and leaves only upon success (with code 0).
 _WAIT_S=10
 _ATTEMPT=0
 
 while true
 do
     echo
-    echo "$(date +"%Y-%m-%dT%H:%M:%S%z"):/n"
+    date -u +"%Y-%m-%dT%H:%M:%SZ"
     validate_and_exit_on_success
     echo "retry in ${_WAIT_S} s"
     sleep ${_WAIT_S}

@@ -74,7 +74,6 @@ spec:
         volumeMounts:
         - name: host-run
           mountPath: /host-run
-          readOnly: true
       {{- end }}
       containers:
       {{- if .Values.resources.computeDomains.enabled }}
