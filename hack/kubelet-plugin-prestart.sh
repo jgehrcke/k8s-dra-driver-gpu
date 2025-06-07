@@ -30,7 +30,7 @@ fi
 
 emit_common_err () {
     printf '%b' \
-        "nvidia-smi probe failed (see details above). " \
+        "check failed (see details above). " \
         "Has the NVIDIA GPU driver been set up? " \
         "The GPU driver is expected to be installed under " \
         "NVIDIA_DRIVER_ROOT (currently set to '${NVIDIA_DRIVER_ROOT}') " \
@@ -109,7 +109,7 @@ validate_and_exit_on_success () {
     fi
 
     # List current set of top-level directories in /driver-root.
-    echo "dirs in /driver-root: $(find -L /driver-root -maxdepth 1 -type d | tr '\n' ' ')"
+    echo "dirs in /driver-root: $(cd /driver-root && find -L . -maxdepth 1 -type d 2>/dev/null | tr '\n' ' ')"
 
     # Reduce log volume: log long msgs only every Nth attempt.
     if [ $((_ATTEMPT % 5)) -ne 0 ]; then
@@ -159,7 +159,8 @@ _ATTEMPT=0
 
 while true
 do
-    printf '%b' "\n$(date +"%Y-%m-%dT%H:%M:%S%z"): starting check\n"
+    echo
+    echo "$(date +"%Y-%m-%dT%H:%M:%S%z"):/n"
     validate_and_exit_on_success
     echo "retry in ${_WAIT_S} s"
     sleep ${_WAIT_S}
