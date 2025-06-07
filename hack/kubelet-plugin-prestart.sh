@@ -109,7 +109,7 @@ validate_and_exit_on_success () {
     fi
 
     # List current set of top-level directories in /driver-root.
-    echo "dirs in /driver-root: $(find /driver-root -L -maxdepth 1 -type d | tr '\n' ' ')"
+    echo "dirs in /driver-root: $(find -L /driver-root -maxdepth 1 -type d | tr '\n' ' ')"
 
     # Reduce log volume: log long msgs only every Nth attempt.
     if [ $((_ATTEMPT % 5)) -ne 0 ]; then
