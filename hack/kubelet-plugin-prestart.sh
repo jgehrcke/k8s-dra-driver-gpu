@@ -11,7 +11,22 @@ if [ -z "$NVIDIA_DRIVER_ROOT" ]; then
     export NVIDIA_DRIVER_ROOT="/"
 fi
 
-_attempt=0
+# Create in-container path /driver-root as a symlink. Pick a different symlink
+# target depending on whether the GPU driver is (i) operator-provided or (ii)
+# host-provided.
+if [ "${NVIDIA_DRIVER_ROOT}" == "/run/nvidia/driver" ]; then
+    # Expectation: link may be broken initially if the GPU operator isn't
+    # deployed yet. The link heals once GPU operator provides the driver on the
+    # host at /run/nvidia/driver. Notably, on the host, the directory
+    # /run/nvidia is the mount point that gets created when the GPU operator
+    # gets deployed
+    echo "create symlink: /driver-root -> /host-run/nvidia/driver"
+    ln -s /host-run/nvidia/driver /driver-root
+    # stat /driver-root
+else
+    echo "create symlink: /driver-root -> /host-driver-root"
+    ln -s /host-driver-root /driver-root
+fi
 
 emit_common_err () {
     printf '%b' \
@@ -25,8 +40,7 @@ emit_common_err () {
         "actually been installed under NVIDIA_DRIVER_ROOT.\n"
 }
 
-# Make each check interation contain full output (so that interesting log output
-# does not over time get rotated away).
+# Goal: relevant log output should repeat over time.
 validate_and_exit_on_success () {
     echo "NVIDIA_DRIVER_ROOT (path on host): $NVIDIA_DRIVER_ROOT"
 
@@ -48,7 +62,7 @@ validate_and_exit_on_success () {
         -maxdepth 1 -type f -name "nvidia-smi" 2> /dev/null | head -n1
     )
 
-    # Follow symlinks (-L).
+    # Follow symlinks (-L), because `libnvidia-ml.so.1` is typically a link.
     NV_LIB_PATH=$( \
         find -L \
             /driver-root/usr/lib64 \
@@ -72,40 +86,33 @@ validate_and_exit_on_success () {
         echo "found: ${NV_LIB_PATH}"
     fi
 
-    # If both binaries found: attempt to run nvidia-smi
     if [ -n "${NV_PATH}" ] && [ -n "${NV_LIB_PATH}" ]; then
 
         # Run with clean environment (only set LD_PRELOAD, nvidia-smi has only
-        # this dependency). As this may be slow or hang in a bad setup, emit
-        # message before invocation.
+        # this dependency). Emit message before invocation (nvidia-smi may be
+        # slow or hang).
         echo "invoke: env -i LD_PRELOAD=${NV_LIB_PATH} ${NV_PATH}"
         env -i LD_PRELOAD="${NV_LIB_PATH}" "${NV_PATH}"
         RCODE="$?"
 
         # For checking GPU driver health: rely on nvidia-smi's exit code. Rely
-        # on code 0 signaling that the driver is properly set up. For error
-        # codes; see section 'RETURN VALUE' in the nvidia-smi man page.
+        # on code 0 signaling that the driver is properly set up. See section
+        # 'RETURN VALUE' in the nvidia-smi man page for meaning of error codes.
         if [ ${RCODE} -eq 0 ]; then
             echo "nvidia-smi returned with code 0: success, leave"
 
-            # Exit script indicating success.
+            # Exit script indicating success (leave init container).
             exit 0
         else
             echo "exit code: ${RCODE}"
         fi
     fi
 
-    # List current set of top-level directories in /driver-root (valuable
-    # debug information)
-    echo "entries in /driver-root: "
-    find /driver-root -maxdepth 1 -type d | tr '\n' ' '
-    set -x
-    ls -A /driver-root
-    #ls -ahltr /host-run-nvidia
-    set +x
+    # List current set of top-level directories in /driver-root.
+    echo "dirs in /driver-root: $(find /driver-root -L -maxdepth 1 -type d | tr '\n' ' ')"
 
-    if [ $((_attempt % 10)) -ne 0 ]; then
-        # Do not log long err msgs and hint for every attempt.
+    # Reduce log volume: log long msgs only every Nth attempt.
+    if [ $((_ATTEMPT % 5)) -ne 0 ]; then
         return
     fi
 
@@ -144,23 +151,17 @@ validate_and_exit_on_success () {
     fi
 }
 
-if [ "${NVIDIA_DRIVER_ROOT}" != "/run/nvidia/driver" ]; then
-    echo "create symlink: /driver-root -> /host-driver-root"
-    ln -s /host-driver-root /driver-root
-else
-    # link heals when operator is done mounting driver rootfs to host
-    echo "create symlink: /driver-root -> /host-run-nvidia/driver"
-    ln -s /host-run-nvidia/driver /driver-root
-    stat /driver-root
-fi
 
 # Design goal: long-running init container that retries at constant frequency,
 # and leaves only upon success, with code 0.
+_WAIT_S=10
+_ATTEMPT=0
+
 while true
 do
     printf '%b' "\n$(date +"%Y-%m-%dT%H:%M:%S%z"): starting check\n"
     validate_and_exit_on_success
-    echo "retry in 20 s"
-    sleep 20
-    _attempt=$((_attempt+1))
+    echo "retry in ${_WAIT_S} s"
+    sleep ${_WAIT_S}
+    _ATTEMPT=$((_ATTEMPT+1))
 done
