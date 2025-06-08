@@ -1,4 +1,6 @@
-/deployments/container
-/k8s-dra-driver-gpu.tar
-/demo
-Dockerfile
+.dockerignore
+deployments/container
+*.tar
+*.tgz
+demo
+.git
