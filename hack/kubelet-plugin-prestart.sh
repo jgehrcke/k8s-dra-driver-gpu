@@ -85,10 +85,9 @@ validate_and_exit_on_success () {
         echo -n "libnvidia-ml.so.1: '${NV_LIB_PATH}'. "
     fi
 
-    # Terminate previous log line.
-    echo
-
     if [ -n "${NV_PATH}" ] && [ -n "${NV_LIB_PATH}" ]; then
+        # Terminate previous log line.
+        echo
 
         # Run with clean environment (only set LD_PRELOAD, nvidia-smi has only
         # this dependency). Emit message before invocation (nvidia-smi may be
@@ -111,7 +110,7 @@ validate_and_exit_on_success () {
     fi
 
     # List current set of top-level directories in /driver-root.
-    echo "Directory contains: [$(/bin/ls -A1 /driver-root 2>/dev/null | tr '\n' ' ')]."
+    echo "Directory contains: [$(/bin/ls -1xAw0 /driver-root 2>/dev/null)]."
 
     # Reduce log volume: log hints only every Nth attempt.
     if [ $((_ATTEMPT % 6)) -ne 0 ]; then
