@@ -19,7 +19,7 @@ if [ "${NVIDIA_DRIVER_ROOT}" == "/run/nvidia/driver" ]; then
     # deployed yet. The link heals once GPU operator provides the driver on the
     # host at /run/nvidia/driver. Notably, on the host, the directory
     # /run/nvidia is the mount point that gets created when the GPU operator
-    # gets deployed
+    # gets deployed.
     echo "create symlink: /driver-root -> /host-run/nvidia/driver"
     ln -s /host-run/nvidia/driver /driver-root
     # stat /driver-root
@@ -34,23 +34,19 @@ emit_common_err () {
         "It is expected to be installed under " \
         "NVIDIA_DRIVER_ROOT (currently set to '${NVIDIA_DRIVER_ROOT}') " \
         "in the host filesystem. If that path appears to be unexpected: " \
-        "review and adjust the 'nvidiaDriverRoot' Helm chart variable. " \
+        "review the DRA driver's 'nvidiaDriverRoot' Helm chart variable. " \
         "Otherwise, review if the GPU driver has " \
         "actually been installed under that path.\n"
 }
 
-# Goal: relevant log output should repeat over time.
 validate_and_exit_on_success () {
     echo -n "$(date -u +"%Y-%m-%dT%H:%M:%SZ")  /driver-root (${NVIDIA_DRIVER_ROOT} on host): "
 
-    # Search specific set of directories (don't resursively go through all of
-    # /driver-root because that may be a big filesystem). Limit to first result
-    # (multiple results are a bit of a pathological state, but instead of
-    # erroring out we can try to continue with validation logic). Suppress find
-    # stderr: some of those directories are expected to be "not found". Limit to
-    # maxdepth 1 to keep search predictable, and to protect against any
-    # potential symlink loop (we're suppressing find's stderr, so we'd never see
-    # messages like 'Too many levels of symbolic links').
+    # Search specific set of directories (not recursively: not required, and
+    # /driver-root may be a big tree). Limit to first result (multiple results
+    # are a bit of a pathological state, but continue with validation logic).
+    # Suppress find stderr: some search directories are expected to be "not
+    # found".
 
     NV_PATH=$( \
         find \
@@ -62,6 +58,9 @@ validate_and_exit_on_success () {
     )
 
     # Follow symlinks (-L), because `libnvidia-ml.so.1` is typically a link.
+    # maxdepth 1 also protects against any potential symlink loop (we're
+    # suppressing find's stderr, so we'd never see messages like 'Too many
+    # levels of symbolic links').
     NV_LIB_PATH=$( \
         find -L \
             /driver-root/usr/lib64 \
@@ -85,16 +84,14 @@ validate_and_exit_on_success () {
         echo -n "libnvidia-ml.so.1: '${NV_LIB_PATH}', "
     fi
 
-    # Log current top-level entries in /driver-root (valuable debug info).
+    # Log top-level entries in /driver-root (this may be valuable debug info).
     echo "current contents: [$(/bin/ls -1xAw0 /driver-root 2>/dev/null)]."
 
     if [ -n "${NV_PATH}" ] && [ -n "${NV_LIB_PATH}" ]; then
-        # Terminate previous log line.
-        echo
 
-        # Run with clean environment (only set LD_PRELOAD, nvidia-smi has only
-        # this dependency). Emit message before invocation (nvidia-smi may be
-        # slow or hang).
+        # Run with clean environment (only LD_PRELOAD; nvidia-smi has only this
+        # dependency). Emit message before invocation (nvidia-smi may be slow or
+        # hang).
         echo "invoke: env -i LD_PRELOAD=${NV_LIB_PATH} ${NV_PATH}"
 
         # Always show stderr, maybe hide or filter stdout?
@@ -113,8 +110,6 @@ validate_and_exit_on_success () {
             echo "exit code: ${RCODE}"
         fi
     fi
-
-
 
     # Reduce log volume: log hints only every Nth attempt.
     if [ $((_ATTEMPT % 6)) -ne 0 ]; then
@@ -139,7 +134,7 @@ validate_and_exit_on_success () {
         fi
     fi
 
-    # Common mistake: driver container, but forgot -set nvidiaDriverRoot
+    # Common mistake: driver container, but forgot `--set nvidiaDriverRoot`
     if [ "${NVIDIA_DRIVER_ROOT}" == "/" ] && [ -f /driver-root/run/nvidia/driver/usr/bin/nvidia-smi ]; then
         printf '%b' \
         "Hint: '/run/nvidia/driver/usr/bin/nvidia-smi' exists on the host, you " \
@@ -157,12 +152,13 @@ validate_and_exit_on_success () {
     echo
 }
 
-shutdown() {
+# DS pods may get deleted (terminated with SIGTERM) and re-created when the GPU
+# Operator driver container creates a mount at /run/nvidia. Make that explicit.
+log_sigterm() {
   echo "$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ"): received SIGTERM"
   exit 0
 }
-
-trap 'shutdown' SIGTERM
+trap 'log_sigterm' SIGTERM
 
 
 # Design goal: long-running init container that retries at constant frequency,
@@ -173,7 +169,6 @@ _ATTEMPT=0
 while true
 do
     validate_and_exit_on_success
-    # echo "retry in ${_WAIT_S} s"
     sleep ${_WAIT_S}
     _ATTEMPT=$((_ATTEMPT+1))
 done
