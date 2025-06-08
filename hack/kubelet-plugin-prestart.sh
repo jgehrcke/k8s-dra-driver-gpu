@@ -41,7 +41,7 @@ emit_common_err () {
 
 # Goal: relevant log output should repeat over time.
 validate_and_exit_on_success () {
-    echo -n "search NVIDIA_DRIVER_ROOT ($NVIDIA_DRIVER_ROOT)... "
+    echo -n "$(date -u +"%Y-%m-%dT%H:%M:%SZ")  Search NVIDIA_DRIVER_ROOT ($NVIDIA_DRIVER_ROOT). "
 
     # Search specific set of directories (don't resursively go through all of
     # /driver-root because that may be a big filesystem). Limit to first result
@@ -74,15 +74,15 @@ validate_and_exit_on_success () {
     )
 
     if [ -z "${NV_PATH}" ]; then
-        echo -n "not found: nvidia-smi, "
+        echo -n "nvidia-smi: not found. "
     else
-        echo -n "found: ${NV_PATH}, "
+        echo -n "nvidia-smi: '${NV_PATH}'. "
     fi
 
     if [ -z "${NV_LIB_PATH}" ]; then
-        echo -n "not found: libnvidia-ml.so.1 "
+        echo -n "libnvidia-ml.so.1: not found. "
     else
-        echo -n "found: ${NV_LIB_PATH} "
+        echo -n "libnvidia-ml.so.1: '${NV_LIB_PATH}'. "
     fi
 
     # Terminate previous log line.
@@ -111,10 +111,10 @@ validate_and_exit_on_success () {
     fi
 
     # List current set of top-level directories in /driver-root.
-    echo "NVIDIA_DRIVER_ROOT contains: [$(/bin/ls -A1 /driver-root 2>/dev/null | tr '\n' ' ')]"
+    echo "Directory contains: [$(/bin/ls -A1 /driver-root 2>/dev/null | tr '\n' ' ')]."
 
-    # Reduce log volume: log long msgs only every Nth attempt.
-    if [ $((_ATTEMPT % 5)) -ne 0 ]; then
+    # Reduce log volume: log hints only every Nth attempt.
+    if [ $((_ATTEMPT % 6)) -ne 0 ]; then
         return
     fi
 
@@ -167,8 +167,6 @@ _ATTEMPT=0
 
 while true
 do
-    echo
-    date -u +"%Y-%m-%dT%H:%M:%SZ"
     validate_and_exit_on_success
     # echo "retry in ${_WAIT_S} s"
     sleep ${_WAIT_S}
