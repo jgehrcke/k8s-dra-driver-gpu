@@ -74,6 +74,9 @@ spec:
         volumeMounts:
         - name: host-run
           mountPath: /host-run
+          # Explicitly pick up when another container with bidirectional mount
+          # propagation mounts something into host's /run.
+          mountPropagation: HostToContainer
       {{- end }}
       containers:
       {{- if .Values.resources.computeDomains.enabled }}
@@ -127,6 +130,7 @@ spec:
         - name: driver-root
           mountPath: /driver-root
           readOnly: true
+          mountPropagation: HostToContainer
         # For host-managed drivers located not at /.
         # TODO: make this more surgical, see discussion in
         # https://github.com/NVIDIA/k8s-dra-driver-gpu/pull/307.
@@ -186,6 +190,11 @@ spec:
         - name: driver-root
           mountPath: /driver-root
           readOnly: true
+          # If another container with `mountPropagation: Bidirectional` mounts
+          # the driver onto the host, then setting `mountPropagation:
+          # HostToContainer` here makes sure that we pick that mount up in
+          # _this_ container.
+          mountPropagation: HostToContainer
       {{- end }}
       volumes:
       - name: plugins-registry
