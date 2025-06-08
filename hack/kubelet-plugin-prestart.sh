@@ -80,10 +80,13 @@ validate_and_exit_on_success () {
     fi
 
     if [ -z "${NV_LIB_PATH}" ]; then
-        echo -n "libnvidia-ml.so.1 not found"
+        echo -n "not found: libnvidia-ml.so.1 "
     else
-        echo -n "found: ${NV_LIB_PATH}"
+        echo -n "found: ${NV_LIB_PATH} "
     fi
+
+    # Terminate previous log line.
+    echo
 
     if [ -n "${NV_PATH}" ] && [ -n "${NV_LIB_PATH}" ]; then
 
@@ -108,7 +111,7 @@ validate_and_exit_on_success () {
     fi
 
     # List current set of top-level directories in /driver-root.
-    echo "NVIDIA_DRIVER_ROOT contents: $(/bin/ls -A1 /driver-root 2>/dev/null | tr '\n' ' ')"
+    echo "NVIDIA_DRIVER_ROOT contains: [$(/bin/ls -A1 /driver-root 2>/dev/null | tr '\n' ' ')]"
 
     # Reduce log volume: log long msgs only every Nth attempt.
     if [ $((_ATTEMPT % 5)) -ne 0 ]; then
