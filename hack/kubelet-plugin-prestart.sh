@@ -36,7 +36,7 @@ emit_common_err () {
         "in the host filesystem. If that path appears to be unexpected: " \
         "review and adjust the 'nvidiaDriverRoot' Helm chart variable. " \
         "Otherwise, review if the GPU driver has " \
-        "actually been installed under NVIDIA_DRIVER_ROOT.\n"
+        "actually been installed under that path.\n"
 }
 
 # Goal: relevant log output should repeat over time.
@@ -85,6 +85,9 @@ validate_and_exit_on_success () {
         echo -n "libnvidia-ml.so.1: '${NV_LIB_PATH}', "
     fi
 
+    # Log current top-level entries in /driver-root (valuable debug info).
+    echo "current contents: [$(/bin/ls -1xAw0 /driver-root 2>/dev/null)]."
+
     if [ -n "${NV_PATH}" ] && [ -n "${NV_LIB_PATH}" ]; then
         # Terminate previous log line.
         echo
@@ -93,6 +96,8 @@ validate_and_exit_on_success () {
         # this dependency). Emit message before invocation (nvidia-smi may be
         # slow or hang).
         echo "invoke: env -i LD_PRELOAD=${NV_LIB_PATH} ${NV_PATH}"
+
+        # Always show stderr, maybe hide or filter stdout?
         env -i LD_PRELOAD="${NV_LIB_PATH}" "${NV_PATH}"
         RCODE="$?"
 
@@ -109,8 +114,7 @@ validate_and_exit_on_success () {
         fi
     fi
 
-    # List current set of top-level directories in /driver-root.
-    echo "current contents: [$(/bin/ls -1xAw0 /driver-root 2>/dev/null)]."
+
 
     # Reduce log volume: log hints only every Nth attempt.
     if [ $((_ATTEMPT % 6)) -ne 0 ]; then
@@ -147,7 +151,7 @@ validate_and_exit_on_success () {
         printf '%b' \
             "Hint: NVIDIA_DRIVER_ROOT is set to '/run/nvidia/driver' " \
             "which typically means that the NVIDIA GPU Operator " \
-            "manages the GPU driver. Make sure that the Operator " \
+            "manages the GPU driver. Make sure that the GPU Operator " \
             "is deployed and healthy.\n"
     fi
     echo
