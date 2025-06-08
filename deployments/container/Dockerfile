@@ -52,12 +52,12 @@ ENV PATH=$GOPATH/bin:/usr/local/go/bin:$PATH
 WORKDIR /build
 
 # Copy everything that is needed for the go build, but do not invalidate go
-# build artifact layer unnecessarily often. (some things can be copied into the
-# image _after_ the go build).
-COPY    --exclude=./templates* \
-        --exclude=./deployments/helm* \
+# build artifact layer unnecessarily often. Note that --exclude only affects the
+# cache.
+COPY    --exclude=./templates/** \
+        --exclude=./deployments/helm/** \
         --exclude=./hack/kubelet-plugin-prestart.sh \
-        --exclude=./demo* \
+        --exclude=./demo/** \
         --exclude=./Dockerfile \
         . .
 
