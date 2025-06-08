@@ -11,6 +11,22 @@ if [ -z "$NVIDIA_DRIVER_ROOT" ]; then
     export NVIDIA_DRIVER_ROOT="/"
 fi
 
+# Create in-container path /driver-root as a symlink. Pick a different symlink
+# target depending on whether the GPU driver is (i) operator-provided or (ii)
+# host-provided.
+if [ "${NVIDIA_DRIVER_ROOT}" == "/run/nvidia/driver" ]; then
+    # Expectation: link may be broken initially if the GPU operator isn't
+    # deployed yet. The link heals once GPU operator provides the driver on the
+    # host at /run/nvidia/driver. Notably, on the host, the directory
+    # /run/nvidia is the mount point that gets created when the GPU operator
+    # gets deployed
+    echo "create symlink: /driver-root -> /host-run/nvidia/driver"
+    ln -s /host-run/nvidia/driver /driver-root
+    # stat /driver-root
+else
+    echo "create symlink: /driver-root -> /host-driver-root"
+    ln -s /host-driver-root /driver-root
+fi
 
 emit_common_err () {
     printf '%b' \
