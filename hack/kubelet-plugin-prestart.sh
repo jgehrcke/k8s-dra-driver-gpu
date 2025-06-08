@@ -41,7 +41,7 @@ emit_common_err () {
 
 # Goal: relevant log output should repeat over time.
 validate_and_exit_on_success () {
-    echo "NVIDIA_DRIVER_ROOT (path on host): $NVIDIA_DRIVER_ROOT"
+    echo -n "search NVIDIA_DRIVER_ROOT ($NVIDIA_DRIVER_ROOT)... "
 
     # Search specific set of directories (don't resursively go through all of
     # /driver-root because that may be a big filesystem). Limit to first result
@@ -74,15 +74,15 @@ validate_and_exit_on_success () {
     )
 
     if [ -z "${NV_PATH}" ]; then
-        echo "nvidia-smi not found"
+        echo -n "not found: nvidia-smi, "
     else
-        echo "found: ${NV_PATH}"
+        echo -n "found: ${NV_PATH}, "
     fi
 
     if [ -z "${NV_LIB_PATH}" ]; then
-        echo "libnvidia-ml.so.1 not found"
+        echo -n "libnvidia-ml.so.1 not found"
     else
-        echo "found: ${NV_LIB_PATH}"
+        echo -n "found: ${NV_LIB_PATH}"
     fi
 
     if [ -n "${NV_PATH}" ] && [ -n "${NV_LIB_PATH}" ]; then
@@ -150,7 +150,7 @@ validate_and_exit_on_success () {
 }
 
 shutdown() {
-  echo "$(date -u +"%Y-%m-%dT%H:%M:%SZ"): received SIGTERM"
+  echo "$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ"): received SIGTERM"
   exit 0
 }
 
@@ -167,7 +167,7 @@ do
     echo
     date -u +"%Y-%m-%dT%H:%M:%SZ"
     validate_and_exit_on_success
-    echo "retry in ${_WAIT_S} s"
+    # echo "retry in ${_WAIT_S} s"
     sleep ${_WAIT_S}
     _ATTEMPT=$((_ATTEMPT+1))
 done
