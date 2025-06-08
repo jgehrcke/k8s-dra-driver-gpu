@@ -31,17 +31,17 @@ fi
 emit_common_err () {
     printf '%b' \
         "Check failed. Has the NVIDIA GPU driver been set up? " \
-        "The GPU driver is expected to be installed under " \
+        "It is expected to be installed under " \
         "NVIDIA_DRIVER_ROOT (currently set to '${NVIDIA_DRIVER_ROOT}') " \
         "in the host filesystem. If that path appears to be unexpected: " \
         "review and adjust the 'nvidiaDriverRoot' Helm chart variable. " \
-        "If the value is expected: review if the GPU driver has " \
+        "Otherwise, review if the GPU driver has " \
         "actually been installed under NVIDIA_DRIVER_ROOT.\n"
 }
 
 # Goal: relevant log output should repeat over time.
 validate_and_exit_on_success () {
-    echo -n "$(date -u +"%Y-%m-%dT%H:%M:%SZ")  Search NVIDIA_DRIVER_ROOT ($NVIDIA_DRIVER_ROOT). "
+    echo -n "$(date -u +"%Y-%m-%dT%H:%M:%SZ")  /driver-root (${NVIDIA_DRIVER_ROOT} on host): "
 
     # Search specific set of directories (don't resursively go through all of
     # /driver-root because that may be a big filesystem). Limit to first result
@@ -74,21 +74,20 @@ validate_and_exit_on_success () {
     )
 
     if [ -z "${NV_PATH}" ]; then
-        echo -n "nvidia-smi: not found. "
+        echo -n "nvidia-smi: not found, "
     else
-        echo -n "nvidia-smi: '${NV_PATH}'. "
+        echo -n "nvidia-smi: '${NV_PATH}', "
     fi
 
     if [ -z "${NV_LIB_PATH}" ]; then
-        echo -n "libnvidia-ml.so.1: not found. "
+        echo -n "libnvidia-ml.so.1: not found, "
     else
-        echo -n "libnvidia-ml.so.1: '${NV_LIB_PATH}'. "
+        echo -n "libnvidia-ml.so.1: '${NV_LIB_PATH}', "
     fi
 
-    # Terminate previous log line.
-    echo
-
     if [ -n "${NV_PATH}" ] && [ -n "${NV_LIB_PATH}" ]; then
+        # Terminate previous log line.
+        echo
 
         # Run with clean environment (only set LD_PRELOAD, nvidia-smi has only
         # this dependency). Emit message before invocation (nvidia-smi may be
@@ -111,7 +110,7 @@ validate_and_exit_on_success () {
     fi
 
     # List current set of top-level directories in /driver-root.
-    echo "Directory contains: [$(/bin/ls -A1 /driver-root 2>/dev/null | tr '\n' ' ')]."
+    echo "current contents: [$(/bin/ls -1xAw0 /driver-root 2>/dev/null)]."
 
     # Reduce log volume: log hints only every Nth attempt.
     if [ $((_ATTEMPT % 6)) -ne 0 ]; then
@@ -120,6 +119,7 @@ validate_and_exit_on_success () {
 
     # nvidia-smi binaries not found, or execution failed. First, provide generic
     # error message. Then, try to provide actional hints for common problems.
+    echo
     emit_common_err
 
     # For host-provided driver not at / provide feedback for two special cases.
@@ -138,18 +138,19 @@ validate_and_exit_on_success () {
     # Common mistake: driver container, but forgot -set nvidiaDriverRoot
     if [ "${NVIDIA_DRIVER_ROOT}" == "/" ] && [ -f /driver-root/run/nvidia/driver/usr/bin/nvidia-smi ]; then
         printf '%b' \
-        "Hint: /run/nvidia/driver/usr/bin/nvidia-smi exists on the host, you " \
+        "Hint: '/run/nvidia/driver/usr/bin/nvidia-smi' exists on the host, you " \
         "may want to re-install the DRA driver Helm chart with " \
         "--set nvidiaDriverRoot=/run/nvidia/driver\n"
     fi
 
     if [ "${NVIDIA_DRIVER_ROOT}" == "/run/nvidia/driver" ]; then
         printf '%b' \
-            "Hint: NVIDIA_DRIVER_ROOT is /run/nvidia/driver " \
+            "Hint: NVIDIA_DRIVER_ROOT is set to '/run/nvidia/driver' " \
             "which typically means that the NVIDIA GPU Operator " \
             "manages the GPU driver. Make sure that the Operator " \
             "is deployed and healthy.\n"
     fi
+    echo
 }
 
 shutdown() {
