@@ -31,17 +31,17 @@ fi
 emit_common_err () {
     printf '%b' \
         "Check failed. Has the NVIDIA GPU driver been set up? " \
-        "The GPU driver is expected to be installed under " \
+        "It is expected to be installed under " \
         "NVIDIA_DRIVER_ROOT (currently set to '${NVIDIA_DRIVER_ROOT}') " \
         "in the host filesystem. If that path appears to be unexpected: " \
         "review and adjust the 'nvidiaDriverRoot' Helm chart variable. " \
-        "If the value is expected: review if the GPU driver has " \
+        "Otherwise, review if the GPU driver has " \
         "actually been installed under NVIDIA_DRIVER_ROOT.\n"
 }
 
 # Goal: relevant log output should repeat over time.
 validate_and_exit_on_success () {
-    echo -n "$(date -u +"%Y-%m-%dT%H:%M:%SZ")  /driver-root (host: ${NVIDIA_DRIVER_ROOT}): "
+    echo -n "$(date -u +"%Y-%m-%dT%H:%M:%SZ")  /driver-root (${NVIDIA_DRIVER_ROOT} on host): "
 
     # Search specific set of directories (don't resursively go through all of
     # /driver-root because that may be a big filesystem). Limit to first result
