@@ -72,8 +72,8 @@ spec:
           readOnly: true
       {{- else }}
         volumeMounts:
-        - name: host-run
-          mountPath: /host-run
+        - name: host-run-nvidia
+          mountPath: /host-run-nvidia
           # Explicitly pick up when another container with bidirectional mount
           # propagation mounts something into host's /run.
           mountPropagation: HostToContainer
@@ -212,8 +212,7 @@ spec:
           # This cannot be /run/nvidia/driver because then the ds-controlled
           # pods get deleted and recreated in the very moment when GPU operator
           # creates mountpoint at /run/nvidia on the host.
-          #
-          path: /tmp/driver-root-dummy-test
+          path: /driver-root
 
           # In case of an operator-provided driver: if the driver is provided
           # after this pod starts then this directory will never pick up that
@@ -229,9 +228,11 @@ spec:
       # Mount in host's /run in case of operator-provided driver.
       # Goal: detect in container when operator is done providing
       # driver.
-      - name: host-run
+      - name: host-run-nvidia
         hostPath:
-          path: /run
+          # This is the same volume that the GPU Operator's driver container
+          # operates on.
+          path: /run/nvidia
           # Highly likely to exist, but not guaranteed by POSIX.
           type: DirectoryOrCreate
       {{- end }}
