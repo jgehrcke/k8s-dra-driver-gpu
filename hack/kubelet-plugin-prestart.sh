@@ -34,7 +34,7 @@ emit_common_err () {
         "It is expected to be installed under " \
         "NVIDIA_DRIVER_ROOT (currently set to '${NVIDIA_DRIVER_ROOT}') " \
         "in the host filesystem. If that path appears to be unexpected: " \
-        "review and adjust the 'nvidiaDriverRoot' Helm chart variable. " \
+        "review the DRA driver's 'nvidiaDriverRoot' Helm chart variable. " \
         "Otherwise, review if the GPU driver has " \
         "actually been installed under that path.\n"
 }
