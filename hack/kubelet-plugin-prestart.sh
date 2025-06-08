@@ -20,8 +20,8 @@ if [ "${NVIDIA_DRIVER_ROOT}" == "/run/nvidia/driver" ]; then
     # host at /run/nvidia/driver. Notably, on the host, the directory
     # /run/nvidia is the mount point that gets created when the GPU operator
     # gets deployed
-    echo "create symlink: /driver-root -> /host-run-nvidia/driver"
-    ln -s /host-run-nvidia/driver /driver-root
+    echo "create symlink: /driver-root -> /host-run/nvidia/driver"
+    ln -s /host-run/nvidia/driver /driver-root
     # stat /driver-root
 else
     echo "create symlink: /driver-root -> /host-driver-root"
