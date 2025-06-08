@@ -1,3 +1,7 @@
+# syntax=docker.io/docker/dockerfile:1.7-labs
+# The above enables the COPY --exclude flag, see:
+# https://github.com/moby/buildkit/pull/4561
+
 # Copyright (c) 2019-2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,7 +50,15 @@ ENV GOPATH=/go
 ENV PATH=$GOPATH/bin:/usr/local/go/bin:$PATH
 
 WORKDIR /build
-COPY . .
+
+# Copy everything that is needed for the go build, but do not invalidate go
+# build artifact layer unnecessarily often. (some things can be copied into the
+# image _after_ the go build).
+COPY    --exclude=/templates* \
+        --exclude=/hack/kubelet-plugin-prestart.sh \
+        --exclude=/demo* \
+        --exclude=/Dockerfile \
+        . .
 
 RUN mkdir /artifacts
 
@@ -94,5 +106,5 @@ COPY --from=build   /artifacts/compute-domain-controller     /usr/bin/compute-do
 COPY --from=build   /artifacts/compute-domain-kubelet-plugin /usr/bin/compute-domain-kubelet-plugin
 COPY --from=build   /artifacts/compute-domain-daemon         /usr/bin/compute-domain-daemon
 COPY --from=build   /artifacts/gpu-kubelet-plugin            /usr/bin/gpu-kubelet-plugin
-COPY --from=build   /build/hack/kubelet-plugin-prestart.sh   /usr/bin/kubelet-plugin-prestart.sh
-COPY --from=build   /build/templates                         /templates
+COPY /hack/kubelet-plugin-prestart.sh   /usr/bin/kubelet-plugin-prestart.sh
+COPY /templates                         /templates
