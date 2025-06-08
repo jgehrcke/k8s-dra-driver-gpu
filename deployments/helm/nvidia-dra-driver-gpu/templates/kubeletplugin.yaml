@@ -207,25 +207,10 @@ spec:
         hostPath:
           path: /var/run/cdi
 
-      {{- if eq "/run/nvidia/driver" .Values.nvidiaDriverRoot }}
-      - name: driver-root
-        hostPath:
-          # This cannot be /run/nvidia/driver because then the ds-controlled
-          # pods get deleted and recreated in the very moment when GPU operator
-          # creates mountpoint at /run/nvidia on the host.
-          #
-          path: /tmp/driver-root-dummy-test
-
-          # In case of an operator-provided driver: if the driver is provided
-          # after this pod starts then this directory will never pick up that
-          # driver.
-          type: DirectoryOrCreate
-      {{- else }}
       - name: driver-root
         hostPath:
           path: {{ .Values.nvidiaDriverRoot }}
           type: DirectoryOrCreate
-      {{- end }}
 
       {{- if eq "/run/nvidia/driver" .Values.nvidiaDriverRoot }}
       # Mount in host's /run in case of operator-provided driver.
