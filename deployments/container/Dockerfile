@@ -55,6 +55,7 @@ WORKDIR /build
 # build artifact layer unnecessarily often. (some things can be copied into the
 # image _after_ the go build).
 COPY    --exclude=/templates* \
+        --exclude=/helm* \
         --exclude=/hack/kubelet-plugin-prestart.sh \
         --exclude=/demo* \
         --exclude=/Dockerfile \
