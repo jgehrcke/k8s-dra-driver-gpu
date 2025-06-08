@@ -206,6 +206,7 @@ spec:
       - name: cdi
         hostPath:
           path: /var/run/cdi
+
       {{- if eq "/run/nvidia/driver" .Values.nvidiaDriverRoot }}
       - name: driver-root
         hostPath:
@@ -225,6 +226,7 @@ spec:
           path: {{ .Values.nvidiaDriverRoot }}
           type: DirectoryOrCreate
       {{- end }}
+
       {{- if eq "/run/nvidia/driver" .Values.nvidiaDriverRoot }}
       # Mount in host's /run in case of operator-provided driver.
       # Goal: detect in container when operator is done providing
@@ -235,6 +237,7 @@ spec:
           # Highly likely to exist, but not guaranteed by POSIX.
           type: DirectoryOrCreate
       {{- end }}
+
       - name: host-dev
         hostPath:
           path: /dev
