@@ -61,6 +61,13 @@ spec:
         # Use runc: explicit "void"; otherwise we inherit "all".
         - name: NVIDIA_VISIBLE_DEVICES
           value: void
+        # In case of the operator-provided driver, another container mounts the
+        # driver onto the host using `mountPropagation: Bidirectional`
+        # (out-of-band of the lifecycle of _this_ pod here). For us to see that
+        # mount, `mountPropagation: HostToContainer` is required (docs: "if any
+        # Pod with Bidirectional mount propagation to the same volume mounts
+        # anything there, the container with HostToContainer mount propagation
+        # will see it.").
         - name: driver-root
           mountPath: /driver-root
           readOnly: true
@@ -177,10 +184,6 @@ spec:
         - name: driver-root
           mountPath: /driver-root
           readOnly: true
-          # If another container with `mountPropagation: Bidirectional` mounts
-          # the driver onto the host, then setting `mountPropagation:
-          # HostToContainer` here makes sure that we pick that mount up in this
-          # container.
           mountPropagation: HostToContainer
       {{- end }}
       volumes:
