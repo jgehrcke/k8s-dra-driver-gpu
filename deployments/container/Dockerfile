@@ -16,7 +16,7 @@
 ARG TOOLKIT_CONTAINER_IMAGE=unknown
 
 # Run build with binaries native to the current build platform.
-FROM --platform=$BUILDPLATFORM nvcr.io/nvidia/cuda:12.9.0-base-ubuntu20.04 AS build
+FROM --platform=$BUILDPLATFORM nvcr.io/nvidia/cuda:12.9.1-base-ubuntu22.04 AS build
 
 # Require arg to be provided (set invalid default value).
 ARG GOLANG_VERSION=x.x.x
