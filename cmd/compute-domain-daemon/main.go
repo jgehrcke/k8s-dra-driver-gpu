@@ -51,6 +51,7 @@ type Flags struct {
 	computeDomainNamespace string
 	nodeName               string
 	podIP                  string
+	maxNodesPerIMEXDomain  int
 	loggingConfig          *flags.LoggingConfig
 	featureGateConfig      *flags.FeatureGateConfig
 }
@@ -124,6 +125,12 @@ func newApp() *cli.App {
 			EnvVars:     []string{"POD_IP"},
 			Destination: &flags.podIP,
 		},
+		&cli.IntFlag{
+			Name:        "max-nodes-per-imex-domain",
+			Usage:       "The maximum number of possible nodes per IMEX domain",
+			EnvVars:     []string{"MAX_NODES_PER_IMEX_DOMAIN"},
+			Destination: &flags.maxNodesPerIMEXDomain,
+		},
 	}
 	cliFlags = append(cliFlags, flags.featureGateConfig.Flags()...)
 	cliFlags = append(cliFlags, flags.loggingConfig.Flags()...)
@@ -181,7 +188,7 @@ func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 	var dnsNameManager *DNSNameManager
 	if featuregates.Enabled(featuregates.IMEXDaemonsWithDNSNames) {
 		// Prepare DNS name manager
-		dnsNameManager = NewDNSNameManager(flags.cliqueID, nodesConfigPath)
+		dnsNameManager = NewDNSNameManager(flags.cliqueID, flags.maxNodesPerIMEXDomain, nodesConfigPath)
 
 		// Create static nodes config file with DNS names
 		if err := dnsNameManager.WriteNodesConfig(); err != nil {

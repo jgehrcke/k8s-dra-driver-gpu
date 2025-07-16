@@ -30,7 +30,6 @@ import (
 )
 
 const (
-	maxDNSNames   = 18
 	hostsFilePath = "/etc/hosts"
 	dnsNameFormat = "compute-domain-daemon-%d"
 )
@@ -41,17 +40,19 @@ type IPToDNSNameMap map[string]string
 // DNSNameManager manages the allocation of static DNS names to IP addresses.
 type DNSNameManager struct {
 	sync.Mutex
-	ipToDNSName     IPToDNSNameMap
-	cliqueID        string
-	nodesConfigPath string
+	ipToDNSName           IPToDNSNameMap
+	cliqueID              string
+	maxNodesPerIMEXDomain int
+	nodesConfigPath       string
 }
 
 // NewDNSNameManager creates a new DNS name manager.
-func NewDNSNameManager(cliqueID string, nodesConfigPath string) *DNSNameManager {
+func NewDNSNameManager(cliqueID string, maxNodesPerIMEXDomain int, nodesConfigPath string) *DNSNameManager {
 	return &DNSNameManager{
-		ipToDNSName:     make(IPToDNSNameMap),
-		cliqueID:        cliqueID,
-		nodesConfigPath: nodesConfigPath,
+		ipToDNSName:           make(IPToDNSNameMap),
+		cliqueID:              cliqueID,
+		maxNodesPerIMEXDomain: maxNodesPerIMEXDomain,
+		nodesConfigPath:       nodesConfigPath,
 	}
 }
 
@@ -134,7 +135,7 @@ func (m *DNSNameManager) allocateDNSName(ip string) (string, error) {
 	}
 
 	// Find the next available DNS name
-	for i := 0; i < maxDNSNames; i++ {
+	for i := 0; i < m.maxNodesPerIMEXDomain; i++ {
 		dnsName := fmt.Sprintf(dnsNameFormat, i)
 		// Check if this DNS name is already in use
 		inUse := false
@@ -151,7 +152,7 @@ func (m *DNSNameManager) allocateDNSName(ip string) (string, error) {
 	}
 
 	// If all DNS names are used, return an error
-	return "", fmt.Errorf("no DNS names available (max: %d)", maxDNSNames)
+	return "", fmt.Errorf("no DNS names available (max: %d)", m.maxNodesPerIMEXDomain)
 }
 
 // updateHostsFile updates the /etc/hosts file with current IP to DNS name mappings.
@@ -221,14 +222,14 @@ func (m *DNSNameManager) WriteNodesConfig() error {
 	defer f.Close()
 
 	// Write static DNS names
-	for i := 0; i < maxDNSNames; i++ {
+	for i := 0; i < m.maxNodesPerIMEXDomain; i++ {
 		dnsName := fmt.Sprintf(dnsNameFormat, i)
 		if _, err := fmt.Fprintf(f, "%s\n", dnsName); err != nil {
 			return fmt.Errorf("failed to write to nodes config file: %w", err)
 		}
 	}
 
-	klog.Infof("Created static nodes config file with %d DNS names using format %s", maxDNSNames, dnsNameFormat)
+	klog.Infof("Created static nodes config file with %d DNS names using format %s", m.maxNodesPerIMEXDomain, dnsNameFormat)
 
 	return nil
 }
