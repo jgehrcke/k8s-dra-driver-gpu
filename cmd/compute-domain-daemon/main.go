@@ -33,6 +33,7 @@ import (
 	"github.com/urfave/cli/v2"
 
 	nvapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
+	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
 	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/flags"
 )
 
@@ -158,7 +159,6 @@ func newApp() *cli.App {
 
 // Run invokes the IMEX daemon and manages its lifecycle.
 func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
-
 	// Support heterogeneous compute domain
 	if flags.cliqueID == "" {
 		fmt.Println("ClusterUUID and CliqueId are NOT set for GPUs on this node.")
@@ -178,7 +178,18 @@ func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 	}
 	klog.Infof("config: %v", config)
 
-	// Prepare IMEX daemon process manager (not invoking the process yet).
+	var dnsNameManager *DNSNameManager
+	if featuregates.Enabled(featuregates.IMEXDaemonsWithDNSNames) {
+		// Prepare DNS name manager
+		dnsNameManager = NewDNSNameManager(flags.cliqueID, nodesConfigPath)
+
+		// Create static nodes config file with DNS names
+		if err := dnsNameManager.WriteNodesConfig(); err != nil {
+			return fmt.Errorf("failed to create static nodes config: %w", err)
+		}
+	}
+
+	// Prepare IMEX daemon process manager.
 	daemonCommandLine := []string{imexBinaryPath, "-c", imexConfigPath}
 	processManager := NewProcessManager(daemonCommandLine)
 
@@ -200,14 +211,23 @@ func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 		}
 	}()
 
-	// Start IMEXDaemonUpdateLoop() in goroutine (watches for CD status
-	// changes, and restarts the IMEX daemon as needed).
+	// Start IMEX daemon update loop in goroutine (watches for CD status
+	// changes and manages IMEX daemon updates).
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := IMEXDaemonUpdateLoop(ctx, controller, flags.cliqueID, processManager); err != nil {
-			klog.Errorf("IMEXDaemonUpdateLoop failed, initiate shutdown: %s", err)
-			cancel()
+		if featuregates.Enabled(featuregates.IMEXDaemonsWithDNSNames) {
+			// Use new DNS name-based functionality
+			if err := IMEXDaemonUpdateLoopWithDNSNames(ctx, controller, processManager, dnsNameManager); err != nil {
+				klog.Errorf("IMEXDaemonUpdateLoop failed, initiate shutdown: %s", err)
+				cancel()
+			}
+		} else {
+			// Use original IP-based functionality
+			if err := IMEXDaemonUpdateLoopWithIPs(ctx, controller, flags.cliqueID, processManager); err != nil {
+				klog.Errorf("IMEXDaemonUpdateLoop failed, initiate shutdown: %s", err)
+				cancel()
+			}
 		}
 	}()
 
@@ -229,14 +249,14 @@ func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 	return nil
 }
 
-// IMEXDaemonUpdateLoop() reacts to ComputeDomain status changes by updating the
+// IMEXDaemonUpdateLoopWithIPs reacts to ComputeDomain status changes by updating the
 // IMEX daemon nodes config file and (re)starting the IMEX daemon process.
-func IMEXDaemonUpdateLoop(ctx context.Context, controller *Controller, cliqueID string, pm *ProcessManager) error {
+func IMEXDaemonUpdateLoopWithIPs(ctx context.Context, controller *Controller, cliqueID string, pm *ProcessManager) error {
 	for {
 		klog.Infof("wait for nodes update")
 		select {
 		case <-ctx.Done():
-			klog.Infof("shutdown: stop IMEXDaemonUpdateLoop")
+			klog.Infof("shutdown: stop IMEXDaemonUpdateLoopWithIPs")
 			return nil
 		case nodes := <-controller.GetNodesUpdateChan():
 			if err := writeNodesConfig(cliqueID, nodes); err != nil {
@@ -249,6 +269,31 @@ func IMEXDaemonUpdateLoop(ctx context.Context, controller *Controller, cliqueID 
 				// might be pointless. Terminate us.
 				return fmt.Errorf("error (re)starting IMEX daemon: %w", err)
 			}
+		}
+	}
+}
+
+// IMEXDaemonUpdateLoopWithDNSNames reacts to ComputeDomain status changes by
+// updating the /etc/hosts file with IP to DNS name mappings. This relies on
+// the IMEX daemon to pick up these changes automatically (and quickly) --
+// which it seems to do via grpc-based health-checking of individual
+// connections. We only restart the IMEX daemon if it crashes (both
+// unexpectedly and expectedly).
+func IMEXDaemonUpdateLoopWithDNSNames(ctx context.Context, controller *Controller, processManager *ProcessManager, dnsNameManager *DNSNameManager) error {
+	for {
+		klog.Infof("wait for nodes update")
+		select {
+		case <-ctx.Done():
+			klog.Infof("shutdown: stop IMEXDaemonUpdateLoopWithDNSNames")
+			return nil
+		case nodes := <-controller.GetNodesUpdateChan():
+			if err := dnsNameManager.UpdateDNSNameMappings(nodes); err != nil {
+				return fmt.Errorf("failed to update DNS name => IP mappings: %w", err)
+			}
+			if err := processManager.EnsureStarted(); err != nil {
+				return fmt.Errorf("failed to ensure IMEX daemon is started: %w", err)
+			}
+			dnsNameManager.LogDNSNameMappings()
 		}
 	}
 }
@@ -291,7 +336,7 @@ func check(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 	return nil
 }
 
-// cwriteNodesConfig creates a nodesConfig file with IPs for nodes in the same clique.
+// writeNodesConfig creates a nodesConfig file with IPs for nodes in the same clique.
 func writeNodesConfig(cliqueID string, nodes []*nvapi.ComputeDomainNode) error {
 	// Ensure the directory exists
 	dir := filepath.Dir(nodesConfigPath)
