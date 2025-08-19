@@ -26,3 +26,10 @@ version: "25.3.0"
 # number below to not have a "v" prefix (a "v" is added by said logic to yield a
 # valid image reference).
 appVersion: "25.3.0"
+
+# The kubeVersion puts constraints on the Kubernetes versions where this helm
+# chart can be installed. Note a '-0' at the end of a version string in the
+# kubeVersion generally indicates that all pre-release versions should also be
+# included. However, it is also required to allow a given chart to be installed
+# on GKE as they add a '-gke-*' suffix to all of their Kubernetes versions.
+kubeVersion: ">=1.32.0-0"
