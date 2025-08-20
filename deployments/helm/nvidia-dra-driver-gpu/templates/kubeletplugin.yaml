@@ -137,7 +137,7 @@ spec:
         # TODO: make this more surgical, see discussion in
         # https://github.com/NVIDIA/k8s-dra-driver-gpu/pull/307.
         - name: host-dev
-          mountPath: /dev
+          mountPath: /host/dev
       {{- end }}
       {{- if .Values.resources.gpus.enabled }}
       - name: gpus
