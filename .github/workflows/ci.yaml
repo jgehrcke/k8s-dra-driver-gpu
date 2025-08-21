@@ -33,7 +33,7 @@ jobs:
         name: checkout
       - name: build-and-push-chart
         run: |
-          apk add --no-cache make diff
+          apk add --no-cache make diffutils
           export VERSION="$(make print-VERSION)"
           export VERSION_W_COMMIT="$(make print-VERSION)-$(echo $GITHUB_SHA | cut -c1-8)"
           echo "${VERSION_W_COMMIT}"
