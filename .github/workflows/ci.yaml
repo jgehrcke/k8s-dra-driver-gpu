@@ -19,10 +19,31 @@ on:
       - "pull-request/[0-9]+"
       - main
       - release-*
-  
+
 jobs:
   basic:
     uses: ./.github/workflows/basic-checks.yaml
+
+
+  chart:
+    runs-on: linux-amd64-cpu4
+    container:
+      image: docker.io/library/alpine/helm
+    steps:
+      - uses: actions/checkout@v5
+        name: checkout
+      - name: build-and-push-chart
+        env:
+          IMAGE_NAME: ghcr.io/nvidia/k8s-dra-driver-gpu
+          # include git commit suffix
+          VERSION: ${{ inputs.version }}
+          PUSH_ON_BUILD: true
+          BUILD_MULTI_ARCH_IMAGES: "true"
+        run: |
+          echo "${VERSION}"
+          echo ${{ secrets.GITHUB_TOKEN }} | helm registry login --password-stdin ghcr.io -u YOUR_GITHUB_USERNAME
+          helm package deployments/helm/nvidia-dra-driver-gpu/
+          #helm push hello-world-0.1.0.tgz oci://ghcr.io/YOUR_GITHUB_USERNAME
 
   image:
     uses: ./.github/workflows/image.yaml
