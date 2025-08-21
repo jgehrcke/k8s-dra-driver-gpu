@@ -32,12 +32,8 @@ jobs:
       - uses: actions/checkout@v5
         name: checkout
       - name: build-and-push-chart
-        with:
-          version: ${{ needs.basic.outputs.version }}
-        env:
-          # includes git commit suffix
-          VERSION: ${{ inputs.version }}
         run: |
+          export VERSION="$(make print-VERSION)-$(echo $GITHUB_SHA | cut -c1-8)"
           echo "${VERSION}"
           echo ${{ secrets.GITHUB_TOKEN }} | helm registry login --password-stdin ghcr.io -u YOUR_GITHUB_USERNAME
           helm package deployments/helm/nvidia-dra-driver-gpu/
