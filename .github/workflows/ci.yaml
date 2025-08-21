@@ -24,11 +24,10 @@ jobs:
   basic:
     uses: ./.github/workflows/basic-checks.yaml
 
-
   chart:
     runs-on: linux-amd64-cpu4
     container:
-      image: docker.io/library/alpine/helm
+      image: docker.io/alpine/helm
     steps:
       - uses: actions/checkout@v5
         name: checkout
