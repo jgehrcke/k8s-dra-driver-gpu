@@ -34,7 +34,7 @@ jobs:
       - name: build-and-push-chart
         run: |
           apk add --no-cache make git
-          export VERSION="${$(make print-VERSION)}"
+          export VERSION="$(make print-VERSION)"
           export VERSION_W_COMMIT="$(make print-VERSION)-$(echo $GITHUB_SHA | cut -c1-8)"
           echo "${VERSION_W_COMMIT}"
           echo ${{ secrets.GITHUB_TOKEN }} | helm registry login --password-stdin ghcr.io -u YOUR_GITHUB_USERNAME
