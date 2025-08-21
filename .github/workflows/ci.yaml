@@ -38,16 +38,16 @@ jobs:
           export VERSION_W_COMMIT="$(make print-VERSION)-$(echo $GITHUB_SHA | cut -c1-8)"
           echo "${VERSION_W_COMMIT}"
           echo ${{ secrets.GITHUB_TOKEN }} | helm registry login --password-stdin ghcr.io -u YOUR_GITHUB_USERNAME
-          sed -i.bak 's/'${VERSION}'/'${VERSION_W_COMMIT}'/g' deployments/helm/nvidia-dra-driver-gpu/Chart.yaml
+          sed -i.bak "s/${VERSION}/${VERSION_W_COMMIT}/g" deployments/helm/nvidia-dra-driver-gpu/Chart.yaml
           cat deployments/helm/nvidia-dra-driver-gpu/Chart.yaml
           (cd deployments/helm/nvidia-dra-driver-gpu && diff -wu Chart.yaml.bak Chart.yaml)
           helm package deployments/helm/nvidia-dra-driver-gpu
           #helm push hello-world-0.1.0.tgz oci://ghcr.io/YOUR_GITHUB_USERNAME
 
-  image:
-    uses: ./.github/workflows/image.yaml
-    needs:
-    - basic
-    secrets: inherit
-    with:
-      version: ${{ needs.basic.outputs.version }}
+  # image:
+  #   uses: ./.github/workflows/image.yaml
+  #   needs:
+  #   - basic
+  #   secrets: inherit
+  #   with:
+  #     version: ${{ needs.basic.outputs.version }}
