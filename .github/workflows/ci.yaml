@@ -33,7 +33,9 @@ jobs:
         name: checkout
       - name: build-and-push-chart
         run: |
-          apk add --no-cache make diffutils
+          sed --version
+          apk add --no-cache make diffutils sed
+          sed --version
           export VERSION="$(make print-VERSION)"
           export VERSION_W_COMMIT="$(make print-VERSION)-$(echo $GITHUB_SHA | cut -c1-8)"
           echo "replace ${VERSION} with ${VERSION_W_COMMIT}"
