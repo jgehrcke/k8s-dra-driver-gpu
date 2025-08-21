@@ -43,6 +43,7 @@ const (
 	nvidiaCapsDeviceName             = "nvidia-caps"
 	nvidiaCapsImexChannelsDeviceName = "nvidia-caps-imex-channels"
 	nvidiaCapFabricImexMgmtPath      = "/proc/driver/nvidia/capabilities/fabric-imex-mgmt"
+	hostDevContainerPath             = "/host/dev"
 )
 
 type deviceLib struct {
@@ -87,6 +88,10 @@ func newDeviceLib(driverRoot root) (*deviceLib, error) {
 
 	if err := d.unmountRecursively(procDriverNvidiaPath); err != nil {
 		return nil, fmt.Errorf("error recursively unmounting %s: %w", procDriverNvidiaPath, err)
+	}
+
+	if err := d.conditionallyBindMountHostDev(); err != nil {
+		return nil, fmt.Errorf("error conditionally bind mounting host dev: %w", err)
 	}
 
 	return &d, nil
@@ -417,4 +422,28 @@ func (l deviceLib) unmountRecursively(root string) error {
 	}
 
 	return helper(root)
+}
+
+// conditionallyBindMountHostDev bind mounts hostDevContainerPath over /dev when devRoot is "/".
+// Introduced to address the issues described in https://github.com/NVIDIA/k8s-dra-driver-gpu/issues/477.
+// TODO: Revisit with a more comprehensive solution as proposed in https://github.com/NVIDIA/k8s-dra-driver-gpu/pull/307.
+func (l deviceLib) conditionallyBindMountHostDev() error {
+	// If devRoot != "/" then we don't need to do the mount
+	if l.devRoot != "/" {
+		return nil
+	}
+
+	// Get a reference to the mount executable.
+	mountExecutable, err := exec.LookPath("mount")
+	if err != nil {
+		return fmt.Errorf("error looking up mount executable: %w", err)
+	}
+	mounter := mount.New(mountExecutable)
+
+	// Bind mount hostDevContainerPath over /dev
+	if err := mounter.Mount(hostDevContainerPath, "/dev", "", []string{"bind"}); err != nil {
+		return fmt.Errorf("failed to bind mount %s over /dev: %w", hostDevContainerPath, err)
+	}
+
+	return nil
 }
