@@ -42,7 +42,7 @@ jobs:
           echo "replace ${VERSION:1} with ${VERSION_W_COMMIT:1}"
           sed -i.bak "s/${VERSION:1}/${VERSION_W_COMMIT:1}/g" deployments/helm/nvidia-dra-driver-gpu/Chart.yaml
           cat deployments/helm/nvidia-dra-driver-gpu/Chart.yaml
-          (cd deployments/helm/nvidia-dra-driver-gpu && diff -wu Chart.yaml.bak Chart.yaml)
+          (cd deployments/helm/nvidia-dra-driver-gpu && diff -wu Chart.yaml.bak Chart.yaml) || echo "ignore diff exit code"
           helm package deployments/helm/nvidia-dra-driver-gpu
           echo ${{ secrets.GITHUB_TOKEN }} | helm registry login --password-stdin ghcr.io -u YOUR_GITHUB_USERNAME
           #helm push hello-world-0.1.0.tgz oci://ghcr.io/YOUR_GITHUB_USERNAME
