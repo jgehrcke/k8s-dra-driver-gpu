@@ -25,6 +25,8 @@ jobs:
     uses: ./.github/workflows/basic-checks.yaml
 
   chart:
+    with:
+      version: ${{ needs.basic.outputs.version }}
     runs-on: linux-amd64-cpu4
     container:
       image: docker.io/alpine/helm
@@ -33,11 +35,8 @@ jobs:
         name: checkout
       - name: build-and-push-chart
         env:
-          IMAGE_NAME: ghcr.io/nvidia/k8s-dra-driver-gpu
-          # include git commit suffix
+          # includes git commit suffix
           VERSION: ${{ inputs.version }}
-          PUSH_ON_BUILD: true
-          BUILD_MULTI_ARCH_IMAGES: "true"
         run: |
           echo "${VERSION}"
           echo ${{ secrets.GITHUB_TOKEN }} | helm registry login --password-stdin ghcr.io -u YOUR_GITHUB_USERNAME
