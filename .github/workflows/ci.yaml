@@ -45,7 +45,7 @@ jobs:
           (cd deployments/helm/nvidia-dra-driver-gpu && diff -wu Chart.yaml.bak Chart.yaml) || echo "ignore diff exit code"
           helm package deployments/helm/nvidia-dra-driver-gpu
           echo ${{ secrets.GITHUB_TOKEN }} | helm registry login --password-stdin ghcr.io -u YOUR_GITHUB_USERNAME
-          #helm push hello-world-0.1.0.tgz oci://ghcr.io/YOUR_GITHUB_USERNAME
+          helm push nvidia-dra-driver-gpu-*tgz oci://ghcr.io/NVIDIA
 
   # image:
   #   uses: ./.github/workflows/image.yaml
