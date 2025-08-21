@@ -40,7 +40,7 @@ jobs:
           echo ${{ secrets.GITHUB_TOKEN }} | helm registry login --password-stdin ghcr.io -u YOUR_GITHUB_USERNAME
           sed -i.bak 's/'$VERSION'/'$VERSION_W_COMMIT'/g' deployments/helm/nvidia-dra-driver-gpu/Chart.yaml
           echo deployments/helm/nvidia-dra-driver-gpu/Chart.yaml
-          pushd deployments/helm/nvidia-dra-driver-gpu && diff -wu Chart.yaml.bak Chart.yaml && popd
+          (cd deployments/helm/nvidia-dra-driver-gpu && diff -wu Chart.yaml.bak Chart.yaml)
           helm package deployments/helm/nvidia-dra-driver-gpu
           #helm push hello-world-0.1.0.tgz oci://ghcr.io/YOUR_GITHUB_USERNAME
 
