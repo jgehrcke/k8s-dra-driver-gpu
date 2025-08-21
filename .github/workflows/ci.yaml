@@ -33,13 +33,13 @@ jobs:
         name: checkout
       - name: build-and-push-chart
         run: |
-          apk add --no-cache make git
+          apk add --no-cache make diff
           export VERSION="$(make print-VERSION)"
           export VERSION_W_COMMIT="$(make print-VERSION)-$(echo $GITHUB_SHA | cut -c1-8)"
           echo "${VERSION_W_COMMIT}"
           echo ${{ secrets.GITHUB_TOKEN }} | helm registry login --password-stdin ghcr.io -u YOUR_GITHUB_USERNAME
-          sed -i 's/'$VERSION'/'$VERSION_W_COMMIT'/g' deployments/helm/nvidia-dra-driver-gpu/Chart.yaml
-          git diff
+          sed -i.bak 's/'$VERSION'/'$VERSION_W_COMMIT'/g' deployments/helm/nvidia-dra-driver-gpu/Chart.yaml
+          cd deployments/helm/nvidia-dra-driver-gpu/ && diff -wu Chart.yaml.bak Chart.yaml
           helm package deployments/helm/nvidia-dra-driver-gpu/
           #helm push hello-world-0.1.0.tgz oci://ghcr.io/YOUR_GITHUB_USERNAME
 
