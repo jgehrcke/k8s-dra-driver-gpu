@@ -26,8 +26,8 @@ jobs:
 
   chart:
     runs-on: linux-amd64-cpu4
-    container:
-      image: docker.io/alpine/helm
+    # container:
+    #   image: docker.io/alpine/helm
     steps:
       - uses: actions/checkout@v5
         name: checkout
@@ -37,7 +37,7 @@ jobs:
       - name: build-and-push-chart
         run: |
           # use GNU sed
-          apk add --no-cache make diffutils sed git
+          #apk add --no-cache make diffutils sed git
           export VERSION="$(make print-VERSION)"
           export VERSION_W_COMMIT="$(make print-VERSION)-$(echo $GITHUB_SHA | cut -c1-8)"
           # remove leading 'v'
