@@ -44,7 +44,7 @@ jobs:
           helm package deployments/helm/nvidia-dra-driver-gpu
           # dev note: above should be a makefile target, e.g. `make chart-dev-package`
           echo ${{ secrets.GITHUB_TOKEN }} | helm registry login --password-stdin ghcr.io -u NVIDIA
-          helm push nvidia-dra-driver-gpu-*tgz oci://ghcr.io/NVIDIA/k8s-dra-driver-gpu
+          helm push k8s-dra-driver-gpu-*tgz oci://ghcr.io/NVIDIA/k8s-dra-driver-gpu
 
   # image:
   #   uses: ./.github/workflows/image.yaml
