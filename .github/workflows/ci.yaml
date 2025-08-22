@@ -46,7 +46,10 @@ jobs:
           sed -i "s/nvcr\.io/ghcr.io/g" deployments/helm/nvidia-dra-driver-gpu/values.yaml
           #(cd deployments/helm/nvidia-dra-driver-gpu && diff -wu Chart.yaml.bak Chart.yaml) || echo "ignore diff exit code"
           ls -ahltr
-          git diff
+          # the below does not work when doing actions/checkout and then
+          # using alpine/helm and installing git
+          # also see https://github.com/actions/checkout/issues/363
+          git diff || echo "ignore git diff exit code"
           helm package deployments/helm/nvidia-dra-driver-gpu
           # dev note: above should be a makefile target, e.g. `make chart-dev-package`
           echo ${{ secrets.GITHUB_TOKEN }} | helm registry login --password-stdin ghcr.io -u NVIDIA
