@@ -39,11 +39,13 @@ jobs:
           export VERSION_W_COMMIT="$(make print-VERSION)-$(echo $GITHUB_SHA | cut -c1-8)"
           # remove leading 'v'
           echo "replace ${VERSION:1} with ${VERSION_W_COMMIT:1}"
-          sed -i.bak "s/${VERSION:1}/${VERSION_W_COMMIT:1}/g" deployments/helm/nvidia-dra-driver-gpu/Chart.yaml
+          # sed -i.bak "s/${VERSION:1}/${VERSION_W_COMMIT:1}/g" deployments/helm/nvidia-dra-driver-gpu/Chart.yaml
           (cd deployments/helm/nvidia-dra-driver-gpu && diff -wu Chart.yaml.bak Chart.yaml) || echo "ignore diff exit code"
           helm package deployments/helm/nvidia-dra-driver-gpu
           # dev note: above should be a makefile target, e.g. `make chart-dev-package`
           echo ${{ secrets.GITHUB_TOKEN }} | helm registry login --password-stdin ghcr.io -u NVIDIA
+          # maybe the name is bas
+          mv k8s-dra-driver-gpu-*tgz k8s-dra-driver-gpu-25.8.0-dev.tgz
           helm push k8s-dra-driver-gpu-*tgz oci://ghcr.io/NVIDIA
 
   # image:
