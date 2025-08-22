@@ -36,7 +36,7 @@ jobs:
           fetch-depth: 0
       - name: build-and-push-chart
         run: |
-          curl -sSfLO curl --retry 8 --retry-all-errors --connect-timeout 10 --retry-delay 5 \
+          curl -sSfLO --retry 8 --retry-all-errors --connect-timeout 10 --retry-delay 5 \
             https://get.helm.sh/helm-v3.18.6-linux-amd64.tar.gz
           tar -zxvf helm-v3*amd64.tar.gz && mv linux-amd64/helm ./helm
           export VERSION="$(make print-VERSION)"
