@@ -50,7 +50,7 @@ jobs:
           # consider using --version and --appVersion args instead upon packaging
           sed -i "s/${VERSION:1}/${VERSION_W_COMMIT:1}/g" deployments/helm/nvidia-dra-driver-gpu/Chart.yaml
           sed -i "s/nvcr\.io/ghcr.io/g" deployments/helm/nvidia-dra-driver-gpu/values.yaml
-          sed -i "s/tag: ""/tag: \"${VERSION_W_COMMIT}-ubi9\"/g" deployments/helm/nvidia-dra-driver-gpu/values.yaml
+          sed -i "s/tag: \"\"/tag: \"${VERSION_W_COMMIT}-ubi9\"/g" deployments/helm/nvidia-dra-driver-gpu/values.yaml
           git diff || echo "ignore git diff exit code"
           ./helm package deployments/helm/nvidia-dra-driver-gpu
           # dev note: above should maybe be a makefile target, e.g. `make chart-dev-package`
