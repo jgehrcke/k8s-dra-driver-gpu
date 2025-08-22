@@ -47,7 +47,7 @@ jobs:
           echo ${{ secrets.GITHUB_TOKEN }} | helm registry login --password-stdin ghcr.io -u NVIDIA
           # maybe the name is bad
           mv k8s-dra-driver-gpu-*tgz k8s-dra-driver-gpu-25.8.0-dev.tgz
-          helm push k8s-dra-driver-gpu-*tgz oci://ghcr.io/NVIDIA
+          helm push k8s-dra-driver-gpu-*tgz oci://ghcr.io/nvidia
 
   # image:
   #   uses: ./.github/workflows/image.yaml
