@@ -33,7 +33,7 @@ jobs:
         name: checkout
         with:
           # for git diff to work
-          fetch-depth: 2
+          fetch-depth: 0
       - name: build-and-push-chart
         run: |
           # use GNU sed
@@ -45,6 +45,7 @@ jobs:
           sed -i.bak "s/${VERSION:1}/${VERSION_W_COMMIT:1}/g" deployments/helm/nvidia-dra-driver-gpu/Chart.yaml
           sed -i "s/nvcr\.io/ghcr.io/g" deployments/helm/nvidia-dra-driver-gpu/values.yaml
           #(cd deployments/helm/nvidia-dra-driver-gpu && diff -wu Chart.yaml.bak Chart.yaml) || echo "ignore diff exit code"
+          ls -ahltr
           git diff
           helm package deployments/helm/nvidia-dra-driver-gpu
           # dev note: above should be a makefile target, e.g. `make chart-dev-package`
