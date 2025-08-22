@@ -31,16 +31,21 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         name: checkout
+        with:
+          # for git diff to work
+          fetch-depth: 2
       - name: build-and-push-chart
         run: |
           # use GNU sed
-          apk add --no-cache make diffutils sed
+          apk add --no-cache make diffutils sed git
           export VERSION="$(make print-VERSION)"
           export VERSION_W_COMMIT="$(make print-VERSION)-$(echo $GITHUB_SHA | cut -c1-8)"
           # remove leading 'v'
           echo "replace ${VERSION:1} with ${VERSION_W_COMMIT:1}"
           sed -i.bak "s/${VERSION:1}/${VERSION_W_COMMIT:1}/g" deployments/helm/nvidia-dra-driver-gpu/Chart.yaml
-          (cd deployments/helm/nvidia-dra-driver-gpu && diff -wu Chart.yaml.bak Chart.yaml) || echo "ignore diff exit code"
+          sed -i "s/nvcr\.io/ghcr.io/g" deployments/helm/nvidia-dra-driver-gpu/values.yaml
+          #(cd deployments/helm/nvidia-dra-driver-gpu && diff -wu Chart.yaml.bak Chart.yaml) || echo "ignore diff exit code"
+          git diff
           helm package deployments/helm/nvidia-dra-driver-gpu
           # dev note: above should be a makefile target, e.g. `make chart-dev-package`
           echo ${{ secrets.GITHUB_TOKEN }} | helm registry login --password-stdin ghcr.io -u NVIDIA
