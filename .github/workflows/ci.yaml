@@ -45,7 +45,7 @@ jobs:
           # dev note: above should be a makefile target, e.g. `make chart-dev-package`
           echo ${{ secrets.GITHUB_TOKEN }} | helm registry login --password-stdin ghcr.io -u NVIDIA
           # maybe the name is bad
-          helm push nvidia-dra-driver-gpu-*tgz oci://ghcr.io/nvidia
+          helm push k8s-dra-driver-gpu-*tgz oci://ghcr.io/nvidia
 
   # image:
   #   uses: ./.github/workflows/image.yaml
