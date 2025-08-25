@@ -46,24 +46,34 @@ RUN apt-get update && \
         gcc
 
 # Install dependencies for `bash-static` build.
-RUN apt-get install -y gpg curl autoconf
+RUN apt-get install -y gpg curl autoconf file
 
 # Build static bash binary (against musl).
 WORKDIR /bashbuild
 RUN git clone https://github.com/robxu9/bash-static/
-RUN ARCH="$TARGETARCH" && \
+
+# Note: cross-compilation in `build.sh` isn't robust. Fix that
+# by manually setting CC, and also strip command must conditionally
+# be replaced by an aarch64-specific version.
+RUN ARCH="$TARGETARCH" && STRIP=strip && \
     [ "$ARCH" = "arm64" ] && ARCH="aarch64" || true && \
     [ "$ARCH" = "amd64" ] && ARCH="x86_64" || true && \
+    [ "$ARCH" = "aarch64" ] && STRIP="aarch64-linux-gnu-strip" && CC="aarch64-linux-gnu-gcc" || true && \
     echo "detected arch: $ARCH" && \
+    echo "cc to use: $CC" && \
+    echo "strip to use: $STRIP" && \
     cd bash-static && git checkout ${BASH_STATIC_GIT_REF} && \
     sed -i 's|https://ftp\.gnu\.org/gnu|https://ftpmirror.gnu.org/|g' ./build.sh && \
     sed -i 's/-sLO/-sSfLO --retry 300 --connect-timeout 20 --retry-delay 2/g' ./build.sh && \
-    bash version-52.sh && ./build.sh linux $ARCH
+    sed -i 's/strip/$STRIP/g' ./build.sh && \
+    bash version-52.sh && STRIP=$STRIP CC=$CC ./build.sh linux $ARCH
 
 # With above's commit, this emits
 # 'GNU bash, version 5.2.37(1)-release (aarch64-unknown-linux-musl)'
 RUN cd /bashbuild/bash-static/releases && ./bash*-static --version
 RUN mv /bashbuild/bash-static/releases/bash-*-static /bashbuild/bash
+# Capture actual file architecture in the build output.
+RUN file /bashbuild/bash
 
 RUN wget -nv -O - https://storage.googleapis.com/golang/go${GOLANG_VERSION}.linux-${BUILDARCH}.tar.gz \
     | tar -C /usr/local -xz
