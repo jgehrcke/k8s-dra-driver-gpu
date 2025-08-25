@@ -107,10 +107,10 @@ spec:
           with the same literal "0" since that won't match where the service is
           actually running.
         */}}
-        {{- if (gt (int .Values.kubeletPlugin.containers.plugin.healthcheckPort) 0) }}
+        {{- if (gt (int .Values.kubeletPlugin.containers.computeDomains.healthcheckPort) 0) }}
         livenessProbe:
           grpc:
-            port: {{ .Values.kubeletPlugin.containers.plugin.healthcheckPort }}
+            port: {{ .Values.kubeletPlugin.containers.computeDomains.healthcheckPort }}
             service: liveness
           failureThreshold: 3
           periodSeconds: 10
@@ -146,9 +146,9 @@ spec:
           value: {{ .Values.kubeletPlugin.kubeletRegistrarDirectoryPath | quote }}
         - name: KUBELET_PLUGINS_DIRECTORY_PATH
           value: {{ .Values.kubeletPlugin.kubeletPluginsDirectoryPath | quote }}
-        {{- if .Values.kubeletPlugin.containers.plugin.healthcheckPort }}
+        {{- if .Values.kubeletPlugin.containers.computeDomains.healthcheckPort }}
         - name: HEALTHCHECK_PORT
-          value: {{ .Values.kubeletPlugin.containers.plugin.healthcheckPort | quote }}
+          value: {{ .Values.kubeletPlugin.containers.computeDomains.healthcheckPort | quote }}
         {{- end }}
         volumeMounts:
         - name: plugins-registry
@@ -194,10 +194,10 @@ spec:
           with the same literal "0" since that won't match where the service is
           actually running.
         */}}
-        {{- if (gt (int .Values.kubeletPlugin.containers.plugin.healthcheckPort) 0) }}
+        {{- if (gt (int .Values.kubeletPlugin.containers.gpus.healthcheckPort) 0) }}
         livenessProbe:
           grpc:
-            port: {{ .Values.kubeletPlugin.containers.plugin.healthcheckPort }}
+            port: {{ .Values.kubeletPlugin.containers.gpus.healthcheckPort }}
             service: liveness
           failureThreshold: 3
           periodSeconds: 10
@@ -235,9 +235,9 @@ spec:
           value: {{ .Values.kubeletPlugin.kubeletRegistrarDirectoryPath | quote }}
         - name: KUBELET_PLUGINS_DIRECTORY_PATH
           value: {{ .Values.kubeletPlugin.kubeletPluginsDirectoryPath | quote }}
-        {{- if .Values.kubeletPlugin.containers.plugin.healthcheckPort }}
+        {{- if .Values.kubeletPlugin.containers.gpus.healthcheckPort }}
         - name: HEALTHCHECK_PORT
-          value: {{ .Values.kubeletPlugin.containers.plugin.healthcheckPort | quote }}
+          value: {{ .Values.kubeletPlugin.containers.gpus.healthcheckPort | quote }}
         {{- end }}
         volumeMounts:
         - name: plugins-registry
