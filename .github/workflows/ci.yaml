@@ -36,5 +36,5 @@ jobs:
     # For faster CI signal, do not wait for `image`.
     needs:
     - basic
-    secret: inherit
+    secrets: inherit
     uses: ./.github/workflows/chart.yaml
