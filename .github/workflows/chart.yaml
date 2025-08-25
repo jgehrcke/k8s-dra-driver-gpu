@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  push-chart-to-ghcr:
+  build-push-chart:
     runs-on: linux-amd64-cpu4
     steps:
       - uses: actions/checkout@v5
