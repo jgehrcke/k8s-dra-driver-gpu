@@ -83,14 +83,15 @@ func (m *DNSNameManager) UpdateDNSNameMappings(nodes []*nvapi.ComputeDomainNode)
 		}
 	}
 
-	// Add new IPs to map (filling in holes where others were removed)
+	// Add new IPs to map
 	for _, node := range cliqueNodes {
 		// If IP already has a DNS name, skip it
 		if _, exists := ipToDNSName[node.IPAddress]; exists {
 			continue
 		}
 
-		dnsName, err := m.allocateDNSName(node.IPAddress)
+		// Construct the DNS name from the node index
+		dnsName, err := m.constructDNSName(node)
 		if err != nil {
 			return fmt.Errorf("failed to allocate DNS name for IP %s: %w", node.IPAddress, err)
 		}
@@ -127,32 +128,17 @@ func (m *DNSNameManager) LogDNSNameMappings() {
 	}
 }
 
-// allocateDNSName allocates a DNS name for an IP address, reusing existing DNS names if possible.
-func (m *DNSNameManager) allocateDNSName(ip string) (string, error) {
-	// If IP already has a DNS name, return it
-	if dnsName, exists := m.ipToDNSName[ip]; exists {
-		return dnsName, nil
+// contructDNSName constructs a DNS name for a node based on its index field.
+// Returns an error if the index is invalid or exceeds maxNodesPerIMEXDomain.
+func (m *DNSNameManager) constructDNSName(node *nvapi.ComputeDomainNode) (string, error) {
+	if node.Index < 0 {
+		return "", fmt.Errorf("node %s has invalid index %d", node.Name, node.Index)
 	}
-
-	// Find the next available DNS name
-	for i := 0; i < m.maxNodesPerIMEXDomain; i++ {
-		dnsName := fmt.Sprintf(dnsNameFormat, i)
-		// Check if this DNS name is already in use
-		inUse := false
-		for _, existingDNSName := range m.ipToDNSName {
-			if existingDNSName == dnsName {
-				inUse = true
-				break
-			}
-		}
-		if !inUse {
-			m.ipToDNSName[ip] = dnsName
-			return dnsName, nil
-		}
+	if node.Index >= m.maxNodesPerIMEXDomain {
+		return "", fmt.Errorf("node %s has invalid index %d, must be less than %d", node.Name, node.Index, m.maxNodesPerIMEXDomain)
 	}
-
-	// If all DNS names are used, return an error
-	return "", fmt.Errorf("no DNS names available (max: %d)", m.maxNodesPerIMEXDomain)
+	dnsName := fmt.Sprintf(dnsNameFormat, node.Index)
+	return dnsName, nil
 }
 
 // updateHostsFile updates the /etc/hosts file with current IP to DNS name mappings.
