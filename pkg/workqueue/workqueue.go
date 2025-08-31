@@ -19,6 +19,7 @@ package workqueue
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/util/workqueue"
@@ -26,10 +27,13 @@ import (
 )
 
 type WorkQueue struct {
-	queue workqueue.TypedRateLimitingInterface[any]
+	sync.RWMutex
+	queue     workqueue.TypedRateLimitingInterface[any]
+	activeOps map[string]*WorkItem
 }
 
 type WorkItem struct {
+	Key      string
 	Object   any
 	Callback func(ctx context.Context, obj any) error
 }
@@ -40,7 +44,10 @@ func DefaultControllerRateLimiter() workqueue.TypedRateLimiter[any] {
 
 func New(r workqueue.TypedRateLimiter[any]) *WorkQueue {
 	queue := workqueue.NewTypedRateLimitingQueue(r)
-	return &WorkQueue{queue: queue}
+	return &WorkQueue{
+		queue:     queue,
+		activeOps: make(map[string]*WorkItem),
+	}
 }
 
 func (q *WorkQueue) Run(ctx context.Context) {
@@ -81,6 +88,38 @@ func (q *WorkQueue) Enqueue(obj any, callback func(ctx context.Context, obj any)
 	q.queue.AddRateLimited(workItem)
 }
 
+func (q *WorkQueue) EnqueueRawWithKey(obj any, key string, callback func(ctx context.Context, obj any) error) {
+	workItem := &WorkItem{
+		Key:      key,
+		Object:   obj,
+		Callback: callback,
+	}
+
+	q.Lock()
+	q.activeOps[key] = workItem
+	q.queue.AddRateLimited(workItem)
+	q.Unlock()
+}
+
+func (q *WorkQueue) EnqueueWithKey(obj any, key string, callback func(ctx context.Context, obj any) error) {
+	runtimeObj, ok := obj.(runtime.Object)
+	if !ok {
+		klog.Warningf("unexpected object type %T: runtime.Object required", obj)
+		return
+	}
+
+	workItem := &WorkItem{
+		Key:      key,
+		Object:   runtimeObj.DeepCopyObject(),
+		Callback: callback,
+	}
+
+	q.Lock()
+	q.activeOps[key] = workItem
+	q.queue.AddRateLimited(workItem)
+	q.Unlock()
+}
+
 func (q *WorkQueue) processNextWorkItem(ctx context.Context) {
 	item, shutdown := q.queue.Get()
 	if shutdown {
@@ -97,9 +136,23 @@ func (q *WorkQueue) processNextWorkItem(ctx context.Context) {
 	err := q.reconcile(ctx, workItem)
 	if err != nil {
 		klog.Errorf("Failed to reconcile work item: %v", err)
-		q.queue.AddRateLimited(workItem)
+		// Only retry if we're still the current operation for this key
+		q.Lock()
+		if q.activeOps[workItem.Key] != nil && q.activeOps[workItem.Key] != workItem {
+			klog.Errorf("Work item with key '%s' has been replaced with a newer enqueued one, not retrying", workItem.Key)
+			q.queue.Forget(workItem)
+		} else {
+			q.queue.AddRateLimited(workItem)
+		}
+		q.Unlock()
 	} else {
+		// Only clean up activeOps if this item is still the current one for this key
+		q.Lock()
+		if workItem == q.activeOps[workItem.Key] {
+			delete(q.activeOps, workItem.Key)
+		}
 		q.queue.Forget(workItem)
+		q.Unlock()
 	}
 }
 
