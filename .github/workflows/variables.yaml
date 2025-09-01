@@ -16,7 +16,7 @@ on:
   workflow_call:
     outputs:
       version:
-        description: "The short SHA to use as a version string"
+        description: "The version string with the commit short SHA attached"
         value: ${{ jobs.variables.outputs.version }}
       golang_version:
         description: "The golang version for this project"
@@ -32,9 +32,9 @@ jobs:
     - name: Check out code
       uses: actions/checkout@v4
 
-    - name: Generate Commit Short SHA
+    - name: Get Version with Commit Short SHA
       id: version
-      run: echo "version=$(echo $GITHUB_SHA | cut -c1-8)" >> "$GITHUB_OUTPUT"
+      run: echo "version=$(make print-VERSION)-$(echo $GITHUB_SHA | cut -c1-8)" >> "$GITHUB_OUTPUT"
 
     - name: Get Golang Version
       id: golang_version
