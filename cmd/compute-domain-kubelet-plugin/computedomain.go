@@ -300,6 +300,10 @@ func (m *ComputeDomainManager) RemoveNodeLabel(ctx context.Context, cdUID string
 		return nil
 	}
 
+	if node.Labels[computeDomainLabelKey] != cdUID {
+		return nil
+	}
+
 	newNode := node.DeepCopy()
 	delete(newNode.Labels, computeDomainLabelKey)
 
