@@ -144,7 +144,8 @@ func (d *driver) PrepareResourceClaims(ctx context.Context, claims []*resourceap
 
 	for _, claim := range claims {
 		wg.Add(1)
-		workQueue.EnqueueRaw(claim, func(ctx context.Context, obj any) error {
+		key := fmt.Sprintf("%v", claim.UID)
+		workQueue.EnqueueRawWithKey(claim, key, func(ctx context.Context, obj any) error {
 			done, res := d.nodePrepareResource(ctx, claim)
 			if done {
 				results[claim.UID] = res
@@ -174,7 +175,8 @@ func (d *driver) UnprepareResourceClaims(ctx context.Context, claimRefs []kubele
 
 	for _, claim := range claimRefs {
 		wg.Add(1)
-		workQueue.EnqueueRaw(claim, func(ctx context.Context, obj any) error {
+		key := fmt.Sprintf("%v", claim.UID)
+		workQueue.EnqueueRawWithKey(claim, key, func(ctx context.Context, obj any) error {
 			done, err := d.nodeUnprepareResource(ctx, claim)
 			if done {
 				results[claim.UID] = err
