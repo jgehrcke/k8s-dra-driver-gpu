@@ -20,13 +20,16 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 
 	"k8s.io/klog/v2"
+	"k8s.io/mount-utils"
 
 	nvapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
+	cp "github.com/otiai10/copy"
 )
 
 const (
@@ -54,6 +57,55 @@ func NewDNSNameManager(cliqueID string, maxNodesPerIMEXDomain int, nodesConfigPa
 		maxNodesPerIMEXDomain: maxNodesPerIMEXDomain,
 		nodesConfigPath:       nodesConfigPath,
 	}
+}
+
+// UnmountEtcHosts unmounts /etc/hosts and replaces it with a regular file,
+// retaining the contents from the mount source. Background: in a container,
+// /etc/hosts normally is mounted in and managed by the container runtime (also
+// see https://github.com/moby/moby/issues/22281) to take control of name
+// resolution in the container. We however want to make sure that we are not
+// affected by out-of-band updates to this file (especially after container
+// startup, as this might interfere with our management of the file contents).
+// The unmount ensures that this file is only updated from within the container,
+// by logic that we control. Additionally, replacing the mount with a regular
+// file enables atomically flipping the content of /etc/hosts via rename(): this
+// system call does not work across a mount (it would fail with `/etc/hosts:
+// device or resource busy`, also see
+// https://github.com/moby/moby/issues/17190#issuecomment-149438280).
+func (m *DNSNameManager) UnmountEtcHosts() error {
+	hPath := "/etc/hosts"
+	backupPath := "/etc/hosts_init_state"
+
+	// Copy, retaining permissions.
+	if err := cp.Copy(hPath, backupPath); err != nil {
+		return fmt.Errorf("error copying %s to %s: %w", hPath, backupPath, err)
+	}
+
+	// Discover `mount` executable.
+	mountExePath, err := exec.LookPath("mount")
+	if err != nil {
+		return fmt.Errorf("error looking up 'mount' executable: %w", err)
+	}
+	mounter := mount.New(mountExePath)
+
+	// Trigger unmount. Requires privileged execution.
+	if err := mounter.Unmount(hPath); err != nil {
+		return fmt.Errorf("error unmounting %s: %w", hPath, err)
+	}
+
+	// Restore hosts file with original contents and permissions.
+	if err := cp.Copy(backupPath, hPath); err != nil {
+		return fmt.Errorf("error copying %s to %s: %w", backupPath, hPath, err)
+	}
+
+	// Read and log contents (helpful for debugging, and happens only during
+	// startup).
+	data, err := os.ReadFile(hPath)
+	if err != nil {
+		return fmt.Errorf("error reading %s: %w", hPath, err)
+	}
+	klog.Infof("Unmounted %s, retained initial state:\n%s", hPath, data)
+	return nil
 }
 
 // UpdateDNSNameMappings updates the /etc/hosts file with any new IP to DNS name mappings.
@@ -214,7 +266,7 @@ func (m *DNSNameManager) WriteNodesConfig() error {
 		}
 	}
 
-	klog.Infof("Created static nodes config file with %d DNS names using format %s", m.maxNodesPerIMEXDomain, dnsNameFormat)
+	klog.Infof("Created static nodes config file with %d DNS names using format '%s'", m.maxNodesPerIMEXDomain, dnsNameFormat)
 
 	return nil
 }
@@ -262,5 +314,6 @@ func updateFileAtomic(path string, data []byte) error {
 		return fmt.Errorf("failed to rename %s to %s: %w", tmpPath, path, err)
 	}
 
+	klog.V(6).Infof("Updated /etc/hosts:\n%s", data)
 	return nil
 }

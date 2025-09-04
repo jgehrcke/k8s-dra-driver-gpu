@@ -191,6 +191,10 @@ func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 		// Prepare DNS name manager
 		dnsNameManager = NewDNSNameManager(flags.cliqueID, flags.maxNodesPerIMEXDomain, nodesConfigPath)
 
+		if err := dnsNameManager.UnmountEtcHosts(); err != nil {
+			return fmt.Errorf("failed to unmount /etc/hosts: %w", err)
+		}
+
 		// Create static nodes config file with DNS names
 		if err := dnsNameManager.WriteNodesConfig(); err != nil {
 			return fmt.Errorf("failed to create static nodes config: %w", err)
