@@ -1,6 +1,6 @@
 {{- if .Values.resources.computeDomains.enabled }}
 ---
-apiVersion: resource.k8s.io/v1beta1
+apiVersion: {{ include "nvidia-dra-driver-gpu.resourceApiVersion" . }}
 kind: DeviceClass
 metadata:
   name: compute-domain-default-channel.nvidia.com
