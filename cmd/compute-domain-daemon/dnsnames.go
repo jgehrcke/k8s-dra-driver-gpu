@@ -184,9 +184,8 @@ func (m *DNSNameManager) updateHostsFile() error {
 		newHostsContent.WriteString(fmt.Sprintf("%s\t%s\n", ip, dnsName))
 	}
 
-	// Write the updated hosts file
-	if err := os.WriteFile(hostsFilePath, []byte(newHostsContent.String()), 0644); err != nil {
-		return fmt.Errorf("failed to write %s: %w", hostsFilePath, err)
+	if err := updateFileAtomic(hostsFilePath, []byte(newHostsContent.String())); err != nil {
+		return fmt.Errorf("failed hosts file update: %w", err)
 	}
 
 	return nil
@@ -216,6 +215,52 @@ func (m *DNSNameManager) WriteNodesConfig() error {
 	}
 
 	klog.Infof("Created static nodes config file with %d DNS names using format %s", m.maxNodesPerIMEXDomain, dnsNameFormat)
+
+	return nil
+}
+
+// updateFileAtomic overwrites the file at `path` atomically with new contents
+// given by `data`. Requires `path` to exist and be a regular file. Strategy: 1)
+// create a temporary file in the same directory, 2) copy the permissions from
+// the original file, 3) write `data`, and 4) issue rename().
+func updateFileAtomic(path string, data []byte) error {
+	s, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("stat on %s failed: %w", path, err)
+	}
+	if !s.Mode().IsRegular() {
+		return fmt.Errorf("not a regular file: %s", path)
+	}
+
+	origPerms := s.Mode().Perm()
+	origDirPath := filepath.Dir(path)
+
+	// Create new file in the same directory (randomness in name and locked-down
+	// perms). Get its path.
+	f, err := os.CreateTemp(origDirPath, "tmp_dra-driver-*")
+	if err != nil {
+		return fmt.Errorf("could not create temp file in %s: %w", origDirPath, err)
+	}
+	tmpPath := f.Name()
+
+	// Make new file's permissions equivalent to original file's permissions.
+	if err := os.Chmod(tmpPath, origPerms); err != nil {
+		return fmt.Errorf("failed to chmod %s (%s): %w", tmpPath, origPerms.String(), err)
+	}
+
+	// Write data to new file. The permission argument is ignored because the
+	// file is known to exist. Note that `os.WriteFile()` itself may issue
+	// multiple system calls, and hence is not an atomic operation.
+	if err := os.WriteFile(tmpPath, data, origPerms); err != nil {
+		return fmt.Errorf("failed to write %s: %w", tmpPath, err)
+	}
+
+	// Overwrite original file with the rename() system call which on Linux is
+	// atomic (specifically, consumers of the original file path will either see
+	// the old or the new version but nothing else).
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("failed to rename %s to %s: %w", tmpPath, path, err)
+	}
 
 	return nil
 }
