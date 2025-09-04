@@ -17,19 +17,19 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"sync"
 	"syscall"
+	"text/template"
 
 	"k8s.io/klog/v2"
 
-	"github.com/Masterminds/semver"
 	"github.com/urfave/cli/v2"
 
 	nvapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
@@ -37,10 +37,11 @@ import (
 )
 
 const (
-	nodesConfigPath = "/etc/nvidia-imex/nodes_config.cfg"
-	imexConfigPath  = "/etc/nvidia-imex/config.cfg"
-	imexBinaryPath  = "/usr/bin/nvidia-imex"
-	imexCtlPath     = "/usr/bin/nvidia-imex-ctl"
+	nodesConfigPath    = "/etc/nvidia-imex/nodes_config.cfg"
+	imexConfigPath     = "/etc/nvidia-imex/config.cfg"
+	imexConfigTmplPath = "/etc/nvidia-imex/config.tmpl.cfg"
+	imexBinaryPath     = "/usr/bin/nvidia-imex"
+	imexCtlPath        = "/usr/bin/nvidia-imex-ctl"
 )
 
 type Flags struct {
@@ -51,6 +52,10 @@ type Flags struct {
 	nodeName               string
 	podIP                  string
 	loggingConfig          *flags.LoggingConfig
+}
+
+type IMEXConfigTemplateData struct {
+	IMEXCmdBindInterfaceIP string
 }
 
 func main() {
@@ -175,6 +180,11 @@ func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 	}
 	klog.Infof("config: %v", config)
 
+	// Write the IMEX config with the current pod IP before starting the daemon
+	if err := writeIMEXConfig(flags.podIP); err != nil {
+		return fmt.Errorf("writeIMEXConfig failed: %w", err)
+	}
+
 	// Prepare IMEX daemon process manager (not invoking the process yet).
 	daemonCommandLine := []string{imexBinaryPath, "-c", imexConfigPath}
 	processManager := NewProcessManager(daemonCommandLine)
@@ -258,22 +268,8 @@ func check(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 		return nil
 	}
 
-	// Get IMEX version to determine which flags to use
-	v, err := getIMEXVersion(ctx)
-	if err != nil {
-		return fmt.Errorf("error getting IMEX version: %w", err)
-	}
-
-	// Set flags based on version
-	var args []string
-	if v.LessThan(semver.MustParse("580.0.0")) {
-		args = []string{"-q", "-i", "127.0.0.1", "50005"}
-	} else {
-		args = []string{"-q"}
-	}
-
 	// Check if IMEX daemon is ready
-	cmd := exec.CommandContext(ctx, imexCtlPath, args...)
+	cmd := exec.CommandContext(ctx, imexCtlPath, "-q")
 
 	// CombinedOutput captures both, stdout and stderr.
 	output, err := cmd.CombinedOutput()
@@ -288,7 +284,31 @@ func check(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 	return nil
 }
 
-// cwriteNodesConfig creates a nodesConfig file with IPs for nodes in the same clique.
+// writeIMEXConfig renders the config template with the pod IP and writes it to the final config file.
+func writeIMEXConfig(podIP string) error {
+	configTemplateData := IMEXConfigTemplateData{
+		IMEXCmdBindInterfaceIP: podIP,
+	}
+
+	tmpl, err := template.ParseFiles(imexConfigTmplPath)
+	if err != nil {
+		return fmt.Errorf("error parsing template file: %w", err)
+	}
+
+	var configFile bytes.Buffer
+	if err := tmpl.Execute(&configFile, configTemplateData); err != nil {
+		return fmt.Errorf("error executing template: %w", err)
+	}
+
+	if err := os.WriteFile(imexConfigPath, configFile.Bytes(), 0644); err != nil {
+		return fmt.Errorf("error writing config file %v: %w", imexConfigPath, err)
+	}
+
+	klog.Infof("Updated IMEX config file with pod IP: %s", podIP)
+	return nil
+}
+
+// writeNodesConfig creates a nodesConfig file with IPs for nodes in the same clique.
 func writeNodesConfig(cliqueID string, nodes []*nvapi.ComputeDomainNode) error {
 	// Ensure the directory exists
 	dir := filepath.Dir(nodesConfigPath)
@@ -330,29 +350,4 @@ func logNodesConfig() error {
 	}
 	klog.Infof("Current %s:\n%s", nodesConfigPath, string(content))
 	return nil
-}
-
-// getIMEXVersion returns the version of the NVIDIA IMEX binary.
-func getIMEXVersion(ctx context.Context) (*semver.Version, error) {
-	cmd := exec.CommandContext(ctx, imexBinaryPath, "--version")
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("error running nvidia-imex: %w", err)
-	}
-
-	// Split the output by spaces and get the last token
-	version := string(output)
-	tokens := strings.Fields(version)
-	if len(tokens) == 0 {
-		return nil, fmt.Errorf("invalid version output: %s", version)
-	}
-
-	// Parse and normalize the version using semver
-	versionStr := tokens[len(tokens)-1]
-	v, err := semver.NewVersion(versionStr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid version format: %w", err)
-	}
-
-	return v, nil
 }
