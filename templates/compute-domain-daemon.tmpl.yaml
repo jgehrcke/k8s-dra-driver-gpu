@@ -23,6 +23,8 @@ spec:
       containers:
       # Run the compute domain daemon
       - name: compute-domain-daemon
+        securityContext:
+          privileged: true
         image: {{ .ImageName }}
         command: ["compute-domain-daemon", "-v", "6", "run"]
         env:
