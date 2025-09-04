@@ -48,3 +48,11 @@
 {{- $error = printf "%s\nThis renders the need for passing this user-defined flag obsolete." $error }}
 {{- fail $error }}
 {{- end }}
+
+{{- if not (include "nvidia-dra-driver-gpu.resourceApiVersion" .) -}}
+{{- $error := "" }}
+{{- $error = printf "%s\nNo supported resource.k8s.io API version found in the cluster." $error }}
+{{- $error = printf "%s\nThis chart requires one of: resource.k8s.io/v1, resource.k8s.io/v1beta1, or resource.k8s.io/v1beta2." $error }}
+{{- $error = printf "%s\nPlease ensure your cluster supports Dynamic Resource Allocation (DRA) with one of these API versions." $error }}
+{{- fail $error }}
+{{- end }}
