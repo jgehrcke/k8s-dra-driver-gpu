@@ -17,13 +17,11 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
-	"text/template"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -63,7 +61,7 @@ type ComputeDomainDaemonSettings struct {
 	manager         *ComputeDomainManager
 	domain          string
 	rootDir         string
-	configPath      string
+	configTmplPath  string
 	nodesConfigPath string
 }
 
@@ -131,7 +129,7 @@ func (m *ComputeDomainManager) NewSettings(domain string) *ComputeDomainDaemonSe
 		manager:         m,
 		domain:          domain,
 		rootDir:         fmt.Sprintf("%s/%s", m.configFilesRoot, domain),
-		configPath:      fmt.Sprintf("%s/%s/%s", m.configFilesRoot, domain, "config.cfg"),
+		configTmplPath:  fmt.Sprintf("%s/%s/%s", m.configFilesRoot, domain, "config.tmpl.cfg"),
 		nodesConfigPath: fmt.Sprintf("%s/%s/%s", m.configFilesRoot, domain, "nodes_config.cfg"),
 	}
 }
@@ -197,7 +195,7 @@ func (s *ComputeDomainDaemonSettings) Prepare(ctx context.Context) error {
 	}
 
 	if err := s.WriteConfigFile(ctx); err != nil {
-		return fmt.Errorf("error writing config file %v: %w", s.configPath, err)
+		return fmt.Errorf("error writing config file %v: %w", s.configTmplPath, err)
 	}
 
 	return nil
@@ -219,20 +217,13 @@ func (s *ComputeDomainDaemonSettings) Unprepare(ctx context.Context) error {
 }
 
 func (s *ComputeDomainDaemonSettings) WriteConfigFile(ctx context.Context) error {
-	configTemplateData := struct{}{}
-
-	tmpl, err := template.ParseFiles(ComputeDomainDaemonConfigTemplatePath)
+	configBytes, err := os.ReadFile(ComputeDomainDaemonConfigTemplatePath)
 	if err != nil {
-		return fmt.Errorf("error parsing template file: %w", err)
+		return fmt.Errorf("error reading template file: %w", err)
 	}
 
-	var configFile bytes.Buffer
-	if err := tmpl.Execute(&configFile, configTemplateData); err != nil {
-		return fmt.Errorf("error executing template: %w", err)
-	}
-
-	if err := os.WriteFile(s.configPath, configFile.Bytes(), 0644); err != nil {
-		return fmt.Errorf("error writing config file %v: %w", s.configPath, err)
+	if err := os.WriteFile(s.configTmplPath, configBytes, 0644); err != nil {
+		return fmt.Errorf("error writing config file %v: %w", s.configTmplPath, err)
 	}
 
 	return nil
