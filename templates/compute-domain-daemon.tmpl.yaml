@@ -40,21 +40,34 @@ spec:
         resources:
           claims:
           - name: compute-domain-daemon
+        # The startup probe aggressively checks every second to see if the pod
+        # is healthy. We set a large failureThreshold to avoid having the
+        # startup probe kill the pod if it fails (we just don't want it to go
+        # ready). After the startup probe completes, we run readiness probes
+        # and liveness probes to less aggressively mark this pod as not-ready
+        # if/when necessary.
         startupProbe:
           exec:
             command: ["compute-domain-daemon", "-v", "6", "check"]
-          initialDelaySeconds: 1
+          initialDelaySeconds: 0
           periodSeconds: 1
           timeoutSeconds: 10
-          failureThreshold: 10
+          failureThreshold: 1200 # (1s*1200s)=20min
+          successThreshold: 1
         livenessProbe:
           exec:
             command: ["compute-domain-daemon", "-v", "6", "check"]
-          # No initialDelaySeconds needed because there is a startupProbe.
-          # Require 5*10 seconds of continuous failure before killing processes
-          # (that gives business logic time to recover via its own mechanisms).
-          periodSeconds: 5
-          failureThreshold: 10
+          periodSeconds: 60
+          timeoutSeconds: 10
+          failureThreshold: 20 # (60s*20)=20min
+          successThreshold: 1
+        readinessProbe:
+          exec:
+            command: ["compute-domain-daemon", "-v", "6", "check"]
+          periodSeconds: 10
+          timeoutSeconds: 10
+          failureThreshold: 1
+          successThreshold: 1
       # Repel all node taints.
       # See https://github.com/NVIDIA/k8s-dra-driver-gpu/issues/305
       tolerations:
