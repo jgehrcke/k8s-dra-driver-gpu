@@ -40,8 +40,8 @@ const (
 	nodesConfigPath    = "/etc/nvidia-imex/nodes_config.cfg"
 	imexConfigPath     = "/etc/nvidia-imex/config.cfg"
 	imexConfigTmplPath = "/etc/nvidia-imex/config.tmpl.cfg"
-	imexBinaryPath     = "/usr/bin/nvidia-imex"
-	imexCtlPath        = "/usr/bin/nvidia-imex-ctl"
+	imexBinaryName     = "nvidia-imex"
+	imexCtlBinaryName  = "nvidia-imex-ctl"
 )
 
 type Flags struct {
@@ -186,7 +186,7 @@ func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 	}
 
 	// Prepare IMEX daemon process manager (not invoking the process yet).
-	daemonCommandLine := []string{imexBinaryPath, "-c", imexConfigPath}
+	daemonCommandLine := []string{imexBinaryName, "-c", imexConfigPath}
 	processManager := NewProcessManager(daemonCommandLine)
 
 	// Prepare controller with CD manager (not invoking the controller yet).
@@ -269,7 +269,7 @@ func check(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 	}
 
 	// Check if IMEX daemon is ready
-	cmd := exec.CommandContext(ctx, imexCtlPath, "-q")
+	cmd := exec.CommandContext(ctx, imexCtlBinaryName, "-q")
 
 	// CombinedOutput captures both, stdout and stderr.
 	output, err := cmd.CombinedOutput()
