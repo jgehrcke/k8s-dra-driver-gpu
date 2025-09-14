@@ -15,13 +15,14 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+
 set -o nounset
 set -o pipefail
 
 # For debugging: state of the world
 kubectl get computedomains.resource.nvidia.com
 kubectl get pods -n nvidia-dra-driver-gpu
-(helm list -A )
+helm list -A
 
 # Attempt to delete workloads potentially left-over from a previous interrupted
 # run. TODO: try to affect all-at-once, maybe with a special label.
@@ -31,11 +32,9 @@ timeout -v 5 kubectl delete jobs nickelpie-test
 timeout -v 5 kubectl delete computedomain nickelpie-test-compute-domain
 timeout -v 5 kubectl delete -f https://raw.githubusercontent.com/NVIDIA/k8s-dra-driver-gpu/refs/heads/main/demo/specs/imex/nvbandwidth-test-job-1.yaml
 
-
 kubectl delete pods privpod-rm-plugindirs
 
-
-# Consolidation: wait for all previously started workloads to be gone, gone gone.
+# Consolidation: wait for all previously started workloads to be gone, gone, gone.
 sleep 1
 
 set -e
