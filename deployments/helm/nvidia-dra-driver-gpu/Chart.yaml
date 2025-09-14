@@ -25,6 +25,7 @@ version: "25.8.0-dev"
 # `tag` value used in a k8s image specification. That logic expects the version
 # number below to not have a "v" prefix (a "v" is added by said logic to yield a
 # valid image reference).
+# TODO: re-add v prefix here (that seems to be more canonical).
 appVersion: "25.8.0-dev"
 
 # The kubeVersion puts constraints on the Kubernetes versions where this helm

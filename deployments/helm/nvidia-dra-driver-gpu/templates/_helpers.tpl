@@ -90,6 +90,9 @@ fail "selectorLabels: both arguments are required: context, componentName"
 
 {{/*
 Full image name with tag
+TODO:
+- remove `v` here, and add this back to appVersion instead
+- do not overload `tag` to contain both image name and version tag.
 */}}
 {{- define "nvidia-dra-driver-gpu.fullimage" -}}
 {{- $tag := printf "v%s" .Chart.AppVersion }}
