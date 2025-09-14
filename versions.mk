@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Needed for e.g. `$${FOO:1}` substitution used below.
+SHELL := /bin/bash
+
 DRIVER_NAME := k8s-dra-driver-gpu
 HELM_DRIVER_NAME := nvidia-dra-driver-gpu
 MODULE := github.com/NVIDIA/$(DRIVER_NAME)
@@ -36,6 +39,13 @@ BUILDIMAGE_TAG ?= devel-go$(GOLANG_VERSION)
 BUILDIMAGE ?=  $(DRIVER_NAME):$(BUILDIMAGE_TAG)
 
 GIT_COMMIT ?= $(shell git describe --match="" --dirty --long --always --abbrev=40 2> /dev/null || echo "")
+GIT_COMMIT_SHORT ?= $(shell git rev-parse --short=8 HEAD)
+
+# Shape: v25.8.0-dev-f2eaddd6
+VERSION_W_COMMIT = $(VERSION)-$(GIT_COMMIT_SHORT)
+
+# Shape: 25.8.0-dev-f2eaddd6-chart (no leading v)
+VERSION_GHCR_CHART = $(shell FOO="$(VERSION)-$(GIT_COMMIT_SHORT)-chart"; echo $${FOO:1})
 
 print-%:
 	@echo $($*)
