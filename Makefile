@@ -220,3 +220,32 @@ PHONY: .shell
 		-w /work \
 		--user $$(id -u):$$(id -g) \
 		$(BUILDIMAGE)
+
+BATS_IMAGE = batstests:$(GIT_COMMIT_SHORT)
+
+.PHONY: bats-image
+bats-image:
+	docker buildx build --progress plain . -t $(BATS_IMAGE) -f ci-tests.Dockerfile
+
+# One explicit invocation of 'cleanup-from-previous-run'.
+# During dev, you may want to add `--show-output-of-passing-tests`
+# To test a specific Helm chart from GHCR, run for example:
+#    VERSION_GHCR_CHART=25.8.0-dev-f2eaddd6-chart  make bats-tests
+.PHONY: bats-tests
+bats-tests: bats-image
+	time docker run \
+		-it \
+		-v /tmp:/tmp \
+		-v $(shell pwd):/cwd \
+		-v ~/.kube/config:/kube/config \
+		--env KUBECONFIG=/kube/config \
+		--env VERSION_GHCR_CHART=$(VERSION_GHCR_CHART) \
+		-u $(shell id -u ${USER}):$(shell id -g ${USER}) --entrypoint "/bin/bash" $(BATS_IMAGE) \
+		-c "cd /cwd && \
+			bash tests/cleanup-from-previous-run.sh && \
+			bats \
+			--print-output-on-failure \
+			--no-tempdir-cleanup \
+			--timing \
+			tests/tests.bats \
+		"
