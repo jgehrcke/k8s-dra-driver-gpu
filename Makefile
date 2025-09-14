@@ -225,14 +225,21 @@ BATS_IMAGE = batstests:$(GIT_COMMIT_SHORT)
 
 .PHONY: bats-image
 bats-image:
-	docker buildx build --progress plain . -t $(BATS_IMAGE) -f ci-tests.Dockerfile
+	docker buildx build . -t $(BATS_IMAGE) -f ci-tests.Dockerfile
 
-# One explicit invocation of 'cleanup-from-previous-run'.
-# During dev, you may want to add `--show-output-of-passing-tests`
-# To test a specific Helm chart from GHCR, run for example:
-#    VERSION_GHCR_CHART=25.8.0-dev-f2eaddd6-chart  make bats-tests
+# Warning: destructive against currently configured k8s cluster.
+#
+# Explicit invocation of 'cleanup-from-previous-run' (could also be done as
+# suite/file 'setup' in bats, but we'd lose output on success). During dev, you
+# may want to add `--show-output-of-passing-tests`. To test a specific Helm chart
+# from GHCR, run for example:
+#
+#   VERSION_GHCR_CHART=25.8.0-dev-f2eaddd6-chart make bats-tests
 .PHONY: bats-tests
 bats-tests: bats-image
+	mkdir -p tests-out
+	export _RUNDIR=$(shell mktemp -p tests-out -d -t bats-tests-$$(date +%s)-XXXXX) && \
+	echo "output directory: $${_RUNDIR}" && \
 	time docker run \
 		-it \
 		-v /tmp:/tmp \
@@ -241,9 +248,11 @@ bats-tests: bats-image
 		--env KUBECONFIG=/kube/config \
 		--env VERSION_GHCR_CHART=$(VERSION_GHCR_CHART) \
 		-u $(shell id -u ${USER}):$(shell id -g ${USER}) --entrypoint "/bin/bash" $(BATS_IMAGE) \
-		-c "cd /cwd && \
-			bash tests/cleanup-from-previous-run.sh && \
-			bats \
+		-c "cd /cwd; \
+			echo 'Running k8s cluster cleanup (invasive)... '; \
+			bash tests/cleanup-from-previous-run.sh &> $${_RUNDIR}/cleanup.outerr || \
+				(echo 'Cleanup failed:'; cat $${_RUNDIR}/cleanup.outerr);  \
+			TMPDIR=/cwd/$${_RUNDIR} bats \
 			--print-output-on-failure \
 			--no-tempdir-cleanup \
 			--timing \
