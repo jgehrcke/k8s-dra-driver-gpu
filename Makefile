@@ -227,14 +227,21 @@ BATS_IMAGE = batstests:$(GIT_COMMIT_SHORT)
 bats-image:
 	docker buildx build . -t $(BATS_IMAGE) -f ci-tests.Dockerfile
 
+TEST_CHART_REPO ?= "oci://ghcr.io/nvidia/k8s-dra-driver-gpu"
+TEST_CHART_VERSION ?= $(VERSION_GHCR_CHART)
+TEST_CHART_LASTSTABLE_REPO ?= "nvidia/nvidia-dra-driver-gpu"
+TEST_CHART_LASTSTABLE_VERSION ?= "25.3.1"
+
+# Currently consumed in upgrade test in
+# kubectl apply -f <URL> (can be a branch, tag, or commit)
+TEST_CRD_UPGRADE_TARGET_GIT_REF ?= $(GIT_COMMIT)
+
 # Warning: destructive against currently configured k8s cluster.
 #
 # Explicit invocation of 'cleanup-from-previous-run' (could also be done as
 # suite/file 'setup' in bats, but we'd lose output on success). During dev, you
-# may want to add `--show-output-of-passing-tests`. To test a specific Helm chart
-# from GHCR, run for example:
-#
-#   VERSION_GHCR_CHART=25.8.0-dev-f2eaddd6-chart make bats-tests
+# may want to add --show-output-of-passing-tests (and read bats docs for other
+# cmdline args).
 .PHONY: bats-tests
 bats-tests: bats-image
 	mkdir -p tests-out
@@ -246,7 +253,11 @@ bats-tests: bats-image
 		-v $(shell pwd):/cwd \
 		-v ~/.kube/config:/kube/config \
 		--env KUBECONFIG=/kube/config \
-		--env VERSION_GHCR_CHART=$(VERSION_GHCR_CHART) \
+		--env TEST_CHART_REPO=$(TEST_CHART_REPO) \
+		--env TEST_CHART_VERSION=$(TEST_CHART_VERSION) \
+		--env TEST_CHART_LASTSTABLE_REPO=$(TEST_CHART_LASTSTABLE_REPO) \
+		--env TEST_CHART_LASTSTABLE_VERSION=$(TEST_CHART_LASTSTABLE_VERSION) \
+		--env TEST_CRD_UPGRADE_TARGET_GIT_REF=$(TEST_CRD_UPGRADE_TARGET_GIT_REF) \
 		-u $(shell id -u ${USER}):$(shell id -g ${USER}) --entrypoint "/bin/bash" $(BATS_IMAGE) \
 		-c "cd /cwd; \
 			echo 'Running k8s cluster cleanup (invasive)... '; \
