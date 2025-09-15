@@ -234,11 +234,11 @@ TEST_CHART_LASTSTABLE_VERSION ?= "25.3.1"
 
 # Currently consumed in upgrade test in
 # kubectl apply -f <URL> (can be a branch, tag, or commit)
-TEST_CRD_UPGRADE_TARGET_GIT_REF ?= $(GIT_COMMIT)
+TEST_CRD_UPGRADE_TARGET_GIT_REF ?= $(GIT_COMMIT_SHORT)
 
 # Warning: destructive against currently configured k8s cluster.
 #
-# Explicit invocation of 'cleanup-from-previous-run' (could also be done as
+# Explicit invocation of 'cleanup-from-previous-run.sh' (could also be done as
 # suite/file 'setup' in bats, but we'd lose output on success). During dev, you
 # may want to add --show-output-of-passing-tests (and read bats docs for other
 # cmdline args).
@@ -251,14 +251,16 @@ bats-tests: bats-image
 		-it \
 		-v /tmp:/tmp \
 		-v $(shell pwd):/cwd \
-		-v ~/.kube/config:/kube/config \
-		--env KUBECONFIG=/kube/config \
+		-v ~/.kube/config:/kubeconfig \
+		--env KUBECONFIG=/kubeconfig \
 		--env TEST_CHART_REPO=$(TEST_CHART_REPO) \
 		--env TEST_CHART_VERSION=$(TEST_CHART_VERSION) \
 		--env TEST_CHART_LASTSTABLE_REPO=$(TEST_CHART_LASTSTABLE_REPO) \
 		--env TEST_CHART_LASTSTABLE_VERSION=$(TEST_CHART_LASTSTABLE_VERSION) \
 		--env TEST_CRD_UPGRADE_TARGET_GIT_REF=$(TEST_CRD_UPGRADE_TARGET_GIT_REF) \
-		-u $(shell id -u ${USER}):$(shell id -g ${USER}) --entrypoint "/bin/bash" $(BATS_IMAGE) \
+		-u $(shell id -u ${USER}):$(shell id -g ${USER}) \
+		--entrypoint "/bin/bash"\
+		$(BATS_IMAGE) \
 		-c "cd /cwd; \
 			echo 'Running k8s cluster cleanup (invasive)... '; \
 			bash tests/cleanup-from-previous-run.sh &> $${_RUNDIR}/cleanup.outerr || \

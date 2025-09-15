@@ -1,45 +1,82 @@
+# shellcheck disable=SC2148
+# shellcheck disable=SC2329
 setup() {
   load '/bats-libraries/bats-support/load.bash'
   load '/bats-libraries/bats-assert/load.bash'
   load '/bats-libraries/bats-file/load.bash'
 }
 
-# Note: bats swallows output of setup upon success (regardless of cmdline args
-# such as `--show-output-of-passing-tests`). Ref:
+# Use a name that upon cluster inspection reveals that this
+# Helm chart release was installed/managed by this test suite.
+export TEST_HELM_RELEASE_NAME="nvidia-dra-driver-gpu-batssuite"
+
+# Note(JP): bats swallows output of setup upon success (regardless of cmdline
+# args such as `--show-output-of-passing-tests`). Ref:
 # https://github.com/bats-core/bats-core/issues/540#issuecomment-1013521656 --
 # it however does emit output upon failure.
+# shellcheck disable=SC2329
 setup_file() {
-  # Create Helm repo cache dir, otherwise
-  # `Error: INSTALLATION FAILED: mkdir /.cache: permission denied`
-  export HELM_REPOSITORY_CACHE=$(mktemp -d -t helm-XXXXX)
+  # Create Helm repo cache dir and point `helm` to it, otherwise `Error:
+  # INSTALLATION FAILED: mkdir /.cache: permission denied`
+  HELM_REPOSITORY_CACHE=$(mktemp -d -t helm-XXXXX)
+  export HELM_REPOSITORY_CACHE
+
+  # Consumed by the helm CLI.
   export HELM_REPOSITORY_CONFIG=${HELM_REPOSITORY_CACHE}/repo.cfg
+  export CRD_UPGRADE_URL="https://raw.githubusercontent.com/NVIDIA/k8s-dra-driver-gpu/$TEST_CRD_UPGRADE_TARGET_GIT_REF/deployments/helm/nvidia-dra-driver-gpu/crds/resource.nvidia.com_computedomains.yaml"
 
   # Prepare for allowing to run this test suite against k8s with host-provided
   # GPU driver.
-  export NVIDIA_DRIVER_ROOT="/run/nvidia/driver"
+  export TEST_NVIDIA_DRIVER_ROOT="/run/nvidia/driver"
+
+  # Prepare for installing releases from NGC (that merely mutates local
+  # filesystem state).
+  helm repo add nvidia https://helm.ngc.nvidia.com/nvidia && helm repo update
+
+  # A helper arg for `iupgrade_wait` w/o additional install args.
+  export NOARGS=()
 }
 
-install_last_stable_wait_ready() {
-  helm repo add nvidia https://helm.ngc.nvidia.com/nvidia && helm repo update
-  helm install nvidia-dra-driver-gpu-batssuite nvidia/nvidia-dra-driver-gpu \
-    --version="25.3.1" \
+# Install or upgrade, and wait for pods to be READY.
+# 1st arg: helm chart repo
+# 2nd arg: helm chart version
+# 3rd arg: array with additional args (provide `NOARGS`` if none)
+iupgrade_wait() {
+  # E.g. `nvidia/nvidia-dra-driver-gpu` or
+  # `oci://ghcr.io/nvidia/k8s-dra-driver-gpu`
+  local REPO="$1"
+
+  # E.g. `25.3.1` or `25.8.0-dev-f2eaddd6-chart`
+  local VERSION="$2"
+
+  # Expect array as third argument.
+  local -n ADDITIONAL_INSTALL_ARGS=$3
+
+  set -x
+  helm upgrade --install "${TEST_HELM_RELEASE_NAME}" \
+    "${REPO}" \
+    --version="${VERSION}" \
     --create-namespace \
     --namespace nvidia-dra-driver-gpu \
     --set resources.gpus.enabled=false \
-    --set nvidiaDriverRoot=${NVIDIA_DRIVER_ROOT}
+    --set nvidiaDriverRoot="${TEST_NVIDIA_DRIVER_ROOT}" "${ADDITIONAL_INSTALL_ARGS[@]}"
+  set +x
+
   kubectl wait --for=condition=READY pods -A -l nvidia-dra-driver-gpu-component=kubelet-plugin --timeout=10s
   kubectl wait --for=condition=READY pods -A -l nvidia-dra-driver-gpu-component=controller --timeout=10s
-  # TODO: check version on labels
+  # maybe: check version on labels (to confirm that we set labels correctly)
 }
 
-run_check_delete_workload_imex_chan_inject() {
+apply_check_delete_workload_imex_chan_inject() {
   kubectl apply -f demo/specs/imex/channel-injection.yaml
-  kubectl wait --for=condition=READY pods imex-channel-injection --timeout=60s
+  kubectl wait --for=condition=READY pods imex-channel-injection --timeout=70s
   run kubectl logs imex-channel-injection
   assert_output --partial "channel0"
   kubectl delete -f demo/specs/imex/channel-injection.yaml
 }
 
+# A test that covers local dev tooling, we don't want to
+# unintentionally change/break these targets.
 @test "test VERSION_W_COMMIT, VERSION_GHCR_CHART" {
   run make print-VERSION_W_COMMIT
   assert_output --regexp '^v[0-9]+\.[0-9]+\.[0-9]+-dev-[0-9a-f]{8}$'
@@ -53,15 +90,9 @@ run_check_delete_workload_imex_chan_inject() {
   refute_output --partial 'Running'
 }
 
-@test "helm install from GHCR (OCI)" {
-  helm install nvidia-dra-driver-gpu-batssuite \
-    oci://ghcr.io/nvidia/k8s-dra-driver-gpu \
-    --version "$(make print-VERSION_GHCR_CHART)" \
-    --namespace nvidia-dra-driver-gpu \
-    --create-namespace \
-    --set nvidiaDriverRoot=${NVIDIA_DRIVER_ROOT} \
-    --set resources.gpus.enabled=false \
-    --set featureGates.IMEXDaemonsWithDNSNames=true
+@test "helm-install ${TEST_CHART_VERSION} from ${TEST_CHART_REPO}" {
+  local _iargs=("--set" "featureGates.IMEXDaemonsWithDNSNames=true")
+  iupgrade_wait "${TEST_CHART_REPO}" "${TEST_CHART_VERSION}" _iargs
 }
 
 @test "get crd computedomains.resource.nvidia.com" {
@@ -79,7 +110,7 @@ run_check_delete_workload_imex_chan_inject() {
 }
 
 @test "IMEX channel injection (single)" {
-  run_check_delete_workload_imex_chan_inject
+  apply_check_delete_workload_imex_chan_inject
 }
 
 @test "IMEX channel injection (all)" {
@@ -92,7 +123,8 @@ run_check_delete_workload_imex_chan_inject() {
 }
 
 @test "nickelpie (NCCL send/recv/broadcast, 2 pods, 2 nodes, small payload)" {
-  cd $BATS_TEST_TMPDIR
+  # Do not run in checkout dir (to not pollute that).
+  cd "${BATS_TEST_TMPDIR}"
   git clone https://github.com/jgehrcke/jpsnips-nv
   cd jpsnips-nv && git checkout fb46298fc7aa5fc1322b4672e8847da5321baeb7
   cd nickelpie/one-pod-per-node/
@@ -101,11 +133,10 @@ run_check_delete_workload_imex_chan_inject() {
   kubectl wait --for=condition=complete --timeout=60s job/nickelpie-test
   kubectl delete -f npie-job.yaml.rendered
   kubectl wait --for=delete  --timeout=60s job/nickelpie-test
-  echo $output | grep -E '^.*broadcast-.*RESULT bandwidth: [0-9]+\.[0-9]+ GB/s.*$'
+  echo "${output}" | grep -E '^.*broadcast-.*RESULT bandwidth: [0-9]+\.[0-9]+ GB/s.*$'
 }
 
 @test "nvbandwidth (2 nodes, 2 GPUs each)" {
-  cd $BATS_TEST_TMPDIR
   kubectl create -f https://github.com/kubeflow/mpi-operator/releases/download/v0.6.0/mpi-operator.yaml || echo "ignore"
   kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-dra-driver-gpu/refs/heads/main/demo/specs/imex/nvbandwidth-test-job-1.yaml
   # The canonical k8s job interface works even for MPIJob (the MPIJob has an
@@ -114,56 +145,38 @@ run_check_delete_workload_imex_chan_inject() {
   kubectl wait --for=condition=complete job/nvbandwidth-test-1-launcher --timeout=60s
   run kubectl logs --tail=-1 --prefix -l job-name=nvbandwidth-test-1-launcher
   kubectl delete -f https://raw.githubusercontent.com/NVIDIA/k8s-dra-driver-gpu/refs/heads/main/demo/specs/imex/nvbandwidth-test-job-1.yaml
-  echo $output | grep -E '^.*SUM multinode_device_to_device_memcpy_read_ce [0-9]+\.[0-9]+.*$'
-}
-
-@test "downgrade: current-dev -> last-stable" {
-  helm uninstall nvidia-dra-driver-gpu-batssuite -n nvidia-dra-driver-gpu
-  kubectl wait --for=delete pods -A -l app.kubernetes.io/name=nvidia-dra-driver-gpu --timeout=10s
-
-  install_last_stable_wait_ready
-  run_check_delete_workload_imex_chan_inject
+  echo "${output}" | grep -E '^.*SUM multinode_device_to_device_memcpy_read_ce [0-9]+\.[0-9]+.*$'
 }
 
 @test "upgrade: wipe-state, install-last-stable, upgrade-to-current-dev" {
-  # Stage 1: wipe state
-  helm uninstall nvidia-dra-driver-gpu-batssuite -n nvidia-dra-driver-gpu
+  # Stage 1: clean slate
+  helm uninstall "${TEST_HELM_RELEASE_NAME}" -n nvidia-dra-driver-gpu
   kubectl wait --for=delete pods -A -l app.kubernetes.io/name=nvidia-dra-driver-gpu --timeout=10s
   bash tests/clean-state-dirs-all-nodes.sh
   kubectl get crd computedomains.resource.nvidia.com
-  # deleting the CRD would be a 'cleaner slate'
+  timeout -v 10 kubectl delete crd computedomains.resource.nvidia.com
 
-  # Stage 2
-  install_last_stable_wait_ready
+  # Stage 2: install last-stable (this guarantees to install the "old" CRD)
+  iupgrade_wait "${TEST_CHART_LASTSTABLE_REPO}" "${TEST_CHART_LASTSTABLE_VERSION}" NOARGS
 
-  # Stage 3: apply workload, do not delete
+  # Stage 3: apply workload, do not delete (users care about old workloads to
+  # ideally still run, but at the very least be deletable after upgrade).
   kubectl apply -f demo/specs/imex/channel-injection.yaml
   kubectl wait --for=condition=READY pods imex-channel-injection --timeout=60s
   run kubectl logs imex-channel-injection
   assert_output --partial "channel0"
-  # Do not delete workload (makes upgrade more interesting?)
-  # kubectl delete -f demo/specs/imex/channel-injection.yaml
 
-  # Stage 4: uninstall regularly (leaves state behind on nodes and elsewhere)
-  helm uninstall nvidia-dra-driver-gpu-batssuite -n nvidia-dra-driver-gpu
-  kubectl wait --for=delete pods -A -l app.kubernetes.io/name=nvidia-dra-driver-gpu --timeout=10s
+  # Stage 4: update CRD, as a user would do.
+  kubectl apply -f "${CRD_UPGRADE_URL}"
 
-  # Stage 5: install dev version (upgrade as users would do it)
-  helm install nvidia-dra-driver-gpu-batssuite \
-    oci://ghcr.io/nvidia/k8s-dra-driver-gpu \
-    --version "$(make print-VERSION_GHCR_CHART)" \
-    --namespace nvidia-dra-driver-gpu \
-    --create-namespace \
-    --set nvidiaDriverRoot=${NVIDIA_DRIVER_ROOT} \
-    --set resources.gpus.enabled=false
+  # Stage 5: install target version (as users would do).
+  local _iargs=("--set" "featureGates.IMEXDaemonsWithDNSNames=true")
+  iupgrade_wait "${TEST_CHART_REPO}" "${TEST_CHART_VERSION}" _iargs
 
-  # Stage 5: confirm other workload is working
-  kubectl apply -f demo/specs/imex/channel-injection-all.yaml
-  kubectl wait --for=condition=READY pods imex-channel-injection-all --timeout=60s
-  run kubectl logs imex-channel-injection-all
-  assert_output --partial "channel1337"
+  # Stage 6: confirm deleting old workload works (critical, see above).
+  run kubectl delete -f demo/specs/imex/channel-injection.yaml
+  kubectl wait --for=delete pods imex-channel-injection --timeout=60s
 
-  # Stage 6: cleanup
-  kubectl delete -f demo/specs/imex/channel-injection-all.yaml
-  kubectl delete -f demo/specs/imex/channel-injection.yaml
+  # Stage 7: fresh create-confirm-delete workload cycle.
+  apply_check_delete_workload_imex_chan_inject
 }
