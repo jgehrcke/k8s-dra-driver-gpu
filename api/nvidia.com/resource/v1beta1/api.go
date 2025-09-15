@@ -69,7 +69,14 @@ func init() {
 		scheme,
 		scheme,
 		json.SerializerOptions{
-			Pretty: true, Strict: true,
+			// Note: the strictness applies to all types defined above via
+			// AddKnownTypes(), i.e. it cannot be set per-type. That is OK in
+			// this case. Unknown fields will simply be dropped (ignored) upon
+			// decode, which is what we want. This is relevant in a downgrade
+			// case, when a checkpointed JSON document contains fields added in
+			// a later version (workload defined with a new version of this
+			// driver).
+			Pretty: true, Strict: false,
 		},
 	)
 }
