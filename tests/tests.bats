@@ -148,6 +148,24 @@ apply_check_delete_workload_imex_chan_inject() {
   echo "${output}" | grep -E '^.*SUM multinode_device_to_device_memcpy_read_ce [0-9]+\.[0-9]+.*$'
 }
 
+@test "downgrade: current-dev -> last-stable" {
+  # Stage 1: apply workload, but do not delete.
+  kubectl apply -f demo/specs/imex/channel-injection.yaml
+  kubectl wait --for=condition=READY pods imex-channel-injection --timeout=60s
+  run kubectl logs imex-channel-injection
+  assert_output --partial "channel0"
+
+  # Stage 2: upgrade as users would do.
+  iupgrade_wait "$TEST_CHART_LASTSTABLE_REPO" "$TEST_CHART_LASTSTABLE_VERSION" NOARGS
+
+  # Stage 3: confirm workload deletion works post-upgrade.
+  run timeout -v 80 kubectl delete -f demo/specs/imex/channel-injection.yaml
+  kubectl wait --for=delete pods imex-channel-injection --timeout=10s
+
+  # Stage 4: fresh create-confirm-delete workload cycle.
+  apply_check_delete_workload_imex_chan_inject
+}
+
 @test "upgrade: wipe-state, install-last-stable, upgrade-to-current-dev" {
   # Stage 1: clean slate
   helm uninstall "${TEST_HELM_RELEASE_NAME}" -n nvidia-dra-driver-gpu
