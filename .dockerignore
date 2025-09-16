@@ -1,5 +1,6 @@
 .dockerignore
 deployments/container
+/tests-out
 *.tar
 *.tgz
 demo
