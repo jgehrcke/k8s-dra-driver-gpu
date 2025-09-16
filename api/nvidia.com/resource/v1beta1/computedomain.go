@@ -57,7 +57,8 @@ type ComputeDomainList struct {
 
 // ComputeDomainSpec provides the spec for a ComputeDomain.
 type ComputeDomainSpec struct {
-	NumNodes int                       `json:"numNodes"`
+	// +kubebuilder:validation:Optional
+	NumNodes int                       `json:"numNodes,omitempty"`
 	Channel  *ComputeDomainChannelSpec `json:"channel"`
 }
 

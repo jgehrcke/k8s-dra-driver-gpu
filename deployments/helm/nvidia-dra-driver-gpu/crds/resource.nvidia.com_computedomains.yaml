@@ -69,7 +69,6 @@ spec:
                 type: integer
             required:
             - channel
-            - numNodes
             type: object
             x-kubernetes-validations:
             - message: A computeDomain.spec is immutable
