@@ -27,6 +27,7 @@ import (
 	"k8s.io/klog/v2"
 
 	nvapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
+	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
 	nvinformers "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/nvidia.com/informers/externalversions"
 )
 
@@ -283,6 +284,26 @@ func (m *ComputeDomainManager) onAddOrUpdate(ctx context.Context, obj any) error
 
 	if _, err := m.resourceClaimTemplateManager.Create(ctx, cd.Namespace, cd.Spec.Channel.ResourceClaimTemplate.Name, cd); err != nil {
 		return fmt.Errorf("error creating ResourceClaimTemplate '%s/%s': %w", cd.Namespace, cd.Spec.Channel.ResourceClaimTemplate.Name, err)
+	}
+
+	klog.Infof("added/updated CD: numNodes: %v", cd.Spec.NumNodes)
+	if featuregates.Enabled(featuregates.IMEXDaemonsWithDNSNames) {
+		// Explicit zero (set by user) or implicit zero (omitted by user). We do
+		// not need to distinguish that here: we document that with this feature
+		// flag set, one can get special behavior (non-Unknown status) by
+		// setting numNodes to a value larger than zero.
+		if cd.Spec.NumNodes == 0 {
+			freshcd, err := m.Get(string(cd.UID))
+			if err != nil {
+				return fmt.Errorf("error retrieving ComputeDomain: %w", err)
+			}
+
+			newCD := freshcd.DeepCopy()
+			newCD.Status.Status = nvapi.ComputeDomainStatusUnknown
+			if _, err := m.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomains(newCD.Namespace).UpdateStatus(ctx, newCD, metav1.UpdateOptions{}); err != nil {
+				return fmt.Errorf("error setting CD status to Unknown: %w", err)
+			}
+		}
 	}
 
 	return nil

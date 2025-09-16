@@ -382,8 +382,13 @@ func (m *ComputeDomainManager) removeNodeFromComputeDomain(ctx context.Context) 
 		return nil
 	}
 
-	// If the number of nodes is now less than required, set status to NotReady
-	if len(updatedNodes) < newCD.Spec.NumNodes {
+	if featuregates.Enabled(featuregates.IMEXDaemonsWithDNSNames) {
+		if newCD.Spec.NumNodes > 0 && len(updatedNodes) < newCD.Spec.NumNodes {
+			newCD.Status.Status = nvapi.ComputeDomainStatusNotReady
+			klog.Infof("remove node, mode: DNS, numNodes: %d, actual nodes: %d, mark CD as NotReady", cd.Spec.NumNodes, len(updatedNodes))
+		}
+		// Do not change status (keep unknown).
+	} else if len(updatedNodes) < newCD.Spec.NumNodes {
 		newCD.Status.Status = nvapi.ComputeDomainStatusNotReady
 	}
 

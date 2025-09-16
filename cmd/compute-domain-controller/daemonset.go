@@ -382,10 +382,20 @@ func (m *DaemonSetManager) onAddOrUpdate(ctx context.Context, obj any) error {
 		return nil
 	}
 
+	// Do not update status in IMEXDaemonsWithDNSNames mode when `numNodes` is
+	// (explicit or implicit) zero.
+	if featuregates.Enabled(featuregates.IMEXDaemonsWithDNSNames) {
+		if cd.Spec.NumNodes == 0 {
+			// Expect Status to be `Unknown`, and leave it at that.
+			return nil
+		}
+		klog.Infof("added/updated DS, mode: DNS, numNodes: %d, mark CD as Ready", cd.Spec.NumNodes)
+	}
+
 	newCD := cd.DeepCopy()
 	newCD.Status.Status = nvapi.ComputeDomainStatusReady
 	if _, err = m.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomains(newCD.Namespace).UpdateStatus(ctx, newCD, metav1.UpdateOptions{}); err != nil {
-		return fmt.Errorf("error updating nodes in ComputeDomain status: %w", err)
+		return fmt.Errorf("error updating ComputeDomain status: %w", err)
 	}
 
 	return nil
