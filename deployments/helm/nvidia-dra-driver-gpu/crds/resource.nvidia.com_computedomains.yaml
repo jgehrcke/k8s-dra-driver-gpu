@@ -74,7 +74,10 @@ spec:
             - message: A computeDomain.spec is immutable
               rule: self == oldSelf
           status:
-            description: ComputeDomainStatus provides the status for a ComputeDomain.
+            description: |-
+              ComputeDomainStatus provides the status for a ComputeDomain. Leave default
+              Status as `NotReady` because technically the new `Unknown` is behind a
+              feature flag.
             properties:
               nodes:
                 items:

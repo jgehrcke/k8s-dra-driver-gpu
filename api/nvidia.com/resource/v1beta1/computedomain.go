@@ -79,10 +79,10 @@ type ComputeDomainResourceClaimTemplate struct {
 	Name string `json:"name"`
 }
 
-// ComputeDomainStatus provides the status for a ComputeDomain.
+// ComputeDomainStatus provides the status for a ComputeDomain. Leave default
+// Status as `NotReady` because technically the new `Unknown` is behind a
+// feature flag.
 type ComputeDomainStatus struct {
-	// Leave default as `NotReady` because technically the new `Unknown` is
-	// behind a feature flag.
 	// +kubebuilder:validation:Enum=Ready;NotReady;Unknown
 	// +kubebuilder:default=NotReady
 	Status string `json:"status"`
