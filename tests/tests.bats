@@ -6,6 +6,14 @@ setup() {
   load '/bats-libraries/bats-file/load.bash'
 }
 
+# Currently, the tests defined in this file deliberately depend on each other
+# and are expected to execute in the order defined. In the future, we want to
+# build test dependency injection (with fixtures), and work towards clean
+# _isolation_ between tests. To that end, we will hopefully find fast and
+# reliable strategies to conceptually prevent cross-contamination from
+# happening. Tools like `etcdctl` will be helpful.
+
+
 # Use a name that upon cluster inspection reveals that this
 # Helm chart release was installed/managed by this test suite.
 export TEST_HELM_RELEASE_NAME="nvidia-dra-driver-gpu-batssuite"
