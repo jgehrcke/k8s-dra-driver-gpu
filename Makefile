@@ -229,10 +229,10 @@ bats-image:
 
 TEST_CHART_REPO ?= "oci://ghcr.io/nvidia/k8s-dra-driver-gpu"
 TEST_CHART_VERSION ?= $(VERSION_GHCR_CHART)
-TEST_CHART_LASTSTABLE_REPO ?= "nvidia/nvidia-dra-driver-gpu"
-TEST_CHART_LASTSTABLE_VERSION ?= "25.3.1"
+TEST_CHART_LASTSTABLE_REPO ?= "oci://ghcr.io/nvidia/k8s-dra-driver-gpu"
+TEST_CHART_LASTSTABLE_VERSION ?= "25.3.2-7020737a-chart"
 
-# Currently consumed in upgrade test in
+# Currently consumed in upgrade test via
 # kubectl apply -f <URL> (can be a branch, tag, or commit)
 TEST_CRD_UPGRADE_TARGET_GIT_REF ?= $(GIT_COMMIT_SHORT)
 
