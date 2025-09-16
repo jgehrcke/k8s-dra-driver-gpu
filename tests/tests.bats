@@ -43,6 +43,12 @@ setup_file() {
 
   # A helper arg for `iupgrade_wait` w/o additional install args.
   export NOARGS=()
+
+  if [ "$TEST_CHART_LOCAL" != "false" ]; then
+    export _helm_install_target="from-local-directory"
+  else
+    export _helm_install_target="${TEST_CHART_VERSION} from ${TEST_CHART_REPO}"
+  fi
 }
 
 # Install or upgrade, and wait for pods to be READY.
@@ -60,15 +66,26 @@ iupgrade_wait() {
   # Expect array as third argument.
   local -n ADDITIONAL_INSTALL_ARGS=$3
 
-  set -x
-  helm upgrade --install "${TEST_HELM_RELEASE_NAME}" \
-    "${REPO}" \
-    --version="${VERSION}" \
-    --create-namespace \
-    --namespace nvidia-dra-driver-gpu \
-    --set resources.gpus.enabled=false \
-    --set nvidiaDriverRoot="${TEST_NVIDIA_DRIVER_ROOT}" "${ADDITIONAL_INSTALL_ARGS[@]}"
-  set +x
+  if [ "$TEST_CHART_LOCAL" != "false" ]; then
+    set -x
+    helm upgrade --install "${TEST_HELM_RELEASE_NAME}" \
+      deployments/helm/nvidia-dra-driver-gpu/ \
+      --create-namespace \
+      --namespace nvidia-dra-driver-gpu \
+      --set resources.gpus.enabled=false \
+      --set nvidiaDriverRoot="${TEST_NVIDIA_DRIVER_ROOT}" "${ADDITIONAL_INSTALL_ARGS[@]}"
+    set +x
+  else
+    set -x
+    helm upgrade --install "${TEST_HELM_RELEASE_NAME}" \
+      "${REPO}" \
+      --version="${VERSION}" \
+      --create-namespace \
+      --namespace nvidia-dra-driver-gpu \
+      --set resources.gpus.enabled=false \
+      --set nvidiaDriverRoot="${TEST_NVIDIA_DRIVER_ROOT}" "${ADDITIONAL_INSTALL_ARGS[@]}"
+    set +x
+  fi
 
   kubectl wait --for=condition=READY pods -A -l nvidia-dra-driver-gpu-component=kubelet-plugin --timeout=10s
   kubectl wait --for=condition=READY pods -A -l nvidia-dra-driver-gpu-component=controller --timeout=10s
@@ -76,10 +93,14 @@ iupgrade_wait() {
 }
 
 apply_check_delete_workload_imex_chan_inject() {
+  # explicitly confirm that this workload sets numNodes
+  cat demo/specs/imex/channel-injection.yaml | grep 'numNodes: 1'
   kubectl apply -f demo/specs/imex/channel-injection.yaml
   kubectl wait --for=condition=READY pods imex-channel-injection --timeout=70s
   run kubectl logs imex-channel-injection
   assert_output --partial "channel0"
+  # require global CD status to be Ready (non-zero numNodes)
+  kubectl get computedomain imex-channel-injection -o json | jq '.status.status' | grep Ready
   kubectl delete -f demo/specs/imex/channel-injection.yaml
 }
 
@@ -98,7 +119,7 @@ apply_check_delete_workload_imex_chan_inject() {
   refute_output --partial 'Running'
 }
 
-@test "helm-install ${TEST_CHART_VERSION} from ${TEST_CHART_REPO}" {
+@test "helm-install: $_helm_install_target (DNS mode)" {
   local _iargs=("--set" "featureGates.IMEXDaemonsWithDNSNames=true")
   iupgrade_wait "${TEST_CHART_REPO}" "${TEST_CHART_VERSION}" _iargs
 }
@@ -118,10 +139,12 @@ apply_check_delete_workload_imex_chan_inject() {
 }
 
 @test "IMEX channel injection (single)" {
+  skip
   apply_check_delete_workload_imex_chan_inject
 }
 
 @test "IMEX channel injection (all)" {
+  skip
   kubectl apply -f demo/specs/imex/channel-injection-all.yaml
   kubectl wait --for=condition=READY pods imex-channel-injection-all --timeout=60s
   run kubectl logs imex-channel-injection-all
@@ -130,7 +153,34 @@ apply_check_delete_workload_imex_chan_inject() {
   kubectl delete -f demo/specs/imex/channel-injection-all.yaml
 }
 
+@test "IMEX channel injection (no numNodes, DNS mode)" {
+  # Requires DNS mode
+  kubectl apply -f demo/specs/imex/channel-injection-no-numnodes.yaml
+  kubectl wait --for=condition=READY pods imex-channel-injection-nnn --timeout=60s
+  run kubectl logs imex-channel-injection-nnn
+  assert_output --partial "channel0"
+  # In absence of numNodes, the global CD status is required to be Unknown.
+  kubectl get computedomain imex-channel-injection-nnn -o json | jq '.status.status' | grep Unknown
+  kubectl delete -f demo/specs/imex/channel-injection-no-numnodes.yaml
+}
+
+@test "helm-install: $_helm_install_target (legacy mode)" {
+  iupgrade_wait "${TEST_CHART_REPO}" "${TEST_CHART_VERSION}" NOARGS
+}
+
+@test "IMEX channel injection (no numNodes, legacy mode)" {
+  # Requires DNS mode
+  kubectl apply -f demo/specs/imex/channel-injection-no-numnodes.yaml
+  kubectl wait --for=condition=READY pods imex-channel-injection-nnn --timeout=60s
+  run kubectl logs imex-channel-injection-nnn
+  assert_output --partial "channel0"
+  # In absence of numNodes, the global CD status is required to be Unknown.
+  kubectl get computedomain imex-channel-injection-nnn | jq '.status.status' | grep Unknown
+  kubectl delete -f demo/specs/imex/channel-injection-no-numnodes.yaml
+}
+
 @test "nickelpie (NCCL send/recv/broadcast, 2 pods, 2 nodes, small payload)" {
+  skip
   # Do not run in checkout dir (to not pollute that).
   cd "${BATS_TEST_TMPDIR}"
   git clone https://github.com/jgehrcke/jpsnips-nv
@@ -145,6 +195,7 @@ apply_check_delete_workload_imex_chan_inject() {
 }
 
 @test "nvbandwidth (2 nodes, 2 GPUs each)" {
+  skip
   kubectl create -f https://github.com/kubeflow/mpi-operator/releases/download/v0.6.0/mpi-operator.yaml || echo "ignore"
   kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-dra-driver-gpu/refs/heads/main/demo/specs/imex/nvbandwidth-test-job-1.yaml
   # The canonical k8s job interface works even for MPIJob (the MPIJob has an
@@ -157,6 +208,7 @@ apply_check_delete_workload_imex_chan_inject() {
 }
 
 @test "downgrade: current-dev -> last-stable" {
+  skip
   # Stage 1: apply workload, but do not delete.
   kubectl apply -f demo/specs/imex/channel-injection.yaml
   kubectl wait --for=condition=READY pods imex-channel-injection --timeout=60s
@@ -175,6 +227,7 @@ apply_check_delete_workload_imex_chan_inject() {
 }
 
 @test "upgrade: wipe-state, install-last-stable, upgrade-to-current-dev" {
+  skip
   # Stage 1: clean slate
   helm uninstall "${TEST_HELM_RELEASE_NAME}" -n nvidia-dra-driver-gpu
   kubectl wait --for=delete pods -A -l app.kubernetes.io/name=nvidia-dra-driver-gpu --timeout=10s

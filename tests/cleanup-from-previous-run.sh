@@ -30,6 +30,7 @@ helm list -A
 # deliberately not set here.
 timeout -v 5 kubectl delete -f demo/specs/imex/channel-injection.yaml
 timeout -v 5 kubectl delete -f demo/specs/imex/channel-injection-all.yaml
+timeout -v 5 kubectl delete -f demo/specs/imex/channel-injection-no-numnodes.yaml
 timeout -v 5 kubectl delete jobs nickelpie-test
 timeout -v 5 kubectl delete computedomain nickelpie-test-compute-domain
 timeout -v 5 kubectl delete -f https://raw.githubusercontent.com/NVIDIA/k8s-dra-driver-gpu/refs/heads/main/demo/specs/imex/nvbandwidth-test-job-1.yaml

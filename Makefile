@@ -231,6 +231,7 @@ TEST_CHART_REPO ?= "oci://ghcr.io/nvidia/k8s-dra-driver-gpu"
 TEST_CHART_VERSION ?= $(VERSION_GHCR_CHART)
 TEST_CHART_LASTSTABLE_REPO ?= "oci://ghcr.io/nvidia/k8s-dra-driver-gpu"
 TEST_CHART_LASTSTABLE_VERSION ?= "25.3.2-7020737a-chart"
+TEST_CHART_LOCAL ?= "false"
 
 # Currently consumed in upgrade test via
 # kubectl apply -f <URL> (can be a branch, tag, or commit)
@@ -258,6 +259,7 @@ bats-tests: bats-image
 		--env TEST_CHART_LASTSTABLE_REPO=$(TEST_CHART_LASTSTABLE_REPO) \
 		--env TEST_CHART_LASTSTABLE_VERSION=$(TEST_CHART_LASTSTABLE_VERSION) \
 		--env TEST_CRD_UPGRADE_TARGET_GIT_REF=$(TEST_CRD_UPGRADE_TARGET_GIT_REF) \
+		--env TEST_CHART_LOCAL=$(TEST_CHART_LOCAL) \
 		-u $(shell id -u ${USER}):$(shell id -g ${USER}) \
 		--entrypoint "/bin/bash"\
 		$(BATS_IMAGE) \
@@ -269,5 +271,6 @@ bats-tests: bats-image
 			--print-output-on-failure \
 			--no-tempdir-cleanup \
 			--timing \
+			--show-output-of-passing-tests \
 			tests/tests.bats \
 		"
