@@ -213,7 +213,7 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 
 	// Retrieve the full set of device configs for the driver.
 	configs, err := GetOpaqueDeviceConfigs(
-		configapi.Decoder,
+		configapi.StrictDecoder,
 		DriverName,
 		claim.Status.Allocation.Devices.Config,
 	)
