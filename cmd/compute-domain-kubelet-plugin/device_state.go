@@ -236,8 +236,10 @@ func (s *DeviceState) Unprepare(ctx context.Context, claimRef kubeletplugin.Name
 }
 
 func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.ResourceClaim) (PreparedDevices, error) {
-	// Generate a mapping of each OpaqueDeviceConfigs to the Device.Results it applies to
-	configResultsMap, err := s.getConfigResultsMap(&claim.Status)
+	// Generate a mapping of each OpaqueDeviceConfigs to the Device.Results it
+	// applies to. Strict-decode: data is provided by user and may be completely
+	// unvalidated so far (in absence of validating webhook).
+	configResultsMap, err := s.getConfigResultsMap(&claim.Status, configapi.StrictDecoder)
 	if err != nil {
 		return nil, fmt.Errorf("error generating configResultsMap: %w", err)
 	}
@@ -325,8 +327,11 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 }
 
 func (s *DeviceState) unprepareDevices(ctx context.Context, cs *resourceapi.ResourceClaimStatus) error {
-	// Generate a mapping of each OpaqueDeviceConfigs to the Device.Results it applies to
-	configResultsMap, err := s.getConfigResultsMap(cs)
+	// Generate a mapping of each OpaqueDeviceConfigs to the Device.Results it
+	// applies to. Non-strict decoding: do not error out on unknown fields (data
+	// source is checkpointed JSON written by potentially newer versions of this
+	// driver).
+	configResultsMap, err := s.getConfigResultsMap(cs, configapi.NonstrictDecoder)
 	if err != nil {
 		return fmt.Errorf("error generating configResultsMap: %w", err)
 	}
@@ -447,10 +452,10 @@ func (s *DeviceState) applyComputeDomainDaemonConfig(ctx context.Context, config
 	return &configState, nil
 }
 
-func (s *DeviceState) getConfigResultsMap(rcs *resourceapi.ResourceClaimStatus) (map[runtime.Object][]*resourceapi.DeviceRequestAllocationResult, error) {
+func (s *DeviceState) getConfigResultsMap(rcs *resourceapi.ResourceClaimStatus, decoder runtime.Decoder) (map[runtime.Object][]*resourceapi.DeviceRequestAllocationResult, error) {
 	// Retrieve the full set of device configs for the driver.
 	configs, err := GetOpaqueDeviceConfigs(
-		configapi.Decoder,
+		decoder,
 		DriverName,
 		rcs.Allocation.Devices.Config,
 	)
