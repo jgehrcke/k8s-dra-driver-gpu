@@ -147,10 +147,10 @@ Returns the highest available version or empty string if none found
 {{- define "nvidia-dra-driver-gpu.resourceApiVersion" -}}
 {{- if .Capabilities.APIVersions.Has "resource.k8s.io/v1" -}}
 resource.k8s.io/v1
-{{- else if .Capabilities.APIVersions.Has "resource.k8s.io/v1beta1" -}}
-resource.k8s.io/v1beta1
 {{- else if .Capabilities.APIVersions.Has "resource.k8s.io/v1beta2" -}}
 resource.k8s.io/v1beta2
+{{- else if .Capabilities.APIVersions.Has "resource.k8s.io/v1beta1" -}}
+resource.k8s.io/v1beta1
 {{- else -}}
 {{- end -}}
 {{- end -}}
