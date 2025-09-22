@@ -23,7 +23,6 @@ FROM --platform=$BUILDPLATFORM nvcr.io/nvidia/base/ubuntu:jammy-20251013 AS buil
 
 # Require arg to be provided (set invalid default value).
 ARG GOLANG_VERSION=x.x.x
-ARG BASH_STATIC_GIT_REF=unknown
 
 # Controlled by Makefile: location(s) of Go build/mod cache. CI: in image layer.
 # Local dev: mount cache (host filesystem). ARGs are available as environment
