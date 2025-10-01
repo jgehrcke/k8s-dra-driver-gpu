@@ -71,10 +71,10 @@ image:
 
 # Warning: destructive against currently configured k8s cluster.
 #
-# Explicit invocation of 'cleanup-from-previous-run.sh' (could also be done as
-# suite/file 'setup' in bats, but we'd lose output on success). During dev, you
-# may want to add --show-output-of-passing-tests (and read bats docs for other
-# cmdline args).
+# Explicit invocation of 'cleanup-from-previous-run.sh' (could also be done in a
+# separate makefile target, or as suite/file 'setup' in bats, but we'd lose
+# output on success). During dev, you may want to add
+# --show-output-of-passing-tests (and read bats docs for other cmdline args).
 .PHONY: tests
 tests: image
 	mkdir -p tests-out && \
