@@ -19,7 +19,7 @@ for ((i=1; i<=MAX_ITER; i++)); do
 
     SECONDS=0
 
-    WORKER_DELETED=0
+    FAULT_INJECTED=0
     DAEMON_DELETED=false
 
     IMEX_DAEMON_LOG_EXTRACTED=0
@@ -37,7 +37,7 @@ for ((i=1; i<=MAX_ITER; i++)); do
         STATUS=$(kubectl get pod -l job-name=nvbandwidth-test-2-launcher -o jsonpath="{.items[0].status.phase}" 2>/dev/null)
 
         date -u +"%Y-%m-%dT%H:%M:%S.%3NZ " | sed -z '$ s/\n$//'
-        #kubectl get pods -o wide
+        kubectl get pods -o wide
         #echo "logs:"
         # kubectl logs -l job-name=nvbandwidth-test-2-launcher --timestamps --tail=-1 2>&1 | \
         #     grep -e multinode_device_to_device_memcpy_read_ce -e ContainerCreating | \
@@ -101,7 +101,7 @@ for ((i=1; i<=MAX_ITER; i++)); do
         # least 20 seconds overall. Inject fault shortly after benchmark has
         # started. Pick that delay to be random (but below 20 seconds).
         if (( NVB_COMMS_STARTED == 1 )); then
-            if (( WORKER_DELETED == 0 )); then
+            if (( FAULT_INJECTED == 0 )); then
                 echo "NVB_COMMS_STARTED_AFTER: $NVB_COMMS_STARTED_AFTER seconds"
                 _jitter_seconds=$(awk -v min=1 -v max=5 'BEGIN {srand(); print min+rand()*(max-min)}')
                 echo "inject fault (delete pod) after $_jitter_seconds s"
@@ -127,9 +127,10 @@ for ((i=1; i<=MAX_ITER; i++)); do
                 # launcher restart (as of failing TCP interaction with the
                 # missing worker) is what after all facilitates healing the
                 # workload.
-                kubectl delete pod nvbandwidth-test-2-worker-0
+                #kubectl delete pod nvbandwidth-test-2-worker-0
+                kubectl delete pod -n nvidia-dra-driver-gpu -l resource.nvidia.com/computeDomain --grace-period=0 --force
                 echo "'delete pod' cmd returned"
-                WORKER_DELETED=1
+                FAULT_INJECTED=1
                 # kubectl wait --for=delete pods nvbandwidth-test-2-worker-0 &
             fi
             # Fault already injected
@@ -142,9 +143,9 @@ for ((i=1; i<=MAX_ITER; i++)); do
         fi
 
         # Delete worker pod after $WORKER_DELETE_DELAY seconds
-        # elif [ "$SECONDS" -ge $WORKER_DELETE_DELAY ] && [ "$WORKER_DELETED" = "false" ]; then
+        # elif [ "$SECONDS" -ge $WORKER_DELETE_DELAY ] && [ "$FAULT_INJECTED" = "false" ]; then
         #         kubectl delete pod nvbandwidth-test-2-worker-0
-        #         WORKER_DELETED=true
+        #         FAULT_INJECTED=true
 
         # Force delete (i.e. with SIGKILL) IMEX daemon pods after $DAEMON_DELETE_DELAY seconds
         # elif [ "$SECONDS" -ge $DAEMON_DELETE_DELAY ] && [ "$DAEMON_DELETED" = "false" ]; then
@@ -170,7 +171,7 @@ wait
 echo "dedup launcher logs"
 cat _launcher_logs_dup.log | sort | uniq > _launcher_logs_dedup.log
 
-echo "errors in launcher:"
+echo "errors in / reported by launcher:"
 cat _launcher_logs_dedup.log | \
     grep -e CUDA_ -e "closed by remote host" -e "Could not resolve" > _launcher_errors.log
 cat _launcher_errors.log
