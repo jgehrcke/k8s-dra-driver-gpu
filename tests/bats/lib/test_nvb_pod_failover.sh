@@ -78,7 +78,8 @@ for ((i=1; i<=MAX_ITER; i++)); do
                 kubectl get pods -n nvidia-dra-driver-gpu | grep nvbandwidth-test-compute-domain-2 | awk '{print $1}' | while read pname; do
                     echo "IMEX daemon pod: $pname"
                     kubectl logs -n nvidia-dra-driver-gpu "$pname" --timestamps --prefix --all-containers | \
-                        grep -e "IP set changed" -e "Connection established" -e "updated node"
+                        grep -e "IP set changed" -e "Connection established" -e "updated node" -e "SIGUSR1" \
+                            -e "\[ERROR\]"
                 done
                 IMEX_DAEMON_LOG_EXTRACTED=1
             fi
@@ -127,8 +128,8 @@ for ((i=1; i<=MAX_ITER; i++)); do
                 # launcher restart (as of failing TCP interaction with the
                 # missing worker) is what after all facilitates healing the
                 # workload.
-                #kubectl delete pod nvbandwidth-test-2-worker-0
-                kubectl delete pod -n nvidia-dra-driver-gpu -l resource.nvidia.com/computeDomain --grace-period=0 --force
+                kubectl delete pod nvbandwidth-test-2-worker-0
+                #kubectl delete pod -n nvidia-dra-driver-gpu -l resource.nvidia.com/computeDomain --grace-period=0 --force
                 echo "'delete pod' cmd returned"
                 FAULT_INJECTED=1
                 # kubectl wait --for=delete pods nvbandwidth-test-2-worker-0 &
