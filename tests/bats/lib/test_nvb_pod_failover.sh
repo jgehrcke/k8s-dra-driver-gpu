@@ -1,31 +1,29 @@
 #!/bin/bash
 
-MAX_ITER=1
+MAX_ITER=4
 
 # Wait up to TIMEOUT seconds for the MPI launcher pod to complete successfully.
 TIMEOUT=300
-
-DAEMON_DELETE_DELAY=30 # seconds
 
 SPECPATH="demo/specs/imex/nvbandwidth-test-job-2.yaml"
 
 kubectl delete -f "$SPECPATH"
 
-
 for ((i=1; i<=MAX_ITER; i++)); do
     echo "Starting iteration $i"
-
     kubectl apply -f "$SPECPATH"
 
+    # Pick one of two fault types.
+    if (( RANDOM % 2 )); then
+        FAULT_TYPE=0
+    else
+        FAULT_TYPE=1
+    fi
+
     SECONDS=0
-
     FAULT_INJECTED=0
-    DAEMON_DELETED=false
-
     IMEX_DAEMON_LOG_EXTRACTED=0
-
     NVB_COMMS_STARTED=0
-
     LAST_LAUNCHER_RESTART_OUTPUT=""
 
     _log_follower_pid=0
@@ -87,7 +85,7 @@ for ((i=1; i<=MAX_ITER; i++)); do
 
         # Pod succeeded
         if [ "$STATUS" == "Succeeded" ]; then
-            echo "Pod completed successfully."
+            echo "nvb completed"
             break
         fi
 
@@ -104,7 +102,7 @@ for ((i=1; i<=MAX_ITER; i++)); do
         if (( NVB_COMMS_STARTED == 1 )); then
             if (( FAULT_INJECTED == 0 )); then
                 echo "NVB_COMMS_STARTED_AFTER: $NVB_COMMS_STARTED_AFTER seconds"
-                _jitter_seconds=$(awk -v min=1 -v max=5 'BEGIN {srand(); print min+rand()*(max-min)}')
+                _jitter_seconds=$(awk -v min=1 -v max=15 'BEGIN {srand(); print min+rand()*(max-min)}')
                 echo "inject fault (delete pod) after $_jitter_seconds s"
                 sleep "$_jitter_seconds"
 
@@ -128,8 +126,16 @@ for ((i=1; i<=MAX_ITER; i++)); do
                 # launcher restart (as of failing TCP interaction with the
                 # missing worker) is what after all facilitates healing the
                 # workload.
-                kubectl delete pod nvbandwidth-test-2-worker-0
-                #kubectl delete pod -n nvidia-dra-driver-gpu -l resource.nvidia.com/computeDomain --grace-period=0 --force
+
+                if (( FAULT_TYPE == 1 )); then
+                    echo "inject fault type 1: delete worker pod"
+                    kubectl delete pod nvbandwidth-test-2-worker-0
+                else
+                    echo "inject fault type 2: force-delete imex daemon"
+                    kubectl delete pod -n nvidia-dra-driver-gpu \
+                        -l resource.nvidia.com/computeDomain --grace-period=0 --force
+                fi
+
                 echo "'delete pod' cmd returned"
                 FAULT_INJECTED=1
                 # kubectl wait --for=delete pods nvbandwidth-test-2-worker-0 &
@@ -159,13 +165,12 @@ for ((i=1; i<=MAX_ITER; i++)); do
             exit 1
         fi
 
-        sleep 0.2
+        sleep 1
     done
 
     kubectl delete -f $SPECPATH
 done
 
-echo "Finished $MAX_ITER iterations successfully."
 echo "wait for child processes"
 wait
 
@@ -177,3 +182,4 @@ cat _launcher_logs_dedup.log | \
     grep -e CUDA_ -e "closed by remote host" -e "Could not resolve" > _launcher_errors.log
 cat _launcher_errors.log
 
+echo "finished fault injection test ($MAX_ITER iteration(s))"
