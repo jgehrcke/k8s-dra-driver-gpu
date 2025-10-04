@@ -3,13 +3,15 @@
 set -o nounset
 
 # Wait up to TIMEOUT seconds for the MPI launcher pod to complete successfully.
-TIMEOUT=400
-SPECPATH="demo/specs/imex/nvbandwidth-test-job-2.yaml"
+TIMEOUT=300
+SPECPATH="${1:-demo/specs/imex/nvbandwidth-test-job-2.yaml}"
 JOB_NAME="${JOB_NAME:-nvbandwidth-test-2-launcher}"
 
 # External supervisor can inject run ID (for many-repetition-tests), used mainly
 # in output file names.
 RUNID="${RUNID:-no_runid}"
+
+echo "$RUNID -- $SPECPATH"
 
 # Pick one of two fault types.
 if (( RANDOM % 2 )); then
@@ -58,7 +60,7 @@ log() {
 }
 
 set -e
-log "do: delete -f ${SPECPATH}"
+log "do: delete -f ${SPECPATH} (and wait)"
 kubectl delete -f "${SPECPATH}" --ignore-not-found > /dev/null
 kubectl wait --for=delete job/"${JOB_NAME}" --timeout=20s > /dev/null
 log "done"
@@ -67,7 +69,7 @@ log "do: apply -f ${SPECPATH}"
 kubectl apply -f "${SPECPATH}" > /dev/null
 log "done"
 log "do: wait --for=create"
-kubectl wait --for=create job/"${JOB_NAME}" --timeout=20s > /dev/null
+kubectl wait --for=create job/"${JOB_NAME}" --timeout=40s > /dev/null
 log "done"
 set +e
 
@@ -80,12 +82,12 @@ CD_LABEL_KV="resource.nvidia.com/computeDomain=${CDUID}"
 
 while true; do
 
-    kubectl get resourceclaims -A
-    kubectl get pods -l job-name="${JOB_NAME}" -o yaml | grep -e ClaimName -e nodeName
-    kubectl get ds -n nvidia-dra-driver-gpu
-
-    log "nodes marked with ${CD_LABEL_KV}:"
-    kubectl get nodes -l "$CD_LABEL_KV"
+    #log "nodes marked with ${CD_LABEL_KV}:"
+    #kubectl get nodes -l "$CD_LABEL_KV"
+    #kubectl get resourceclaims -A
+    #kubectl get pods -l job-name="${JOB_NAME}" -o yaml | grep -e ClaimName -e nodeName
+    #kubectl get ds -n nvidia-dra-driver-gpu
+    #kubectl get pods -A -o wide | grep dra
 
     # Log time w/o trailing newline.
     #date -u +"%Y-%m-%dT%H:%M:%S.%3NZ " | sed -z '$ s/\n$//'
