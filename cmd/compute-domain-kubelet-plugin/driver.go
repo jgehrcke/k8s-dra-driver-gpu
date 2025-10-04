@@ -245,7 +245,7 @@ func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.Res
 	devs, err := d.state.Prepare(ctx, claim)
 	if err != nil {
 		res := kubeletplugin.PrepareResult{
-			Err: fmt.Errorf("error preparing devices for claim %v: %w", claim.UID, err),
+			Err: fmt.Errorf("error preparing devices for claim %s/%s:%s: %w", claim.Namespace, claim.Name, claim.UID, err),
 		}
 		if isPermanentError(err) {
 			klog.V(6).Infof("Permanent error preparing devices for claim %v: %v", claim.UID, err)
@@ -254,7 +254,7 @@ func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.Res
 		return false, res
 	}
 
-	klog.Infof("Returning newly prepared devices for claim '%v': %v", claim.UID, devs)
+	klog.Infof("prepared devices for claim '%s/%s:%s': %v", claim.Namespace, claim.Name, claim.UID, devs)
 	return true, kubeletplugin.PrepareResult{Devices: devs}
 }
 

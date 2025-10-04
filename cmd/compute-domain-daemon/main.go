@@ -244,6 +244,7 @@ func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 			klog.Errorf("controller failed, initiate shutdown: %s", err)
 			cancel()
 		}
+		klog.Infof("Terminated: controller task")
 	}()
 
 	// Start IMEX daemon update loop in goroutine (watches for CD status
@@ -264,6 +265,7 @@ func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 				cancel()
 			}
 		}
+		klog.Infof("Terminated: IMEX daemon update task")
 	}()
 
 	// Start child process watchdog in goroutine.
@@ -276,11 +278,13 @@ func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 			klog.Errorf("watch failed, initiate shutdown: %s", err)
 			cancel()
 		}
+		klog.Infof("Terminated: process manager")
 	}()
 
 	wg.Wait()
 
 	// Let's not yet try to make exit code promises.
+	klog.Infof("Exiting")
 	return nil
 }
 
