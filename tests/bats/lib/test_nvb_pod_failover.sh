@@ -1,9 +1,12 @@
 #!/bin/bash
 
 set -o nounset
+set -o errexit
 
-# Wait up to TIMEOUT seconds for the MPI launcher pod to complete successfully.
-TIMEOUT=300
+# Wait for the workload to heal after fault injection (for the MPI launcher pod
+# to succeed); otherwise fail the test TIMEOUT seconds after startup.
+TIMEOUT=200
+
 SPECPATH="${1:-demo/specs/imex/nvbandwidth-test-job-2.yaml}"
 JOB_NAME="${JOB_NAME:-nvbandwidth-test-2-launcher}"
 
@@ -11,14 +14,12 @@ JOB_NAME="${JOB_NAME:-nvbandwidth-test-2-launcher}"
 # in output file names.
 RUNID="${RUNID:-no_runid}"
 
-echo "$RUNID -- $SPECPATH"
+# Randomly pick a fault type between 0, 1, 2 (makes sense when run often,
+# supervised).
+RND_FAULT_TYPE=$(shuf -i 0-2 -n 1)
+FAULT_TYPE="${2:-$RND_FAULT_TYPE}"
 
-# Pick one of two fault types.
-if (( RANDOM % 2 )); then
-    FAULT_TYPE=1
-else
-    FAULT_TYPE=1
-fi
+echo "run $RUNID, fault type $FAULT_TYPE -- $SPECPATH"
 
 SECONDS=0
 FAULT_INJECTED=0
@@ -59,7 +60,7 @@ log() {
   printf "[%6.1fs] $1\n" "$_DUR"
 }
 
-set -e
+
 log "do: delete -f ${SPECPATH} (and wait)"
 kubectl delete -f "${SPECPATH}" --ignore-not-found > /dev/null
 kubectl wait --for=delete job/"${JOB_NAME}" --timeout=20s > /dev/null
@@ -71,14 +72,13 @@ log "done"
 log "do: wait --for=create"
 kubectl wait --for=create job/"${JOB_NAME}" --timeout=40s > /dev/null
 log "done"
-set +e
-
-kubectl get resourceclaim
 
 CDUID=$(kubectl describe computedomains.resource.nvidia.com nvbandwidth-test-compute-domain-2 | grep UID | awk '{print $2}')
-log "CD uid: ${CDUID}"
-
 CD_LABEL_KV="resource.nvidia.com/computeDomain=${CDUID}"
+
+log "CD uid: ${CDUID}"
+log "resource claims:"
+kubectl get resourceclaim
 
 while true; do
 
@@ -117,12 +117,12 @@ while true; do
     # _all_ container logs. The correct solution for this type of problem is to
     # have a proper log streaming pipeline. Collect heavily duplicated logs
     # (dedup later)
-    kubectl logs -l job-name="${JOB_NAME}" $KLOGS_ARGS $ >> "${LAUNCHER_LOG_PATH}".dup 2>&1
-    kubectl logs -l job-name="${JOB_NAME}" $KLOGS_ARGS --previous >> "${LAUNCHER_LOG_PATH}".dup 2>&1
+    kubectl logs -l job-name="${JOB_NAME}" $KLOGS_ARGS >> "${LAUNCHER_LOG_PATH}".dup 2>&1 || true
+    kubectl logs -l job-name="${JOB_NAME}" $KLOGS_ARGS --previous >> "${LAUNCHER_LOG_PATH}".dup 2>&1 || true
 
     # Same strategy for CD daemons.
-    kubectl logs -n nvidia-dra-driver-gpu -l "$CD_LABEL_KV" $KLOGS_ARGS >> "${CDDAEMON_LOG_PATH}".dup 2>&1
-    kubectl logs -n nvidia-dra-driver-gpu -l "$CD_LABEL_KV" $KLOGS_ARGS --previous >> "${CDDAEMON_LOG_PATH}".dup 2>&1
+    kubectl logs -n nvidia-dra-driver-gpu -l "$CD_LABEL_KV" $KLOGS_ARGS >> "${CDDAEMON_LOG_PATH}".dup 2>&1 || true
+    kubectl logs -n nvidia-dra-driver-gpu -l "$CD_LABEL_KV" $KLOGS_ARGS --previous >> "${CDDAEMON_LOG_PATH}".dup 2>&1  || true
 
     # Inspect IMEX daemon log (before pods disappear -- happens quickly upon
     # workload completion).
@@ -239,21 +239,29 @@ while true; do
             # checkpointed state, it starts from scratch.
 
             if (( FAULT_TYPE == 1 )); then
-                log "inject fault type 1: delete worker pod"
+                log "inject fault type 1: force-delete worker pod 0"
+                set -x
                 kubectl delete pod nvbandwidth-test-2-worker-0 --grace-period=0 --force
+                set +x
+            elif (( FAULT_TYPE == 2 )); then
+                log "inject fault type 2: force-delete all IMEX daemons"
+                set -x
+                kubectl delete pod -n nvidia-dra-driver-gpu -l resource.nvidia.com/computeDomain --grace-period=0 --force
+                set +x
+            elif (( FAULT_TYPE == 3 )); then
+                log "inject fault type 3: regular-delete worker pod 1"
+                set -x
+                kubectl delete pod nvbandwidth-test-2-worker-1
+                set +x
             else
-                log "inject fault type 2: force-delete imex daemon"
-                kubectl delete pod -n nvidia-dra-driver-gpu \
-                    -l resource.nvidia.com/computeDomain --grace-period=0 --force
+                log "unknown fault type $FAULT_TYPE"
             fi
 
-            log "'delete pod' cmd returned"
             FAULT_INJECTED=1
-            # kubectl wait --for=delete pods nvbandwidth-test-2-worker-0 &
         fi
-        # Fault already injected
+        # Fault already injected, do not inject again.
     else
-        # Consult _current_ pod/container.
+        # Did the benchmark start? Consult _current_ container log.
         if kubectl logs -l job-name="${JOB_NAME}" --tail=-1 2>&1 | grep "Running multinode_"; then
             NVB_COMMS_STARTED=1
         fi
@@ -264,7 +272,7 @@ while true; do
         break
     fi
 
-    sleep 1
+    sleep 0.5
 done
 
 
@@ -273,25 +281,27 @@ wait
 
 log "dedup launcher logs"
 cat "${LAUNCHER_LOG_PATH}".dup | sort | uniq > "${LAUNCHER_LOG_PATH}"
+rm "${LAUNCHER_LOG_PATH}".dup
 
 log "dedup CD daemon logs"
 cat "${CDDAEMON_LOG_PATH}".dup | sort | uniq > "${CDDAEMON_LOG_PATH}"
+rm "${CDDAEMON_LOG_PATH}".dup
 
 log "errors in / reported by launcher:"
 cat "${LAUNCHER_LOG_PATH}" | \
     grep -e CUDA_ -e "closed by remote host" -e "Could not resolve" > "${LAUNCHER_ERRORS_LOG_PATH}"
 cat "${LAUNCHER_ERRORS_LOG_PATH}"
 
-kubectl logs -n nvidia-dra-driver-gpu \
-    -l nvidia-dra-driver-gpu-component=controller \
-    --tail=4000 --prefix --all-containers --timestamps | \
-    grep 'Removed label'
+# kubectl logs -n nvidia-dra-driver-gpu \
+#     -l nvidia-dra-driver-gpu-component=controller \
+#     --tail=1000 --prefix --all-containers --timestamps | \
+#     grep 'Removed label'
 
 if [ "$STATUS" != "Succeeded" ]; then
-    log "last launcher pod status is not "Succeeded": $STATUS"
-    log "finished: failure"
+    log "last launcher pod status is not 'Succeeded': $STATUS"
+    log "finished: failure (fault type $FAULT_TYPE)"
     log "exit with code 1"
     exit 1
 fi
 
-log "finished: success"
+log "finished: success (fault type $FAULT_TYPE)"
