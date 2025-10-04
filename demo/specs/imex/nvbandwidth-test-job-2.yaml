@@ -36,6 +36,7 @@ spec:
             command:
             - mpirun
             args:
+            - --show-progress
             - --bind-to
             - core
             - --map-by
