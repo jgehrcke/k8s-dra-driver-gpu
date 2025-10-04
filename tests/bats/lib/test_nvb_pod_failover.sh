@@ -238,25 +238,25 @@ while true; do
             # healing the workload -- but it does not continue from previously
             # checkpointed state, it starts from scratch.
 
-            if (( FAULT_TYPE == 1 )); then
+            if (( FAULT_TYPE == 0 )); then
                 log "inject fault type 1: force-delete worker pod 0"
                 set -x
                 kubectl delete pod nvbandwidth-test-2-worker-0 --grace-period=0 --force
                 set +x
-            elif (( FAULT_TYPE == 2 )); then
+            elif (( FAULT_TYPE == 1 )); then
                 log "inject fault type 2: force-delete all IMEX daemons"
                 set -x
                 kubectl delete pod -n nvidia-dra-driver-gpu -l resource.nvidia.com/computeDomain --grace-period=0 --force
                 set +x
-            elif (( FAULT_TYPE == 3 )); then
+            elif (( FAULT_TYPE == 2 )); then
                 log "inject fault type 3: regular-delete worker pod 1"
                 set -x
                 kubectl delete pod nvbandwidth-test-2-worker-1
                 set +x
             else
                 log "unknown fault type $FAULT_TYPE"
+                exit 1
             fi
-
             FAULT_INJECTED=1
         fi
         # Fault already injected, do not inject again.
@@ -272,7 +272,7 @@ while true; do
         break
     fi
 
-    sleep 0.5
+    sleep 1
 done
 
 
@@ -287,6 +287,7 @@ log "dedup CD daemon logs"
 cat "${CDDAEMON_LOG_PATH}".dup | sort | uniq > "${CDDAEMON_LOG_PATH}"
 rm "${CDDAEMON_LOG_PATH}".dup
 
+set +e
 log "errors in / reported by launcher:"
 cat "${LAUNCHER_LOG_PATH}" | \
     grep -e CUDA_ -e "closed by remote host" -e "Could not resolve" > "${LAUNCHER_ERRORS_LOG_PATH}"
