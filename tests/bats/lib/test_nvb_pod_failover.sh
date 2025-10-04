@@ -16,7 +16,7 @@ RUNID="${RUNID:-no_runid}"
 
 # Randomly pick a fault type between 0, 1, 2 (makes sense when run often,
 # supervised).
-RND_FAULT_TYPE=$(shuf -i 0-2 -n 1)
+RND_FAULT_TYPE="$((RANDOM % 3))"
 FAULT_TYPE="${2:-$RND_FAULT_TYPE}"
 
 echo "run $RUNID, fault type $FAULT_TYPE -- $SPECPATH"
