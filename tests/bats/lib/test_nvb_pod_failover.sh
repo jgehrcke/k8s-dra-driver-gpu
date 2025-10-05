@@ -5,7 +5,7 @@ set -o errexit
 
 # Wait for the workload to heal after fault injection (for the MPI launcher pod
 # to succeed); otherwise fail the test TIMEOUT seconds after startup.
-TIMEOUT=200
+TIMEOUT=300
 
 SPECPATH="${1:-demo/specs/imex/nvbandwidth-test-job-2.yaml}"
 JOB_NAME="${JOB_NAME:-nvbandwidth-test-2-launcher}"
@@ -32,9 +32,9 @@ STATUS="nil"
 # sort upon dedup/post-processing.
 KLOGS_ARGS="--tail=-1 --prefix --all-containers --timestamps"
 
-LAUNCHER_LOG_PATH="_launcher_logs_${RUNID}.log"
-LAUNCHER_ERRORS_LOG_PATH="_launcher_errors_${RUNID}.log"
-CDDAEMON_LOG_PATH="_cd-daemon_logs_${RUNID}.log"
+LAUNCHER_LOG_PATH="${RUNID}_launcher_logs.log"
+LAUNCHER_ERRORS_LOG_PATH="${RUNID}_launcher_errors.log"
+CDDAEMON_LOG_PATH="${RUNID}_cd-daemon_logs.log"
 #WORKER_LOG_PATH="_worker_logs_dup_${RUNID}.log"
 
 
@@ -79,6 +79,8 @@ CD_LABEL_KV="resource.nvidia.com/computeDomain=${CDUID}"
 log "CD uid: ${CDUID}"
 log "resource claims:"
 kubectl get resourceclaim
+log "workload pods:"
+kubectl get pods -o wide
 
 while true; do
 
@@ -109,20 +111,41 @@ while true; do
         LAST_LAUNCHER_RESTART_OUTPUT="$_llro"
     fi
 
-    # Note that the launcher container may restart various times in the context
-    # of this failover. `kubectl logs --follow` does not automatically follow
-    # container restarts. To catch all container instances in view of quick
-    # restarts, we need to often call a pair of `kubectl logs` commands (once
-    # with, and once without --previous). Even that does not reliably obtain
-    # _all_ container logs. The correct solution for this type of problem is to
-    # have a proper log streaming pipeline. Collect heavily duplicated logs
-    # (dedup later)
+    # Start log-follower child processes for all newly popping up CD daemon pods
+    # (when the are Running). I have added this very late in the game because I
+    # think we're missing CD daemon log around container shutdown; I want to be
+    # extra sure.
+    kubectl get pods -n nvidia-dra-driver-gpu | grep test-compute-domain-2 | grep Running | awk '{print $1}' | while read pname; do
+        _logfname="${RUNID}_cddaemon_follow_${pname}.log"
+        if [ -f "$_logfname" ]; then
+            continue
+        fi
+        log "new CD daemon pod: $pname -- follow log, save to ${_logfname}"
+        kubectl logs -n nvidia-dra-driver-gpu "$pname" \
+            --tail=-1 --timestamps --prefix --all-containers --follow \
+            > "${_logfname}" &
+        # Note: if we lose track of the log followers spawned, we can and should
+        # terminate them all with `kill $(jobs -p)`.
+    done
+
+    # Note that the launcher pod is not expected to restart. The container in
+    # the pod may restart various times in the context of this failover.
+    # `kubectl logs --follow` does not automatically follow container restarts.
+    # To catch all container instances in view of quick restarts, we need to
+    # often call a pair of `kubectl logs` commands (once with, and once without
+    # --previous). Even that does not reliably obtain _all_ container logs. The
+    # correct solution for this type of problem is to have a proper log
+    # streaming pipeline. Collect heavily duplicated logs (dedup later)
     kubectl logs -l job-name="${JOB_NAME}" $KLOGS_ARGS >> "${LAUNCHER_LOG_PATH}".dup 2>&1 || true
     kubectl logs -l job-name="${JOB_NAME}" $KLOGS_ARGS --previous >> "${LAUNCHER_LOG_PATH}".dup 2>&1 || true
 
     # Same strategy for CD daemons.
     kubectl logs -n nvidia-dra-driver-gpu -l "$CD_LABEL_KV" $KLOGS_ARGS >> "${CDDAEMON_LOG_PATH}".dup 2>&1 || true
     kubectl logs -n nvidia-dra-driver-gpu -l "$CD_LABEL_KV" $KLOGS_ARGS --previous >> "${CDDAEMON_LOG_PATH}".dup 2>&1  || true
+
+    date -u +'%Y-%m-%dT%H:%M:%S.%3NZ ' >> "${RUNID}_pods_over_time"
+    kubectl get pods -n nvidia-dra-driver-gpu -o wide >> "${RUNID}_pods_over_time"
+    kubectl get pods -o wide >> "${RUNID}_pods_over_time"
 
     # Inspect IMEX daemon log (before pods disappear -- happens quickly upon
     # workload completion).
@@ -268,7 +291,19 @@ while true; do
     fi
 
     if [ "$SECONDS" -ge $TIMEOUT ]; then
-        log "global deadline reached ($TIMEOUT seconds), leave control loop"
+        log "global deadline reached ($TIMEOUT seconds), collect debug data -- and leave control loop"
+        kubectl get pods -A -o wide
+        kubectl get computedomain
+        kubectl get computedomains.resource.nvidia.com nvbandwidth-test-compute-domain-2 -o yaml
+
+        # Run this in the background, then delete workflow -- this helps getting all logs
+        # (but also disrupts post-run debuggability)
+        kubectl logs -l training.kubeflow.org/job-name=nvbandwidth-test-2 \
+            --tail=-1 --prefix --all-containers --timestamps --follow &> "${RUNID}_on_timeout_workload.log" &
+        log "on-timeout do: delete -f ${SPECPATH} (and wait)"
+        kubectl delete -f "${SPECPATH}" --ignore-not-found > /dev/null
+        kubectl wait --for=delete job/"${JOB_NAME}" --timeout=20s > /dev/null
+        log "done"
         break
     fi
 
@@ -276,7 +311,9 @@ while true; do
 done
 
 
-log "wait for child processes"
+log "terminate children, wait"
+jobs -p
+kill $(jobs -p) || true
 wait
 
 log "dedup launcher logs"
