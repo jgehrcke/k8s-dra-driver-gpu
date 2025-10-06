@@ -19,8 +19,6 @@ RUNID="${RUNID:-no_runid}"
 RND_FAULT_TYPE="$((RANDOM % 3))"
 FAULT_TYPE="${2:-$RND_FAULT_TYPE}"
 
-echo "run $RUNID, fault type $FAULT_TYPE -- $SPECPATH"
-
 SECONDS=0
 FAULT_INJECTED=0
 IMEX_DAEMON_LOG_EXTRACTED=0
@@ -60,6 +58,7 @@ log() {
   printf "[%6.1fs] $1\n" "$_DUR"
 }
 
+log "RUNID: $RUNID, fault type $FAULT_TYPE -- $SPECPATH"
 
 log "do: delete -f ${SPECPATH} (and wait)"
 kubectl delete -f "${SPECPATH}" --ignore-not-found > /dev/null
