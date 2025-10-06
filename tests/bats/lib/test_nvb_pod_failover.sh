@@ -302,6 +302,13 @@ while true; do
         log "on-timeout do: delete -f ${SPECPATH} (and wait)"
         kubectl delete -f "${SPECPATH}" --ignore-not-found > /dev/null
         kubectl wait --for=delete job/"${JOB_NAME}" --timeout=20s > /dev/null
+
+        # log something if this looks like a segmentation fault on
+        # shutdown (not our bug)
+        set +e
+        cat "${RUNID}_on_timeout_workload.log" | grep PMIx_Finalize
+        set -e
+
         log "done"
         break
     fi
