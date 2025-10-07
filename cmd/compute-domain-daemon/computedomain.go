@@ -206,11 +206,12 @@ func (m *ComputeDomainManager) onAddOrUpdate(ctx context.Context, obj any) error
 	// Because the informer only filters by name:
 	// Skip ComputeDomains that don't match on UUID
 	if string(cd.UID) != m.config.computeDomainUUID {
-		klog.Errorf("ComputeDomain processed with non-matching UID (%v, %v)", cd.UID, m.config.computeDomainUUID)
+		klog.Warningf("ComputeDomain processed with non-matching UID (%v, %v)", cd.UID, m.config.computeDomainUUID)
 		return nil
 	}
 
 	// Update node info in ComputeDomain
+	// Why are we doing this (only) upon receiving another update?
 	if err := m.UpdateComputeDomainNodeInfo(ctx, cd); err != nil {
 		return fmt.Errorf("error updating node info in ComputeDomain: %w", err)
 	}
@@ -258,7 +259,11 @@ func (m *ComputeDomainManager) UpdateComputeDomainNodeInfo(ctx context.Context, 
 			Name:     m.config.nodeName,
 			CliqueID: m.config.cliqueID,
 			Index:    nextIndex,
+			// Initialize as NotReady (will be updated by podmanager).
+			Status: nvapi.ComputeDomainStatusNotReady,
 		}
+
+		klog.Infof("CD status does not contain node name '%s' yet, try to insert myself: %v", m.config.nodeName, nodeInfo)
 		newCD.Status.Nodes = append(newCD.Status.Nodes, nodeInfo)
 	}
 
@@ -277,8 +282,10 @@ func (m *ComputeDomainManager) UpdateComputeDomainNodeInfo(ctx context.Context, 
 	// later). TODO: review conflict resolution methodology for the
 	// 10000-nodes-CD use case.
 	if _, err := m.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomains(newCD.Namespace).UpdateStatus(ctx, newCD, metav1.UpdateOptions{}); err != nil {
-		return fmt.Errorf("error updating nodes in ComputeDomain status: %w", err)
+		return fmt.Errorf("error updating ComputeDomain: %w", err)
 	}
+
+	klog.V(2).Infof("Successfully updated CD")
 
 	// API server update succeeeded, reflect mutation in shared in-memory state.
 	m.mutationCache.Mutation(newCD)
