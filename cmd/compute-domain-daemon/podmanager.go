@@ -113,6 +113,7 @@ func (pm *PodManager) Stop() error {
 	}
 
 	pm.waitGroup.Wait()
+	klog.Infof("Terminating: pod manager")
 	return nil
 }
 
@@ -188,13 +189,15 @@ func (pm *PodManager) updateNodeStatus(ctx context.Context, status string) error
 	// Update the node status to the new value
 	node.Status = status
 
-	// Update the CD status
-	if _, err := pm.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomains(newCD.Namespace).UpdateStatus(ctx, newCD, metav1.UpdateOptions{}); err != nil {
+	// Update the CD status. Store the CD object returned by the API server in
+	// the mutationCache (it now has a newer ResourceVersion than `newCD` and
+	// hence any further mutations should be performed based on that).
+	freshCD, err := pm.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomains(newCD.Namespace).UpdateStatus(ctx, newCD, metav1.UpdateOptions{})
+	if err != nil {
 		return fmt.Errorf("error updating node status in ComputeDomain: %w", err)
 	}
+	pm.mutationCache.Mutation(freshCD)
 
 	klog.Infof("Successfully updated node %s status to %s", pm.config.nodeName, status)
-
-	pm.mutationCache.Mutation(newCD)
 	return nil
 }
