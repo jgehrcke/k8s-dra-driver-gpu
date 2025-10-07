@@ -183,7 +183,9 @@ func (m *ComputeDomainManager) Get(uid string) (*nvapi.ComputeDomain, error) {
 	return cds[0], nil
 }
 
-// onAddOrUpdate handles the addition or update of a ComputeDomain.
+// onAddOrUpdate handles the addition or update of a ComputeDomain. Here, we
+// receive updates not for all CDs in the system, but only for the CD that we
+// are registered for (filtered by CD name).
 func (m *ComputeDomainManager) onAddOrUpdate(ctx context.Context, obj any) error {
 	// Cast the object to a ComputeDomain object
 	o, ok := obj.(*nvapi.ComputeDomain)
@@ -201,6 +203,7 @@ func (m *ComputeDomainManager) onAddOrUpdate(ctx context.Context, obj any) error
 		return nil
 	}
 
+	// Because the informer only filters by name:
 	// Skip ComputeDomains that don't match on UUID
 	if string(cd.UID) != m.config.computeDomainUUID {
 		klog.Errorf("ComputeDomain processed with non-matching UID (%v, %v)", cd.UID, m.config.computeDomainUUID)
@@ -221,6 +224,7 @@ func (m *ComputeDomainManager) UpdateComputeDomainNodeInfo(ctx context.Context, 
 	var nodeInfo *nvapi.ComputeDomainNode
 
 	// Create a deep copy of the ComputeDomain to avoid modifying the original
+	// TODO: review for 10000-node-CD
 	newCD := cd.DeepCopy()
 
 	defer func() {
@@ -263,17 +267,20 @@ func (m *ComputeDomainManager) UpdateComputeDomainNodeInfo(ctx context.Context, 
 	// across pod restarts.
 	nodeInfo.IPAddress = m.config.podIP
 
-	// Conditionally update its status
+	// Conditionally update global CD status if it's still in its initial status
 	if newCD.Status.Status == "" {
 		newCD.Status.Status = nvapi.ComputeDomainStatusNotReady
 	}
 
-	// Update the status
+	// Try to write update. May be in conflict with updates to the same list
+	// coming in from other nodes (in which case this update will be retried
+	// later). TODO: review conflict resolution methodology for the
+	// 10000-nodes-CD use case.
 	if _, err := m.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomains(newCD.Namespace).UpdateStatus(ctx, newCD, metav1.UpdateOptions{}); err != nil {
 		return fmt.Errorf("error updating nodes in ComputeDomain status: %w", err)
 	}
 
-	// Add the updated ComputeDomain to the mutation cache
+	// API server update succeeeded, reflect mutation in shared in-memory state.
 	m.mutationCache.Mutation(newCD)
 
 	return nil
