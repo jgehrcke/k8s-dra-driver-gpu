@@ -8,7 +8,13 @@ set -o errexit
 TIMEOUT=300
 
 SPECPATH="${1:-demo/specs/imex/nvbandwidth-test-job-2.yaml}"
-JOB_NAME="${JOB_NAME:-nvbandwidth-test-2-launcher}"
+BASE_NAME="${BASE_NAME:-nvbandwidth-test-2}"
+#JOB_NAME="${JOB_NAME:-$BASE_NAME-launcher}"
+JOB_NAME="${BASE_NAME}-launcher"
+CD_NAME="${CD_NAME:-nvbandwidth-test-compute-domain-2}"
+
+
+
 
 # External supervisor can inject run ID (for many-repetition-tests), used mainly
 # in output file names.
@@ -58,7 +64,7 @@ log() {
   printf "[%6.1fs] $1\n" "$_DUR"
 }
 
-log "RUNID: $RUNID, fault type $FAULT_TYPE -- $SPECPATH"
+log "RUNID: $RUNID, fault type $FAULT_TYPE -- $SPECPATH -- $BASE_NAME -- $JOB_NAME -- $CD_NAME"
 
 log "do: delete -f ${SPECPATH} (and wait)"
 kubectl delete -f "${SPECPATH}" --ignore-not-found > /dev/null
@@ -72,7 +78,7 @@ log "do: wait --for=create"
 kubectl wait --for=create job/"${JOB_NAME}" --timeout=40s > /dev/null
 log "done"
 
-CDUID=$(kubectl describe computedomains.resource.nvidia.com nvbandwidth-test-compute-domain-2 | grep UID | awk '{print $2}')
+CDUID=$(kubectl describe computedomains.resource.nvidia.com "${CD_NAME}" | grep UID | awk '{print $2}')
 CD_LABEL_KV="resource.nvidia.com/computeDomain=${CDUID}"
 
 log "CD uid: ${CDUID}"
@@ -114,7 +120,7 @@ while true; do
     # (when the are Running). I have added this very late in the game because I
     # think we're missing CD daemon log around container shutdown; I want to be
     # extra sure.
-    kubectl get pods -n nvidia-dra-driver-gpu | grep test-compute-domain-2 | grep Running | awk '{print $1}' | while read pname; do
+    kubectl get pods -n nvidia-dra-driver-gpu | grep "${CD_NAME}" | grep Running | awk '{print $1}' | while read pname; do
         _logfname="${RUNID}_cddaemon_follow_${pname}.log"
         if [ -f "$_logfname" ]; then
             continue
@@ -158,7 +164,7 @@ while true; do
         if cat "${LAUNCHER_LOG_PATH}".dup 2>&1 | sort | uniq | grep "SUM multinode_device_to_device"; then
             # Fetch logs of all CD/IMEX daemons. Save in files. Filter & show
             # interesting detail inline.
-            kubectl get pods -n nvidia-dra-driver-gpu | grep nvbandwidth-test-compute-domain-2 | awk '{print $1}' | while read pname; do
+            kubectl get pods -n nvidia-dra-driver-gpu | grep "${CD_NAME}" | awk '{print $1}' | while read pname; do
                 _logfname="_cd-daemon_${RUNID}_${pname}.log"
                 log "CD daemon pod: $pname -- save log to ${_logfname}"
 
@@ -263,7 +269,7 @@ while true; do
             if (( FAULT_TYPE == 0 )); then
                 log "inject fault type 1: force-delete worker pod 0"
                 set -x
-                kubectl delete pod nvbandwidth-test-2-worker-0 --grace-period=0 --force
+                kubectl delete pod "${BASE_NAME}-worker-0" --grace-period=0 --force
                 set +x
             elif (( FAULT_TYPE == 1 )); then
                 log "inject fault type 2: force-delete all IMEX daemons"
@@ -273,7 +279,7 @@ while true; do
             elif (( FAULT_TYPE == 2 )); then
                 log "inject fault type 3: regular-delete worker pod 1"
                 set -x
-                kubectl delete pod nvbandwidth-test-2-worker-1
+                kubectl delete pod "${BASE_NAME}-worker-1"
                 set +x
             else
                 log "unknown fault type $FAULT_TYPE"
@@ -293,11 +299,11 @@ while true; do
         log "global deadline reached ($TIMEOUT seconds), collect debug data -- and leave control loop"
         kubectl get pods -A -o wide
         kubectl get computedomain
-        kubectl get computedomains.resource.nvidia.com nvbandwidth-test-compute-domain-2 -o yaml
+        kubectl get computedomains.resource.nvidia.com "${CD_NAME}" -o yaml
 
         # Run this in the background, then delete workflow -- this helps getting all logs
         # (but also disrupts post-run debuggability)
-        kubectl logs -l training.kubeflow.org/job-name=nvbandwidth-test-2 \
+        kubectl logs -l "training.kubeflow.org/job-name=${BASE_NAME}" \
             --tail=-1 --prefix --all-containers --timestamps --follow &> "${RUNID}_on_timeout_workload.log" &
         log "on-timeout do: delete -f ${SPECPATH} (and wait)"
         kubectl delete -f "${SPECPATH}" --ignore-not-found > /dev/null

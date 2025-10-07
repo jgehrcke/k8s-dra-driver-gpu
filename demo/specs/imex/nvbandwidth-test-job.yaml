@@ -29,13 +29,14 @@ spec:
             mpi-memcpy-dra-test-replica: mpi-launcher
         spec:
           containers:
-          - image: ghcr.io/nvidia/k8s-samples:nvbandwidth-v0.7-8d103163
+          - image: ghcr.io/nvidia/k8s-samples:nvbandwidth-6dc12f17
             name: mpi-launcher
             securityContext:
               runAsUser: 1000
             command:
             - mpirun
             args:
+            - --show-progress
             - --bind-to
             - core
             - --map-by
@@ -45,6 +46,11 @@ spec:
             - --report-bindings
             - -q
             - nvbandwidth
+            - --verbose
+            - --testSamples
+            - "20"
+            - --bufferSize
+            - "2048"
             - -t
             - multinode_device_to_device_memcpy_read_ce
           affinity:
@@ -62,7 +68,7 @@ spec:
             mpi-memcpy-dra-test-replica: mpi-worker
         spec:
           containers:
-          - image: ghcr.io/nvidia/k8s-samples:nvbandwidth-v0.7-8d103163
+          - image: ghcr.io/nvidia/k8s-samples:nvbandwidth-6dc12f17
             name: mpi-worker
             securityContext:
               runAsUser: 1000
