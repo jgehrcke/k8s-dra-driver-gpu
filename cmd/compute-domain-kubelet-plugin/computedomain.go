@@ -176,7 +176,8 @@ func (s *ComputeDomainDaemonSettings) GetCDIContainerEditsCommon(ctx context.Con
 			},
 			Mounts: []*cdispec.Mount{
 				{
-					ContainerPath: "/etc/nvidia-imex",
+					// imexDaemonConfigDirPath   = "/imexd"
+					ContainerPath: "/imexd",
 					HostPath:      s.rootDir,
 					Options:       []string{"rw", "nosuid", "nodev", "bind"},
 				},

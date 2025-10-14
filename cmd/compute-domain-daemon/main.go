@@ -38,11 +38,12 @@ import (
 )
 
 const (
-	nodesConfigPath    = "/etc/nvidia-imex/nodes_config.cfg"
-	imexConfigPath     = "/etc/nvidia-imex/config.cfg"
-	imexConfigTmplPath = "/etc/nvidia-imex/config.tmpl.cfg"
-	imexBinaryName     = "nvidia-imex"
-	imexCtlBinaryName  = "nvidia-imex-ctl"
+	imexDaemonConfigDirPath   = "/imexd"
+	imexDaemonConfigPath      = imexDaemonConfigDirPath + "/imexd.cfg"
+	imexDaemonConfigTmplPath  = imexDaemonConfigDirPath + "/imexd.cfg.tmpl"
+	imexDaemonNodesConfigPath = imexDaemonConfigDirPath + "/nodes.cfg"
+	imexDaemonBinaryName      = "nvidia-imex"
+	imexCtlBinaryName         = "nvidia-imex-ctl"
 )
 
 type Flags struct {
@@ -218,7 +219,7 @@ func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 	var dnsNameManager *DNSNameManager
 	if featuregates.Enabled(featuregates.IMEXDaemonsWithDNSNames) {
 		// Prepare DNS name manager
-		dnsNameManager = NewDNSNameManager(flags.cliqueID, flags.maxNodesPerIMEXDomain, nodesConfigPath)
+		dnsNameManager = NewDNSNameManager(flags.cliqueID, flags.maxNodesPerIMEXDomain, imexDaemonNodesConfigPath)
 
 		// Create static nodes config file with DNS names
 		if err := dnsNameManager.WriteNodesConfig(); err != nil {
@@ -227,7 +228,7 @@ func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 	}
 
 	// Prepare IMEX daemon process manager.
-	daemonCommandLine := []string{imexBinaryName, "-c", imexConfigPath}
+	daemonCommandLine := []string{imexDaemonBinaryName, "-c", imexDaemonConfigPath}
 	processManager := NewProcessManager(daemonCommandLine)
 
 	// Prepare controller with CD manager (not invoking the controller yet).
@@ -407,7 +408,7 @@ func writeIMEXConfig(podIP string) error {
 		IMEXCmdBindInterfaceIP: podIP,
 	}
 
-	tmpl, err := template.ParseFiles(imexConfigTmplPath)
+	tmpl, err := template.ParseFiles(imexDaemonConfigTmplPath)
 	if err != nil {
 		return fmt.Errorf("error parsing template file: %w", err)
 	}
@@ -418,13 +419,13 @@ func writeIMEXConfig(podIP string) error {
 	}
 
 	// Ensure the directory exists
-	dir := filepath.Dir(imexConfigPath)
+	dir := filepath.Dir(imexDaemonConfigPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create directory %s: %w", dir, err)
 	}
 
-	if err := os.WriteFile(imexConfigPath, configFile.Bytes(), 0644); err != nil {
-		return fmt.Errorf("error writing config file %v: %w", imexConfigPath, err)
+	if err := os.WriteFile(imexDaemonConfigPath, configFile.Bytes(), 0644); err != nil {
+		return fmt.Errorf("error writing config file %v: %w", imexDaemonConfigPath, err)
 	}
 
 	klog.Infof("Updated IMEX config file with pod IP: %s", podIP)
@@ -434,13 +435,13 @@ func writeIMEXConfig(podIP string) error {
 // writeNodesConfig creates a nodesConfig file with IPs for nodes in the same clique.
 func writeNodesConfig(cliqueID string, nodes []*nvapi.ComputeDomainNode) error {
 	// Ensure the directory exists
-	dir := filepath.Dir(nodesConfigPath)
+	dir := filepath.Dir(imexDaemonNodesConfigPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create directory %s: %w", dir, err)
 	}
 
 	// Create or overwrite the nodesConfig file
-	f, err := os.Create(nodesConfigPath)
+	f, err := os.Create(imexDaemonNodesConfigPath)
 	if err != nil {
 		return fmt.Errorf("failed to create nodes config file: %w", err)
 	}
@@ -467,10 +468,10 @@ func writeNodesConfig(cliqueID string, nodes []*nvapi.ComputeDomainNode) error {
 // Read and log the contents of the nodes configuration file. Return an error if
 // the file cannot be read.
 func logNodesConfig() error {
-	content, err := os.ReadFile(nodesConfigPath)
+	content, err := os.ReadFile(imexDaemonNodesConfigPath)
 	if err != nil {
 		return fmt.Errorf("failed to read nodes config: %w", err)
 	}
-	klog.Infof("Current %s:\n%s", nodesConfigPath, string(content))
+	klog.Infof("Current %s:\n%s", imexDaemonNodesConfigPath, string(content))
 	return nil
 }
