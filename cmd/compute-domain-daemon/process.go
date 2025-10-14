@@ -193,6 +193,7 @@ func (m *ProcessManager) Watchdog(ctx context.Context) error {
 			}
 
 			klog.Warningf("Watchdog: start process again")
+
 			if err := m.Restart(); err != nil {
 				return fmt.Errorf("watchdog: process lost, restart failed, treat fatal: %w", err)
 			}
