@@ -61,7 +61,8 @@ type Flags struct {
 }
 
 type IMEXConfigTemplateData struct {
-	IMEXCmdBindInterfaceIP string
+	IMEXCmdBindInterfaceIP    string
+	IMEXDaemonNodesConfigPath string
 }
 
 func main() {
@@ -386,7 +387,7 @@ func check(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 	// return". This probes if the local IMEX daemon is ready (not the entire
 	// domain). Reference:
 	// https://docs.nvidia.com/multi-node-nvlink-systems/imex-guide/cmdservice.html
-	cmd := exec.CommandContext(ctx, imexCtlBinaryName, "-q")
+	cmd := exec.CommandContext(ctx, imexCtlBinaryName, "-c", imexDaemonConfigPath, "-q")
 
 	// Spawn child, collect standard streams.
 	outerr, err := cmd.CombinedOutput()
@@ -405,7 +406,8 @@ func check(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 // writeIMEXConfig renders the config template with the pod IP and writes it to the final config file.
 func writeIMEXConfig(podIP string) error {
 	configTemplateData := IMEXConfigTemplateData{
-		IMEXCmdBindInterfaceIP: podIP,
+		IMEXCmdBindInterfaceIP:    podIP,
+		IMEXDaemonNodesConfigPath: imexDaemonNodesConfigPath,
 	}
 
 	tmpl, err := template.ParseFiles(imexDaemonConfigTmplPath)
@@ -428,7 +430,7 @@ func writeIMEXConfig(podIP string) error {
 		return fmt.Errorf("error writing config file %v: %w", imexDaemonConfigPath, err)
 	}
 
-	klog.Infof("Updated IMEX config file with pod IP: %s", podIP)
+	klog.Infof("Rendered IMEX daemon config file with: %v", configTemplateData)
 	return nil
 }
 
