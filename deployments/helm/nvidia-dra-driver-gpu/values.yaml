@@ -67,6 +67,7 @@ resources:
 #   ContextualLogging: true            # Kubernetes logging feature (enabled by default)
 #   LoggingAlphaOptions: false         # Kubernetes logging alpha features
 #   LoggingBetaOptions: true           # Kubernetes logging beta features
+#   NVMLDeviceHealthCheck: false       # GPU Health Checking using NVML
 featureGates: {}
 
 # Log verbosity for all components. Zero or greater, higher number means higher

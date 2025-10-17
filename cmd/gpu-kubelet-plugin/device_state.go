@@ -343,6 +343,12 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 		if !exists {
 			return nil, fmt.Errorf("requested device is not allocatable: %v", result.Device)
 		}
+		// only proceed with config mapping if device is healthy.
+		if featuregates.Enabled(featuregates.NVMLDeviceHealthCheck) {
+			if !device.IsHealthy() {
+				return nil, fmt.Errorf("requested device is not healthy: %v", result.Device)
+			}
+		}
 		for _, c := range slices.Backward(configs) {
 			if slices.Contains(c.Requests, result.Request) {
 				if _, ok := c.Config.(*configapi.GpuConfig); ok && device.Type() != GpuDeviceType {
@@ -690,6 +696,22 @@ func GetOpaqueDeviceConfigs(
 	}
 
 	return resultConfigs, nil
+}
+
+func (s *DeviceState) UpdateDeviceHealthStatus(d *AllocatableDevice, hs HealthStatus) {
+	s.Lock()
+	defer s.Unlock()
+
+	switch d.Type() {
+	case GpuDeviceType:
+		d.Gpu.Health = hs
+	case MigDeviceType:
+		d.Mig.Health = hs
+	default:
+		klog.V(6).Infof("Cannot update health status for unknown device type: %s", d.Type())
+		return
+	}
+	klog.V(4).Infof("Updated device: %s health status to %s", d.UUID(), hs)
 }
 
 // TODO: Dynamic MIG is not yet supported with structured parameters.
