@@ -168,27 +168,20 @@ func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (AllocatableDevic
 		// placements. This enriches `gpuInfo` with additional properties (such
 		// as the memory slice count, and the maximum capacities as reported by
 		// individual MIG profiles).
-		miginfos, err := l.inspectMigProfilesAndPlacements(gpuInfo, d)
+		migpps, err := l.inspectMigProfilesAndPlacements(gpuInfo, d)
 		if err != nil {
 			return fmt.Errorf("error getting MIG info for GPU %v: %w", i, err)
 		}
 
-		gpuDevice := AllocatableDevice{
+		allocatable[gpuInfo.CanonicalName()] = &AllocatableDevice{
 			Gpu: gpuInfo,
 		}
-		devname := gpuDevice.UUID()
-
-		allocatable[devname] = &gpuDevice
 		//allocatable.DevicesPerGPU[gpuInfo.index] = append(allocatable.DevicesPerGPU[gpuInfo.index], gpuDevice)
 
-		for midx, migInfo := range miginfos {
-			migDevice := AllocatableDevice{
-				Mig: migInfo,
+		for _, migpp := range migpps {
+			allocatable[migpp.CanonicalName()] = &AllocatableDevice{
+				Mig: migpp,
 			}
-			// Assume that this name isn't used anywhere.
-			// Probably not true.
-			devname := fmt.Sprintf("%d-abstract-%s-%d", gpuInfo.index, migInfo.Profile, midx)
-			allocatable[devname] = &migDevice
 			//allocatable.Devices[gpuInfo.Index] = append(allocatable.Devices[gpuInfo.Index], migDevice)
 		}
 
@@ -198,20 +191,8 @@ func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (AllocatableDevic
 		return nil, fmt.Errorf("error visiting devices: %w", err)
 	}
 
-	// driverVersion, ret := l.nvmllib.SystemGetDriverVersion()
-	// if ret != nvml.SUCCESS {
-	// 	return nil, fmt.Errorf("error getting driver version: %w", err)
-	// }
-	// cudaDriverVersion, ret := l.nvmllib.SystemGetCudaDriverVersion()
-	// if ret != nvml.SUCCESS {
-	// 	return nil, fmt.Errorf("error getting CUDA driver version: %w", err)
-	// }
-
-	// allocatable.SystemInfo = SystemInfo{
-	// 	DriverVersion:     driverVersion,
-	// 	CudaDriverVersion: fmt.Sprintf("%v.%v", cudaDriverVersion/1000, (cudaDriverVersion%1000)/10),
-	// }
-
+	// Should we try to return an object here that retains a stable sort oder
+	// over devices, by name? (a normal map does not cut it).
 	return allocatable, nil
 }
 
@@ -663,7 +644,7 @@ func (l deviceLib) inspectMigProfilesAndPlacements(gpuInfo *GpuInfo, device nvde
 	var infos []*MigInfo
 
 	maxCapacities := make(PartCapacityMap)
-	memorySliceCount := 0
+	maxMemSlicesConsumed := 0
 
 	err := device.VisitMigProfiles(func(migProfile nvdev.MigProfile) error {
 		if migProfile.GetInfo().C != migProfile.GetInfo().G {
@@ -707,7 +688,12 @@ func (l deviceLib) inspectMigProfilesAndPlacements(gpuInfo *GpuInfo, device nvde
 
 			// Some profile/placement combinations do not use the right-most
 			// memory slice.
-			memorySliceCount = max(memorySliceCount, int(giPlacement.Start+giPlacement.Size))
+			//maxMemSlicesConsumed = max(maxMemSlicesConsumed, int(giPlacement.Start+giPlacement.Size)) // works
+
+			// Assume that the largest MIG profile consumes all memory slices,
+			// and hence we can infer the memory slice count by looking at all
+			// Size properties.
+			maxMemSlicesConsumed = max(maxMemSlicesConsumed, int(giPlacement.Size))
 
 			// Across all MIG profiles, identify the largest capacity dimensions.
 			// These are probably all corresponding to the same profile.
@@ -720,22 +706,23 @@ func (l deviceLib) inspectMigProfilesAndPlacements(gpuInfo *GpuInfo, device nvde
 	})
 
 	klog.Infof("per-capacity maximum across all MIG profiles+placements: %v", maxCapacities)
-	klog.Infof("memorySliceCount: %d", memorySliceCount)
+	klog.Infof("maxMemSlicesConsumed: %d", maxMemSlicesConsumed)
 
 	if err != nil {
 		return nil, fmt.Errorf("error visiting MIG profiles: %w", err)
 	}
 
 	// Mutate the full-device information container `gpuInfo`; enrich it with
-	// detail obtained from walking MIG devices.
-	gpuInfo.AddDetailAfterWalkingMigProfiles(maxCapacities, memorySliceCount)
-
+	// detail obtained from walking MIG devices. Assume that the largest MIG
+	// profile seen consumes all memory slices; equate maxMemSlicesConsumed =
+	// memSliceCount.
+	gpuInfo.AddDetailAfterWalkingMigProfiles(maxCapacities, maxMemSlicesConsumed)
 	return infos, nil
 }
 
-// Mutate map `m` in place: insert into map if the current QualifiedName does
-// not yet exist as a key. Otherwise, update item in map if the value `v` is
-// larger thant he one that is currenty stored.
+// Mutate map `m` in-place: insert into map if the current QualifiedName does
+// not yet exist as a key. Otherwise, update item in map if the incoming value
+// `v` is larger than the one currenty stored in the map.
 func setMax(m map[resourceapi.QualifiedName]resourceapi.DeviceCapacity, k resourceapi.QualifiedName, v resourceapi.DeviceCapacity) {
 	if cur, ok := m[k]; !ok || v.Value.Value() > cur.Value.Value() {
 		m[k] = v
