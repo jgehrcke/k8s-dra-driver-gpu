@@ -163,9 +163,15 @@ func (cdi *CDIHandler) CreateStandardDeviceSpecFile(allocatable AllocatableDevic
 		commonEdits.Env,
 		"NVIDIA_VISIBLE_DEVICES=void")
 
-	// Generate device specs for all full GPUs and MIG devices.
+	// Generate device specs for all full GPUs.
 	var deviceSpecs []cdispec.Device
 	for _, device := range allocatable {
+
+		if device.Mig != nil {
+			// For MIG devices, create spec later on the fly upon preparation.
+			continue
+		}
+
 		dspecs, err := cdi.nvcdiDevice.GetDeviceSpecsByID(device.UUID())
 		if err != nil {
 			return fmt.Errorf("unable to get device spec for %s: %w", device.CanonicalName(), err)
@@ -182,7 +188,7 @@ func (cdi *CDIHandler) CreateStandardDeviceSpecFile(allocatable AllocatableDevic
 		spec.WithEdits(*commonEdits.ContainerEdits),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to creat CDI spec: %w", err)
+		return fmt.Errorf("failed to create CDI spec: %w", err)
 	}
 
 	// Transform the spec to make it aware that it is running inside a container.
