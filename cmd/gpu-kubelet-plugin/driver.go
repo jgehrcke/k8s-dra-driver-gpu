@@ -19,7 +19,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"maps"
 	"path/filepath"
+	"slices"
 	"time"
 
 	resourceapi "k8s.io/api/resource/v1"
@@ -83,8 +85,17 @@ func NewDriver(ctx context.Context, config *Config) (*driver, error) {
 
 	var slice resourceslice.Slice
 	countersets := []resourceapi.CounterSet{}
-	for _, device := range state.allocatable {
+
+	// Iterate through allocatable devices, in stable sort order (by device
+	// name) This makes the order of devices presented in a resource slice
+	// predictable (I hope).
+	for _, devname := range slices.Sorted(maps.Keys(state.allocatable)) {
+		device := state.allocatable[devname]
+		klog.V(4).Infof("About to announce device %s", devname)
+
+		//for _, device := range state.allocatable.SortedPairs() {
 		// Full GPU: take note of countersets, indicating absolute capacity.
+
 		if device.Gpu != nil {
 			countersets = append(countersets, device.Gpu.PartSharedCounterSets()...)
 		}
