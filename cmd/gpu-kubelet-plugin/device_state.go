@@ -19,8 +19,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
+	"path/filepath"
 	"slices"
 	"sync"
+	"time"
 
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -29,8 +32,11 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/checkpointmanager"
 	cdiapi "tags.cncf.io/container-device-interface/pkg/cdi"
 
+	"github.com/sirupsen/logrus"
+
 	configapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
 	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
+	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/flock"
 )
 
 type OpaqueDeviceConfig struct {
@@ -53,26 +59,43 @@ type DeviceState struct {
 	allocatable              AllocatableDevices
 	config                   *Config
 
+	// Same set of allocatable devices as stored in `allocatable` (above), but
+	// grouped by physical GPU. This is useful for grouped announcement (e.g.,
+	// when announcing one ResourceSlice per physical GPU).
+	perGPUAllocatable PerGPUMinorAllocatableDevices
+
 	nvdevlib          *deviceLib
 	checkpointManager checkpointmanager.CheckpointManager
+
+	// Checkpoint read/write lock, file-based for multi-process synchronization.
+	cplock *flock.Flock
 }
 
 func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 	containerDriverRoot := root(config.flags.containerDriverRoot)
+	devRoot := containerDriverRoot.getDevRoot()
+	klog.Infof("Using devRoot=%v", devRoot)
+
 	nvdevlib, err := newDeviceLib(containerDriverRoot)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create device library: %w", err)
 	}
 
-	allocatable, err := nvdevlib.enumerateAllPossibleDevices(config)
+	allocatable, perGPUAllocatable, err := nvdevlib.enumerateAllPossibleDevices()
 	if err != nil {
 		return nil, fmt.Errorf("error enumerating all possible devices: %w", err)
 	}
 
-	devRoot := containerDriverRoot.getDevRoot()
-	klog.Infof("using devRoot=%v", devRoot)
-
 	hostDriverRoot := config.flags.hostDriverRoot
+
+	// Let nvcdi logs see the light of day (emit to standard streams) when we've
+	// been configured with verbosity level 7 or higher.
+	cdilogger := logrus.New()
+	if config.flags.klogVerbosity < 7 {
+		klog.Infof("Muting CDI logger (verbosity is smaller 7: %d)", config.flags.klogVerbosity)
+		cdilogger.SetOutput(io.Discard)
+	}
+
 	cdi, err := NewCDIHandler(
 		WithNvml(nvdevlib.nvmllib),
 		WithDeviceLib(nvdevlib),
@@ -82,10 +105,20 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 		WithNVIDIACDIHookPath(config.flags.nvidiaCDIHookPath),
 		WithCDIRoot(config.flags.cdiRoot),
 		WithVendor(cdiVendor),
+		WithLogger(cdilogger),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create CDI handler: %w", err)
 	}
+
+	var fullGPUuuids []string
+	for _, dev := range allocatable {
+		if dev.Gpu != nil {
+			fullGPUuuids = append(fullGPUuuids, dev.Gpu.UUID)
+		}
+	}
+	klog.V(2).Infof("Warming up CDI device spec cache for GPUs %v", fullGPUuuids)
+	cdi.WarmupDevSpecCache(fullGPUuuids)
 
 	var tsManager *TimeSlicingManager
 	if featuregates.Enabled(featuregates.TimeSlicingSettings) {
@@ -97,20 +130,13 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 		mpsManager = NewMpsManager(config, nvdevlib, hostDriverRoot, MpsControlDaemonTemplatePath)
 	}
 
+	// Validate passthrough support if feature gate is enabled.
 	var vfioPciManager *VfioPciManager
 	if featuregates.Enabled(featuregates.PassthroughSupport) {
 		vfioPciManager = NewVfioPciManager(string(containerDriverRoot), string(hostDriverRoot), nvdevlib, true /* nvidiaEnabled */)
-	}
-
-	// Validate passthrough support if feature gate is enabled.
-	if featuregates.Enabled(featuregates.PassthroughSupport) {
 		if err := vfioPciManager.ValidatePassthroughSupport(); err != nil {
 			klog.Fatalf("Failed to validate passthrough support: %v", err)
 		}
-	}
-
-	if err := cdi.CreateStandardDeviceSpecFile(allocatable); err != nil {
-		return nil, fmt.Errorf("unable to create base CDI spec file: %v", err)
 	}
 
 	checkpointManager, err := checkpointmanager.NewCheckpointManager(config.DriverPluginPath())
@@ -118,15 +144,19 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 		return nil, fmt.Errorf("unable to create checkpoint manager: %v", err)
 	}
 
+	cpLockPath := filepath.Join(config.DriverPluginPath(), "cp.lock")
+
 	state := &DeviceState{
 		cdi:               cdi,
 		tsManager:         tsManager,
 		mpsManager:        mpsManager,
 		vfioPciManager:    vfioPciManager,
 		allocatable:       allocatable,
+		perGPUAllocatable: perGPUAllocatable,
 		config:            config,
 		nvdevlib:          nvdevlib,
 		checkpointManager: checkpointManager,
+		cplock:            flock.NewFlock(cpLockPath),
 	}
 	state.checkpointCleanupManager = NewCheckpointCleanupManager(state, config.clientsets.Resource)
 
@@ -141,35 +171,39 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 		}
 	}
 
-	if err := state.createCheckpoint(&Checkpoint{}); err != nil {
-		return nil, fmt.Errorf("unable to create checkpoint: %v", err)
+	if err := state.createCheckpoint(ctx, &Checkpoint{}); err != nil {
+		return nil, fmt.Errorf("unable to create fresh checkpoint: %v", err)
 	}
 
 	return state, nil
 }
 
 func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceClaim) ([]kubeletplugin.Device, error) {
+	tplock0 := time.Now()
 	s.Lock()
 	defer s.Unlock()
+	klog.V(6).Infof("t_prep_state_lock_acq %.3f s", time.Since(tplock0).Seconds())
 
 	claimUID := string(claim.UID)
 
-	checkpoint, err := s.getCheckpoint()
+	tgcp0 := time.Now()
+	cp, err := s.getCheckpoint(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get checkpoint: %v", err)
 	}
+	klog.V(7).Infof("t_prep_get_checkpoint %.3f s", time.Since(tgcp0).Seconds())
 
 	// Check for existing 'completed' claim preparation before updating the
 	// checkpoint with 'PrepareStarted'. Otherwise, we effectively mark a
 	// perfectly prepared claim as only partially prepared, which may have
 	// negative side effects during Unprepare() (currently a noop in this case:
 	// unprepare noop: claim preparation started but not completed).
-	preparedClaim, exists := checkpoint.V2.PreparedClaims[claimUID]
+	preparedClaim, exists := cp.V2.PreparedClaims[claimUID]
 	if exists && preparedClaim.CheckpointState == ClaimCheckpointStatePrepareCompleted {
 		// Make this a noop. Associated device(s) has/ave been prepared by us.
 		// Prepare() must be idempotent, as it may be invoked more than once per
 		// claim (and actual device preparation must happen at most once).
-		klog.V(6).Infof("skip prepare: claim %v found in checkpoint", claimUID)
+		klog.V(4).Infof("Skip prepare: claim already in PrepareCompleted state: %s", ResourceClaimToString(claim))
 		return preparedClaim.PreparedDevices.GetDevices(), nil
 	}
 
@@ -179,12 +213,24 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 	// To prevent this, we check whether any device requested in the incoming claim has already been prepared
 	// and fail the request if so (unless the prior preparation was performed with admin access).
 	// More details: https://github.com/kubernetes/kubernetes/pull/136269
-	if err := s.validateNoOverlappingPreparedDevices(checkpoint, claim); err != nil {
+	if err := s.validateNoOverlappingPreparedDevices(cp, claim); err != nil {
 		return nil, fmt.Errorf("unable to prepare claim %v: %w", claimUID, err)
 	}
 
-	err = s.updateCheckpoint(func(checkpoint *Checkpoint) {
-		checkpoint.V2.PreparedClaims[claimUID] = PreparedClaim{
+	// Relevant for DynamicMIG: a previous preparation attempt for the same
+	// claim might have resulted in complete or partial GI/CI creation. Roll
+	// that back, and retry creation from scratch (that maybe can later be
+	// optimized into filling the gaps).
+	if exists && preparedClaim.CheckpointState == ClaimCheckpointStatePrepareStarted {
+		klog.V(4).Infof("Claim %s already in PrepareStarted state: attempt rollback before new prepare", ResourceClaimToString(claim))
+		if err := s.unpreparePartiallyPrepairedClaim(claimUID, preparedClaim, cp); err != nil {
+			return nil, fmt.Errorf("unprepare failed for partially prepared claim %s failed: %w", PreparedClaimToString(&preparedClaim, claimUID), err)
+		}
+	}
+
+	tucp0 := time.Now()
+	err = s.updateCheckpoint(ctx, func(cp *Checkpoint) {
+		cp.V2.PreparedClaims[claimUID] = PreparedClaim{
 			CheckpointState: ClaimCheckpointStatePrepareStarted,
 			Status:          claim.Status,
 			Name:            claim.Name,
@@ -194,9 +240,12 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 	if err != nil {
 		return nil, fmt.Errorf("unable to update checkpoint: %w", err)
 	}
+	klog.V(6).Infof("t_prep_update_checkpoint %.3f s", time.Since(tucp0).Seconds())
 	klog.V(6).Infof("checkpoint updated for claim %v", claimUID)
 
+	tprep0 := time.Now()
 	preparedDevices, err := s.prepareDevices(ctx, claim)
+	klog.V(6).Infof("t_prep_core %.3f s (claim %s)", time.Since(tprep0).Seconds(), ResourceClaimToString(claim))
 	if err != nil {
 		return nil, fmt.Errorf("prepare devices failed: %w", err)
 	}
@@ -208,16 +257,20 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 				klog.Warningf("allocatable not found for device: %v", device.DeviceName)
 				continue
 			}
+			// Why do we do that -- what does that mean?
 			s.allocatable.RemoveSiblingDevices(allocatableDevice)
 		}
 	}
 
+	tccsf0 := time.Now()
 	if err := s.cdi.CreateClaimSpecFile(claimUID, preparedDevices); err != nil {
 		return nil, fmt.Errorf("unable to create CDI spec file for claim: %w", err)
 	}
+	klog.V(7).Infof("t_prep_ccsf %.3f s", time.Since(tccsf0).Seconds())
 
-	err = s.updateCheckpoint(func(checkpoint *Checkpoint) {
-		checkpoint.V2.PreparedClaims[claimUID] = PreparedClaim{
+	tucp20 := time.Now()
+	err = s.updateCheckpoint(ctx, func(cp *Checkpoint) {
+		cp.V2.PreparedClaims[claimUID] = PreparedClaim{
 			CheckpointState: ClaimCheckpointStatePrepareCompleted,
 			Status:          claim.Status,
 			PreparedDevices: preparedDevices,
@@ -227,38 +280,128 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 		return nil, fmt.Errorf("unable to update checkpoint: %w", err)
 	}
 	klog.V(6).Infof("checkpoint updated for claim %v", claimUID)
+	klog.V(7).Infof("t_prep_ucp2 %.3f s", time.Since(tucp20).Seconds())
 
 	return preparedDevices.GetDevices(), nil
 }
 
-func (s *DeviceState) Unprepare(ctx context.Context, claimUID string) error {
+// DestroyUnknownMIGDevices() relies on the checkpoint as the source of truth.
+// It tries to tear down any existing MIG device that is not referenced by
+// currently checkpointed claims in ClaimCheckpointStatePrepareCompleted state.
+//
+// This routine is currently called once during startup before accepting
+// requests from the kubelet. TODO: a better mechanism to make sure it does not
+// conflict with overlapping Prepare() and Unprepare() activities (from e.g. a
+// separate plugin process, during an upgrade) would be to hold on to file-based
+// lock on the checkpoint (during the entire operation). Notworthy: the
+// operation may potentially take significant wall time.
+//
+// We need to learn over time how workload running on a to-be-torn-down MIG
+// device may and should affect the teardown attempt.
+//
+// There may be a fundamental need to invoke this type of cleanup periodically,
+// instead of once during startup.
+//
+// Note: there are other cleanup strategies performed at runtime: (1) periodic
+// cleanup of partially prepared but _stale_ claims (2) attempted rollback in
+// the Prepare() path for a specific, non-stale claim). Especially once/if this
+// method here is executed periodically, there is overlap with (1) -- but there
+// are decisive differences:
+//
+// - This routine here (0) does not mutate the checkpoint. It only tears down
+// devices. (1) removes entries from the checkpoint after confirming cleanup.
+// (1) may also tear down MIG devices that (0) would otherwise tear down: one
+// wins, and that is OK.
+//
+// - (2) is something that (1) cannot achieve, because the claim in question is
+// not stale. A previous Prepare() attempt was executed partially and any state
+// mutations performed may make an immediately retried Prepare() fail (with
+// "insufficient resources"). In that case, (2) performs an active rollback in
+// the business logic of the retried Prepare() call, to help resolve the
+// conflict quickly (from the user's point of view). (0) may also help but not
+// in a timely fashion.
+//
+// All cleanup strategies are critical but also dangerous -- when designed or
+// implemented wrongly, they may affect workload.
+//
+// Significance of this cleanup:
+//
+// 1) Healing out-of-band MIG device creation. Forbidden by design (make sure to
+// document tha). Sometimes, MIG devices however still get created manually,
+// out-of-band). It is convenient for the system to recover from that
+// automatically.
+//
+// 2) Recovering from interruptions within a multi-step transaction (as of bugs
+// within this plugin, issues in the NVML management layer, invasive operations,
+// etc). There is a lot of room, especially over time, for state to be drifting
+// as of partially performed transactions.
+func (s *DeviceState) DestroyUnknownMIGDevices(ctx context.Context) {
+	logpfx := "Destroy unknown MIG devices"
+	cp, err := s.getCheckpoint(ctx)
+	if err != nil {
+		klog.Errorf("%s: unable to get checkpoint: %s", logpfx, err)
+		return
+	}
+
+	// Get checkpointed claims in PrepareCompleted state. Only MIG devices
+	// referenced in those will be retained. That is, the below's logic tears
+	// down MIG devices that correspond to claims in a PrepareStarted limbo
+	// state -- that can only be correct when there are no overlapping
+	// NodePrepareResources() executions.
+	filtered := make(PreparedClaimsByUIDV2)
+	for uid, claim := range cp.V2.PreparedClaims {
+		if claim.CheckpointState == ClaimCheckpointStatePrepareCompleted {
+			filtered[uid] = claim
+		}
+	}
+
+	var expectedDeviceNames []DeviceName
+	for _, cpclaim := range filtered {
+		for _, res := range cpclaim.Status.Allocation.Devices.Results {
+			expectedDeviceNames = append(expectedDeviceNames, res.Device)
+		}
+	}
+
+	klog.Infof("%s: enter teardown routine (%d expect devices: %s)", logpfx, len(expectedDeviceNames), expectedDeviceNames)
+
+	// For now, let this be best-effort. Upon error, proceed with the program,
+	// do not crash it. TODO: maybe this should be timeout-controlled.
+	if err := s.nvdevlib.obliterateStaleMIGDevices(expectedDeviceNames); err != nil {
+		klog.Errorf("%s: obliterateStaleMIGDevices failed: %s", logpfx, err)
+	}
+
+	klog.Infof("%s: done", logpfx)
+}
+
+func (s *DeviceState) Unprepare(ctx context.Context, claimRef kubeletplugin.NamespacedObject) error {
 	s.Lock()
 	defer s.Unlock()
+	klog.V(6).Infof("Unprepare() for claim '%s'", claimRef.String())
 
-	checkpoint, err := s.getCheckpoint()
+	checkpoint, err := s.getCheckpoint(ctx)
 	if err != nil {
 		return fmt.Errorf("unable to get checkpoint: %v", err)
 	}
 
+	claimUID := string(claimRef.UID)
 	pc, exists := checkpoint.V2.PreparedClaims[claimUID]
 	if !exists {
 		// Not an error: if this claim UID is not in the checkpoint then this
 		// device was never prepared or has already been unprepared (assume that
 		// Prepare+Checkpoint are done transactionally). Note that
 		// claimRef.String() contains namespace, name, UID.
-		klog.Infof("unprepare noop: claim not found in checkpoint data: %v", claimUID)
+		klog.V(2).Infof("Unprepare noop: claim not found in checkpoint data: %v", claimRef.String())
 		return nil
 	}
 
 	switch pc.CheckpointState {
 	case ClaimCheckpointStatePrepareStarted:
-		// Preparation was started but not completed. There are no devices to unprepare
-		// since preparation didn't complete successfully, but we still need to continue
-		// to ensure the claim gets deleted from the checkpoint.
-		klog.Infof("unprepare: claim preparation started but not completed: %v", claimUID)
+		if err := s.unpreparePartiallyPrepairedClaim(claimUID, pc, checkpoint); err != nil {
+			return fmt.Errorf("unprepare failed for partially prepared claim %s failed: %w", claimRef.String(), err)
+		}
 	case ClaimCheckpointStatePrepareCompleted:
 		if err := s.unprepareDevices(ctx, claimUID, pc.PreparedDevices); err != nil {
-			return fmt.Errorf("unprepare devices failed: %w", err)
+			return fmt.Errorf("unprepare devices failed for claim %s: %w", claimRef.String(), err)
 		}
 	default:
 		return fmt.Errorf("unsupported ClaimCheckpointState: %v", pc.CheckpointState)
@@ -277,43 +420,173 @@ func (s *DeviceState) Unprepare(ctx context.Context, claimUID string) error {
 			}
 		}
 	}
+
+	// TODOMIG: we delete per-claim CDI spec files here in the happy path. In
+	// regular operation, that means we don't leak files. However, upon program
+	// start, or periodically, clean up CDI spec directory just in case we're
+	// ever missing or failing to delete (a) file(s).
 	if err := s.cdi.DeleteClaimSpecFile(claimUID); err != nil {
-		return fmt.Errorf("unable to delete CDI spec file for claim: %w", err)
+		// Just log an error -- if this fails, we still want to proceed
+		// attempting to remove the claim from the checkpoint.
+		klog.Errorf("unable to delete CDI spec file for claim %s: %s", claimRef.String(), err)
 	}
 
-	// Unprepare succeeded; reflect that in the node-local checkpoint data.
-	delete(checkpoint.V2.PreparedClaims, claimUID)
-	if err := s.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFileBasename, checkpoint); err != nil {
-		return fmt.Errorf("unable to sync to checkpoint: %v", err)
+	// Mutate checkpoint reflecting that all devices for this claim have been
+	// unprepared, by virtue of removing its entry (based on claim UID) from the
+	// PreparedClaims map.
+	err = s.deleteClaimFromCheckpoint(ctx, claimRef)
+	if err != nil {
+		return fmt.Errorf("error deleting claim from checkpoint: %w", err)
+	}
+	return nil
+}
+
+// Revert previous and potentially partial MIG device creation (not acknowledged
+// by transitioning the claim state to PrepareCompleted). Can we safely revert
+// that based on the information in checkpoint? As we didn't pull through with
+// the regular creation/prepare flow, we conceptually cannot use a specific MIG
+// device UUID as input to this cleanup operation. The precise physical MIG
+// device configuration however is known: it is encoded in the canonical device
+// name. That is, we have the chance to reliably identify and tear down an
+// orphaned MIG device (which was created by us, but never got user workload
+// assigned). It is absolutely critical, however, that this cleanup method does
+// not accidentally tear down the wrong device. At the time of writing, I
+// believe that the correct way to achieve that is to verify that currently no
+// other claim in the PrepareCompleted state refers to the same device.
+//
+// The information available to us here is sparse -- for example:
+//
+//	"checkpointState": "PrepareStarted", "status": {
+//	  "allocation": {
+//	    "devices": {
+//	      "results": [
+//	        {
+//	          "request": "mig-1g",
+//	          "driver": "gpu.nvidia.com",
+//	          "pool": "gb-nvl-027-compute06",
+//	          "device": "gpu-1-mig-2g47gb-14-0"
+//	        }
+//	      ]
+//	    }
+//
+// Also note that a plugin restart would tear down such device as part of its
+// `DestroyUnknownMIGDevices()` (which is executed before the driver accepts
+// requests).
+//
+// Construct a list of those claims that, according to the current snapshot,
+// have been properly prepared.
+//
+// This is called either for a claim that is known to be stale (not in the API
+// server) or for a claim that is not stale but that _we_ are currently
+// preparing. In both cases, the `checkpoint` data is fresh enough; there is no
+// other entity that currently legitimately owns the device represented in `pc`.
+func (s *DeviceState) unpreparePartiallyPrepairedClaim(cuid string, pc PreparedClaim, checkpoint *Checkpoint) error {
+	// For now, there's nothing to do when DynamicMIG is not enabled.
+	if !featuregates.Enabled(featuregates.DynamicMIG) {
+		klog.Infof("unprepare noop: preparation started but not completed for claim %s (devices: %v)", PreparedClaimToString(&pc, cuid), pc.Status.Allocation.Devices.Results)
+	}
+
+	// When DynamicMIG is enabled, try to identify an orphaned MIG device
+	// corresponding to `pc`. To that end, inspect which currently (completely)
+	// prepared claims use which devices.
+	completedClaims := make(PreparedClaimsByUIDV2)
+	for cuid, c := range checkpoint.V2.PreparedClaims {
+		if c.CheckpointState == ClaimCheckpointStatePrepareCompleted {
+			completedClaims[cuid] = c
+		}
+	}
+
+	for _, r := range pc.Status.Allocation.Devices.Results {
+		devname := r.Device
+		ms, err := NewMigSpecTupleFromCanonicalName(devname)
+		if err != nil {
+			// This may be a regular, full GPU -- in which case there's nothing
+			// to do. To be sure that we detect parser errors, log that error
+			// though.
+			klog.V(6).Infof("Device name %s failed NewMigSpecTupleFromCanonicalName() parsing (assume this is not a MIG device): %s", devname, err)
+			continue
+		}
+
+		klog.V(1).Infof("Device %s is a MIG device, DynamicMIG mode: deleteMigDevIfExistsAndNotUsedByCompletedClaim()", devname)
+		if err := s.deleteMigDevIfExistsAndNotUsedByCompletedClaim(ms, devname, completedClaims); err != nil {
+			return fmt.Errorf("deleteMigDevIfExistsAndNotUsedByCompletedClaim failed: %w", err)
+		}
 	}
 
 	return nil
 }
 
-func (s *DeviceState) createCheckpoint(cp *Checkpoint) error {
-	return s.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFileBasename, cp)
+func (s *DeviceState) createCheckpoint(ctx context.Context, cp *Checkpoint) error {
+	klog.V(6).Info("acquire cplock (create cp)")
+	release, err := s.cplock.Acquire(ctx, flock.WithTimeout(10*time.Second))
+	if err != nil {
+		return fmt.Errorf("error acquiring cplock: %w", err)
+	}
+	defer release()
+	klog.V(7).Info("acquired cplock (createCheckpoint)")
+	err = s.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFileBasename, cp)
+	klog.V(7).Info("create cp: done")
+	return err
 }
 
-func (s *DeviceState) getCheckpoint() (*Checkpoint, error) {
+func (s *DeviceState) getCheckpoint(ctx context.Context) (*Checkpoint, error) {
+	klog.V(7).Info("acquire cplock (getCheckpoint)")
+	release, err := s.cplock.Acquire(ctx, flock.WithTimeout(10*time.Second))
+	if err != nil {
+		return nil, fmt.Errorf("error acquiring cplock: %w", err)
+	}
+	defer release()
+	klog.V(7).Info("acquired cplock (getCheckpoint)")
+
 	checkpoint := &Checkpoint{}
 	if err := s.checkpointManager.GetCheckpoint(DriverPluginCheckpointFileBasename, checkpoint); err != nil {
 		return nil, err
 	}
+	klog.V(7).Info("checkpoint read")
 	return checkpoint.ToLatestVersion(), nil
 }
 
-func (s *DeviceState) updateCheckpoint(f func(*Checkpoint)) error {
-	checkpoint, err := s.getCheckpoint()
+// Read checkpoint from store, perform mutation, and write checkpoint back. Any
+// mutation of the checkpoint must go through this function. Perform the
+// read-mutate-write sequence under a dedicated lock: we must be conceptually
+// certain that multiple read-mutate-write actions never overlap. Currently,
+// this is also ensured by the global PU lock -- but this inner lock is
+// explicit, tested, and can replace the global PU lock if desired.
+func (s *DeviceState) updateCheckpoint(ctx context.Context, mutate func(*Checkpoint)) error {
+	tucp0 := time.Now()
+	klog.V(7).Info("acquire cplock (updateCheckpoint)")
+	release, err := s.cplock.Acquire(ctx, flock.WithTimeout(10*time.Second))
+	if err != nil {
+		return fmt.Errorf("error acquiring cplock: %w", err)
+	}
+	defer release()
+	klog.V(7).Info("acquired cplock (updateCheckpoint)")
+
+	checkpoint := &Checkpoint{}
+	if err := s.checkpointManager.GetCheckpoint(DriverPluginCheckpointFileBasename, checkpoint); err != nil {
+		return err
+	}
 	if err != nil {
 		return fmt.Errorf("unable to get checkpoint: %w", err)
 	}
+	mutate(checkpoint)
 
-	f(checkpoint)
-
-	if err := s.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFileBasename, checkpoint); err != nil {
+	err = s.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFileBasename, checkpoint)
+	if err != nil {
 		return fmt.Errorf("unable to create checkpoint: %w", err)
 	}
+	klog.V(6).Infof("t_checkpoint_update_total %.3f s", time.Since(tucp0).Seconds())
+	return nil
+}
 
+func (s *DeviceState) deleteClaimFromCheckpoint(ctx context.Context, claimRef kubeletplugin.NamespacedObject) error {
+	err := s.updateCheckpoint(ctx, func(cp *Checkpoint) {
+		delete(cp.V2.PreparedClaims, string(claimRef.UID))
+	})
+	if err != nil {
+		return fmt.Errorf("unable to update checkpoint: %w", err)
+	}
+	klog.V(6).Infof("Deleted claim from checkpoint: %s", claimRef.String())
 	return nil
 }
 
@@ -321,6 +594,8 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 	if claim.Status.Allocation == nil {
 		return nil, fmt.Errorf("claim not yet allocated")
 	}
+
+	klog.V(6).Infof("Preparing devices for claim %s", ResourceClaimToString(claim))
 
 	// Retrieve the full set of device configs for the driver.
 	configs, err := GetOpaqueDeviceConfigs(
@@ -370,13 +645,15 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 		for _, c := range slices.Backward(configs) {
 			if slices.Contains(c.Requests, result.Request) {
 				if _, ok := c.Config.(*configapi.GpuConfig); ok && device.Type() != GpuDeviceType {
-					return nil, fmt.Errorf("cannot apply GPU config to request: %v", result.Request)
+					return nil, fmt.Errorf("cannot apply GpuConfig to device type %s (request: %v)", device.Type(), result.Request)
 				}
-				if _, ok := c.Config.(*configapi.MigDeviceConfig); ok && device.Type() != MigDeviceType {
-					return nil, fmt.Errorf("cannot apply MIG device config to request: %v", result.Request)
+
+				if _, ok := c.Config.(*configapi.MigDeviceConfig); ok && !device.IsStaticOrDynMigDevice() {
+					return nil, fmt.Errorf("cannot apply MigDeviceConfig to device type %s (request: %v)", device.Type(), result.Request)
 				}
+
 				if _, ok := c.Config.(*configapi.VfioDeviceConfig); ok && device.Type() != VfioDeviceType {
-					return nil, fmt.Errorf("cannot apply VFIO device config to request: %v", result.Request)
+					return nil, fmt.Errorf("cannot apply VfioDeviceConfig to device type %s (request: %v)", device.Type(), result.Request)
 				}
 				configResultsMap[c.Config] = append(configResultsMap[c.Config], &result)
 				break
@@ -385,7 +662,7 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 				if _, ok := c.Config.(*configapi.GpuConfig); ok && device.Type() != GpuDeviceType {
 					continue
 				}
-				if _, ok := c.Config.(*configapi.MigDeviceConfig); ok && device.Type() != MigDeviceType {
+				if _, ok := c.Config.(*configapi.MigDeviceConfig); ok && !device.IsStaticOrDynMigDevice() {
 					continue
 				}
 				if _, ok := c.Config.(*configapi.VfioDeviceConfig); ok && device.Type() != VfioDeviceType {
@@ -425,10 +702,12 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 			return nil, fmt.Errorf("error validating GPU config: %w", err)
 		}
 
-		// Apply the config to the list of results associated with it.
+		// Apply the config to the list of results associated with it. If this
+		// applies to a DynamicMIG device then at this point the device has not
+		// yet been created (i.e., the UUID of the MIG device is not yet known).
 		configState, err := s.applyConfig(ctx, config, claim, results)
 		if err != nil {
-			return nil, fmt.Errorf("error applying GPU config: %w", err)
+			return nil, fmt.Errorf("error applying config: %w", err)
 		}
 
 		// Capture the prepared device group config in the map.
@@ -445,10 +724,10 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 
 		for _, result := range results {
 			cdiDevices := []string{}
-			if d := s.cdi.GetStandardDevice(s.allocatable[result.Device]); d != "" {
-				cdiDevices = append(cdiDevices, d)
-			}
-			if d := s.cdi.GetClaimDevice(string(claim.UID), s.allocatable[result.Device], preparedDeviceGroupConfigState[c].containerEdits); d != "" {
+			// The claim-specific CDI spec (of kind `k8s.gpu.nvidia.com/claim`)
+			// has not yet been generated. But we already know the name of a
+			// ClaimDevice entry that it will enumerate (by convention).
+			if d := s.cdi.GetClaimDeviceName(string(claim.UID), s.allocatable[result.Device], preparedDeviceGroupConfigState[c].containerEdits); d != "" {
 				cdiDevices = append(cdiDevices, d)
 			}
 
@@ -459,17 +738,36 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 				CDIDeviceIDs: cdiDevices,
 			}
 
+			adev := s.allocatable[result.Device]
 			var preparedDevice PreparedDevice
-			switch s.allocatable[result.Device].Type() {
+
+			switch adev.Type() {
 			case GpuDeviceType:
 				preparedDevice.Gpu = &PreparedGpu{
-					Info:   s.allocatable[result.Device].Gpu,
+					Info:   adev.Gpu,
 					Device: device,
 				}
-			case MigDeviceType:
+			case MigStaticDeviceType:
 				preparedDevice.Mig = &PreparedMigDevice{
-					Info:   s.allocatable[result.Device].Mig,
-					Device: device,
+					RequestedCanonicalName: adev.MigStatic.CanonicalName(), //  Expected to be the same as `device.DeviceName``
+					Created:                adev.MigStatic,
+					Device:                 device,
+				}
+			case MigDynamicDeviceType:
+				migspec := adev.MigDynamic
+				// Note: immediately after createMigDevice() returns, we could
+				// persist data to disk that may be useful for cleaning up a
+				// partial prepare more reliably (such as the MIG device UUID).
+				tcmig0 := time.Now()
+				migdev, err := s.nvdevlib.createMigDevice(migspec)
+				klog.V(6).Infof("t_prep_create_mig_dev %.3f s (claim %s)", time.Since(tcmig0).Seconds(), ResourceClaimToString(claim))
+				if err != nil {
+					return nil, fmt.Errorf("error creating MIG device: %w", err)
+				}
+				preparedDevice.Mig = &PreparedMigDevice{
+					RequestedCanonicalName: migspec.CanonicalName(),
+					Created:                migdev,
+					Device:                 device,
 				}
 			case VfioDeviceType:
 				preparedDevice.Vfio = &PreparedVfioDevice{
@@ -478,21 +776,56 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 				}
 			}
 
+			klog.V(6).Infof("Prepared device for claim '%s': %s", ResourceClaimToString(claim), device.DeviceName)
+			// Here is a unique opportunity to update the checkpoint, reflecting
+			// the current state of device preparation (still within
+			// PrepareStarted state, but with more detail than before). There is
+			// potential for crashes and early termination between here and
+			// final claim preparation.
 			preparedDeviceGroup.Devices = append(preparedDeviceGroup.Devices, preparedDevice)
 		}
 
 		preparedDevices = append(preparedDevices, &preparedDeviceGroup)
 	}
+
 	return preparedDevices, nil
 }
 
 func (s *DeviceState) unprepareDevices(ctx context.Context, claimUID string, devices PreparedDevices) error {
+	klog.V(6).Infof("Unpreparing claim '%s', previously prepared devices from checkpoint: %v", claimUID, devices.GetDeviceNames())
 	for _, group := range devices {
 		// Unconfigure the vfio-pci devices.
 		if featuregates.Enabled(featuregates.PassthroughSupport) {
 			err := s.unprepareVfioDevices(ctx, group.Devices.VfioDevices())
 			if err != nil {
 				return err
+			}
+		}
+
+		// TODOMIG: do this after MPS/TimeSlicing primitive teardown?
+		for _, device := range group.Devices {
+			switch device.Type() {
+			case GpuDeviceType:
+				klog.V(4).Infof("Unprepare: regular GPU: noop (GPU %s)", device.Gpu.Info.String())
+			case PreparedMigDeviceType:
+				if featuregates.Enabled(featuregates.DynamicMIG) {
+					mig := device.Mig.Created
+					klog.V(4).Infof("Unprepare: tear down MIG device '%s' for claim '%s'", mig.UUID, claimUID)
+					// Errors during MIG device deletion are generally rare but
+					// have to be expected, and should fail the
+					// NodeUnprepareResources() operation. This may for example
+					// be 'error destroying GPU Instance: In use by another
+					// client' and resolve itself soon; when the conflicting
+					// party goes away. Log an explicit warning, in addition to
+					// returning an error.
+					err := s.nvdevlib.deleteMigDevice(mig.LiveTuple())
+					if err != nil {
+						klog.Warningf("Error deleting MIG device %s: %s", mig.CanonicalName(), err)
+						return fmt.Errorf("error deleting MIG device %s: %w", mig.CanonicalName(), err)
+					}
+				} else {
+					klog.V(4).Infof("Unprepare: static MIG: noop (MIG %s)", device.Gpu.Info.String())
+				}
 			}
 		}
 
@@ -507,7 +840,7 @@ func (s *DeviceState) unprepareDevices(ctx context.Context, claimUID string, dev
 		// Go back to default time-slicing for all full GPUs.
 		if featuregates.Enabled(featuregates.TimeSlicingSettings) {
 			tsc := configapi.DefaultGpuConfig().Sharing.TimeSlicingConfig
-			if err := s.tsManager.SetTimeSlice(group.Devices.Gpus(), tsc); err != nil {
+			if err := s.tsManager.SetTimeSlice(group.Devices.GpuUUIDs(), tsc); err != nil {
 				return fmt.Errorf("error setting timeslice for devices: %w", err)
 			}
 		}
@@ -541,6 +874,8 @@ func (s *DeviceState) unprepareVfioDevices(ctx context.Context, devices Prepared
 	return nil
 }
 
+// TODO: this needs a code comment -- what's the primary purpose, and how should
+// this relate to MIG devices?
 func (s *DeviceState) discoverSiblingAllocatables(device *AllocatableDevice) error {
 	switch device.Type() {
 	case GpuDeviceType:
@@ -562,7 +897,10 @@ func (s *DeviceState) discoverSiblingAllocatables(device *AllocatableDevice) err
 		for _, mig := range migs {
 			s.allocatable[mig.CanonicalName()] = mig
 		}
-	case MigDeviceType:
+	case MigStaticDeviceType:
+		// TODO: Implement once dynamic MIG is supported.
+		return nil
+	case MigDynamicDeviceType:
 		// TODO: Implement once dynamic MIG is supported.
 		return nil
 	}
@@ -572,10 +910,13 @@ func (s *DeviceState) discoverSiblingAllocatables(device *AllocatableDevice) err
 func (s *DeviceState) applyConfig(ctx context.Context, config configapi.Interface, claim *resourceapi.ResourceClaim, results []*resourceapi.DeviceRequestAllocationResult) (*DeviceConfigState, error) {
 	switch castConfig := config.(type) {
 	case *configapi.GpuConfig:
+		klog.V(7).Infof("applySharingConfig() for GpuConfig")
 		return s.applySharingConfig(ctx, castConfig.Sharing, claim, results)
 	case *configapi.MigDeviceConfig:
+		klog.V(7).Infof("applySharingConfig() for MigDeviceConfig")
 		return s.applySharingConfig(ctx, castConfig.Sharing, claim, results)
 	case *configapi.VfioDeviceConfig:
+		klog.V(7).Infof("applySharingConfig() for VfioDeviceConfig")
 		return s.applyVfioDeviceConfig(ctx, castConfig, claim, results)
 	default:
 		return nil, fmt.Errorf("unknown config type: %T", castConfig)
@@ -590,9 +931,9 @@ func (s *DeviceState) applySharingConfig(ctx context.Context, config configapi.S
 	}
 
 	// Get the list of allocatable devices this config is being applied over.
-	allocatableDevices := make(AllocatableDevices)
+	requestedDevices := make(AllocatableDevices)
 	for _, r := range results {
-		allocatableDevices[r.Device] = s.allocatable[r.Device]
+		requestedDevices[r.Device] = s.allocatable[r.Device]
 	}
 
 	// Declare a device group state object to populate.
@@ -605,7 +946,15 @@ func (s *DeviceState) applySharingConfig(ctx context.Context, config configapi.S
 			return nil, fmt.Errorf("error getting timeslice config for requests '%v' in claim '%v': %w", requests, claim.UID, err)
 		}
 		if tsc != nil {
-			err = s.tsManager.SetTimeSlice(allocatableDevices, tsc)
+			// Get UUIDs of physical GPUs for which to change the timeslicing
+			// settings. Do this only for any requested full GPUs. Note:
+			// timeslicing settings cannot be set on MIG devices directly.
+			// Hence, the API does not allow for setting `timeSlicingConfig` on
+			// a `MigDeviceConfig`. TODO: should we do this for passthrough
+			// devices?
+			uuids := requestedDevices.GpuUUIDs()
+			klog.V(6).Infof("SetTimeSlice() for full GPUs with UUIDs: %s", uuids)
+			err = s.tsManager.SetTimeSlice(uuids, tsc)
 			if err != nil {
 				return nil, fmt.Errorf("error setting timeslice config for requests '%v' in claim '%v': %w", requests, claim.UID, err)
 			}
@@ -614,11 +963,17 @@ func (s *DeviceState) applySharingConfig(ctx context.Context, config configapi.S
 
 	// Apply MPS settings (if available and feature gate enabled).
 	if featuregates.Enabled(featuregates.MPSSupport) && config.IsMps() {
+		if featuregates.Enabled(featuregates.DynamicMIG) {
+			// TODO: create MIG device first, get its UUID, and then enable MPS
+			// for that device -- probably based on a `PreparedDevicesList`, and
+			// not based on `AllocatableDevices`.
+			return nil, fmt.Errorf("MPS is not yet supported when using featureGates.DynamicMIG=true")
+		}
 		mpsc, err := config.GetMpsConfig()
 		if err != nil {
 			return nil, fmt.Errorf("error getting MPS configuration: %w", err)
 		}
-		mpsControlDaemon := s.mpsManager.NewMpsControlDaemon(string(claim.UID), allocatableDevices)
+		mpsControlDaemon := s.mpsManager.NewMpsControlDaemon(string(claim.UID), requestedDevices)
 		if err := mpsControlDaemon.Start(ctx, mpsc); err != nil {
 			return nil, fmt.Errorf("error starting MPS control daemon: %w", err)
 		}
@@ -716,6 +1071,7 @@ func GetOpaqueDeviceConfigs(
 	return resultConfigs, nil
 }
 
+// TODO: this needs a code comment.
 func (s *DeviceState) UpdateDeviceHealthStatus(d *AllocatableDevice, hs HealthStatus) {
 	s.Lock()
 	defer s.Unlock()
@@ -723,8 +1079,16 @@ func (s *DeviceState) UpdateDeviceHealthStatus(d *AllocatableDevice, hs HealthSt
 	switch d.Type() {
 	case GpuDeviceType:
 		d.Gpu.Health = hs
-	case MigDeviceType:
-		d.Mig.Health = hs
+	case MigDynamicDeviceType:
+		// Here we do not have access to a concrete MIG device. The
+		// 'allocatable' MIG device is an abstract representation to a specific
+		// MIG device.
+		klog.Warningf("UpdateDeviceHealthStatus() called for abstract, dynamic MIG device %s: %s", d.MigDynamic.CanonicalName(), hs)
+	case MigStaticDeviceType:
+		// Does it make sense to update the health for a MIG device? Do we
+		// receive health events that are specific to individual MIG devices? If
+		// yes: does this allow for making conclusions about the parent device?
+		d.MigStatic.Health = hs
 	default:
 		klog.V(6).Infof("Cannot update health status for unknown device type: %s", d.Type())
 		return
@@ -789,50 +1153,32 @@ func (s *DeviceState) validateNoOverlappingPreparedDevices(checkpoint *Checkpoin
 	return nil
 }
 
-// TODO: Dynamic MIG is not yet supported with structured parameters.
-// Refactor this to allow for the allocation of statically partitioned MIG
-// devices.
-//
-// func (s *DeviceState) prepareMigDevices(claimUID string, allocated *nascrd.AllocatedMigDevices) (*PreparedMigDevices, error) {
-// 	prepared := &PreparedMigDevices{}
-//
-// 	for _, device := range allocated.Devices {
-// 		if _, exists := s.allocatable[device.ParentUUID]; !exists {
-// 			return nil, fmt.Errorf("allocated GPU does not exist: %v", device.ParentUUID)
-// 		}
-//
-// 		parent := s.allocatable[device.ParentUUID]
-//
-// 		if !parent.migEnabled {
-// 			return nil, fmt.Errorf("cannot prepare a GPU with MIG mode disabled: %v", device.ParentUUID)
-// 		}
-//
-// 		if _, exists := parent.migProfiles[device.Profile]; !exists {
-// 			return nil, fmt.Errorf("MIG profile %v does not exist on GPU: %v", device.Profile, device.ParentUUID)
-// 		}
-//
-// 		placement := nvml.GpuInstancePlacement{
-// 			Start: uint32(device.Placement.Start),
-// 			Size:  uint32(device.Placement.Size),
-// 		}
-//
-// 		migInfo, err := s.nvdevlib.createMigDevice(parent.GpuInfo, parent.migProfiles[device.Profile].profile, &placement)
-// 		if err != nil {
-// 			return nil, fmt.Errorf("error creating MIG device: %w", err)
-// 		}
-//
-// 		prepared.Devices = append(prepared.Devices, migInfo)
-// 	}
-//
-// 	return prepared, nil
-// }
-//
-// func (s *DeviceState) unprepareMigDevices(claimUID string, devices *PreparedDevices) error {
-// 	for _, device := range devices.Mig.Devices {
-// 		err := s.nvdevlib.deleteMigDevice(device)
-// 		if err != nil {
-// 			return fmt.Errorf("error deleting MIG device for %v: %w", device.uuid, err)
-// 		}
-// 	}
-// 	return nil
-//}
+// Make this best-effort for now (do not return an error, but log details).
+func (s *DeviceState) deleteMigDevIfExistsAndNotUsedByCompletedClaim(ms *MigSpecTuple, dname DeviceName, completelyPreparedClaims PreparedClaimsByUID) error {
+	for uid, claim := range completelyPreparedClaims {
+		for _, res := range claim.Status.Allocation.Devices.Results {
+			if res.Device == dname {
+				klog.V(1).Infof("Device %s is in use by completely prepared claim %s", dname, PreparedClaimToString(&claim, uid))
+				return nil
+			}
+		}
+	}
+
+	klog.V(1).Infof("Device '%s' is not in use by any completely prepared claim, find corresponding actual MIG device", dname)
+	mlt, err := s.nvdevlib.FindMigDevBySpec(ms)
+	if err != nil {
+		return fmt.Errorf("FindMigDevBySpecTuple() failed for %s: %s", dname, err)
+	}
+
+	if mlt == nil {
+		klog.V(1).Infof("No live MIG device corresponding to name %s currently exists (nothing to clean up)", dname)
+		return nil
+	}
+
+	klog.V(1).Infof("MIG device corresponding to name %s found with UUID %s -- attempt to tear down", dname, mlt.MigUUID)
+	if err := s.nvdevlib.deleteMigDevice(mlt); err != nil {
+		return fmt.Errorf("MIG device deletion failed: %w", err)
+	}
+
+	return nil
+}

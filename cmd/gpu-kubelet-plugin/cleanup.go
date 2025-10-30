@@ -109,7 +109,7 @@ func (m *CheckpointCleanupManager) Stop() error {
 //  4. Holding DeviceState lock during the entire cleanup (which could take seconds with
 //     multiple API calls) would unnecessarily block normal Prepare/Unprepare operations.
 func (m *CheckpointCleanupManager) cleanup(ctx context.Context) {
-	cp, err := m.devicestate.getCheckpoint()
+	cp, err := m.devicestate.getCheckpoint(ctx)
 	if err != nil {
 		klog.Errorf("Checkpointed RC cleanup: unable to get checkpoint: %s", err)
 		return

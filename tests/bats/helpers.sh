@@ -148,7 +148,7 @@ show_kubelet_plugin_error_logs() {
     -l nvidia-dra-driver-gpu-component=kubelet-plugin \
     -n nvidia-dra-driver-gpu \
     --all-containers \
-    --prefix --tail=-1 | grep -E "^(E|W)[0-9]{4}" -iE "error"
+    --prefix --tail=-1 | grep -E -e "^(E|W)[0-9]{4}" -e "error"
   ) || true
   echo -e "KUBELET PLUGIN ERROR LOGS END\n\n"
 }
@@ -275,6 +275,34 @@ kplog () {
   kubectl logs -n nvidia-dra-driver-gpu "$pod" -c "$cont" "$@"
 }
 
+<<<<<<< HEAD
+=======
+show_all_mig_devices_all_nodes() {
+  for node in $(kubectl get nodes -o=jsonpath='{.items[*].metadata.name}'); do
+    nvmm "$node" nvidia-smi -L
+    #mig -lgi
+  done
+}
+
+show_processes_on_migs_all_nodes() {
+  for node in $(kubectl get nodes -o=jsonpath='{.items[*].metadata.name}'); do
+    nvmm "$node" sh -c 'nvidia-smi mig -lgi | grep MIG; nvidia-smi | grep -A10 Processes | grep -E '[0-9]+''
+  done
+}
+
+show_mig_mode_all_gpus_all_nodes() {
+  for node in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
+     nvmm "$node" sh -c 'nvidia-smi --query-gpu=index,mig.mode.current --format=csv'
+  done
+}
+
+
+show_utilization_all_gpus_all_nodes() {
+  for node in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
+     nvmm "$node" nvidia-smi --query-gpu=memory.used,temperature.gpu --format=csv
+  done
+}
+>>>>>>> a3c87562 (dynmig: introduce dynamig MIG device management)
 
 _log_ts_no_newline() {
     echo -n "$(date -u +'%Y-%m-%dT%H:%M:%S.%3NZ ')"
@@ -288,4 +316,8 @@ log() {
   _DUR=$(echo "$_TNOW - $_T0" | bc)
   _log_ts_no_newline
   printf "[%6.1fs] $1\n" "$_DUR"
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> a3c87562 (dynmig: introduce dynamig MIG device management)
