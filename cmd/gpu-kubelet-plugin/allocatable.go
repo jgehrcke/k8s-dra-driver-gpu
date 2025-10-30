@@ -31,8 +31,11 @@ import (
 	"k8s.io/utils/ptr"
 )
 
+
+type DeviceName = string
+
 // What is the relevance of this string?
-type AllocatableDevices map[string]*AllocatableDevice
+type AllocatableDevices map[DeviceName]*AllocatableDevice
 
 //type AllocatableDevices []AllocatableDevice
 
@@ -53,8 +56,11 @@ type MigInfo struct {
 	MemorySlices nvml.GpuInstancePlacement
 }
 
-func (i *MigInfo) CanonicalName() string {
-	placementSfx := placementToCanonicalRepr(&i.MemorySlices)
+// Naming convention: this name is used for announcement (device name announced
+// in a DRA ResourceSlice), and it's also played back to us upon a request,
+// which is when we look it up in the AllocatableDevices map.
+func (i *MigInfo) CanonicalName() DeviceName {
+	placementSfx := placementString(&i.MemorySlices)
 	// Remove the dot in e.g. `4g.95gb` -- device names must not contain dots,
 	// and this is used in a device name.
 	profname := strings.ReplaceAll(i.Profile.String(), ".", "")
@@ -71,7 +77,7 @@ func (i MigInfo) PartCapacities() PartCapacityMap {
 		"encoders":        intcap(p.EncoderCount),
 		"jpegEngines":     intcap(p.JpegCount),
 		"ofaEngines":      intcap(p.OfaCount),
-		"memoryBytes":     intcap(int64(p.MemorySizeMB * 1024 * 1024)), // Encode unit in name? 'bytes'
+		"memory":          intcap(int64(p.MemorySizeMB * 1024 * 1024)), // Encode unit in name? 'bytes'
 	}
 }
 
@@ -126,18 +132,14 @@ func capacitiesToCounters(m PartCapacityMap) map[string]resourceapi.Counter {
 
 func (i MigInfo) PartConsumesCounters() []resourceapi.DeviceCounterConsumption {
 	// Each entry in capacity is also modeled as consumable counter (consuming
-	// from the parent device).
-	counters := capacitiesToCounters(i.PartCapacities())
-
-	// In addition, this MIG device, if allocated, consumes at least one
-	// specific memory slice. Each memory slice is modeled with its own counter
-	// (capacity: 1). Note that for example on a B200 GPU, the `3g.90gb` device
-	// consumes 4 out of 8 memory slices in total, but only 3 out of seven SMs.
-	// That is, with two `3g.90gb` devices allocated all memory slices are
-	// consumed, and one SM -- while unallocated -- cannot be used anymore.
-	addCountersForMemSlices(counters, int(i.MemorySlices.Start), int(i.MemorySlices.Size))
-
-	dcc := resourceapi.DeviceCounterConsumption{
+	// from the parent device). In addition, this MIG device, if allocated,
+	// consumes at least one specific memory slice. Each memory slice is modeled
+	// with its own counter (capacity: 1). Note that for example on a B200 GPU,
+	// the `3g.90gb` device consumes 4 out of 8 memory slices in total, but only
+	// 3 out of seven SMs. That is, with two `3g.90gb` devices allocated all
+	// memory slices are consumed, and one SM -- while unallocated -- cannot be
+	// used anymore.
+	return []resourceapi.DeviceCounterConsumption{{
 		// The parent is a full GPU device. When this device is allocated, it
 		// consumes from the parent's CounterSet. The parent's counter set is
 		// referred to by name. Use a naming convention: currently, a full GPU
@@ -145,20 +147,19 @@ func (i MigInfo) PartConsumesCounters() []resourceapi.DeviceCounterConsumption {
 		// the form 'gpu-%d-counter-set' where the placeholder is the GPU index
 		// (change to UUID)?
 		CounterSet: i.Parent.GetSharedCounterSetName(),
-		Counters:   counters,
-	}
-	return []resourceapi.DeviceCounterConsumption{dcc}
+
+		Counters: addCountersForMemSlices(capacitiesToCounters(i.PartCapacities()), int(i.MemorySlices.Start), int(i.MemorySlices.Size)),
+	}}
 }
 
-// Mutate counters (map): insert one counter for each memory slice consumed, as
-// given by the `start` and `size` parameters (nvml.GpuInstancePlacement).
-func addCountersForMemSlices(counters map[string]resourceapi.Counter, start int, size int) {
-	// Naming convention: that's the name that is also used for announcing
-	// capacity via the full device.
+// Insert one counter for each memory slice consumed, as given by the `start`
+// and `size` parameters (nvml.GpuInstancePlacement). Mutate the input map in
+// place, and (also) return it.
+func addCountersForMemSlices(counters map[string]resourceapi.Counter, start int, size int) map[string]resourceapi.Counter {
 	for i := start; i < start+size; i++ {
-		name := fmt.Sprintf("memory-slice-%d", i)
-		counters[name] = resourceapi.Counter{Value: *resource.NewQuantity(1, resource.BinarySI)}
+		counters[memsliceCounterName(i)] = resourceapi.Counter{Value: *resource.NewQuantity(1, resource.BinarySI)}
 	}
+	return counters
 }
 
 func (i *MigInfo) PartGetDevice() resourceapi.Device {
@@ -262,12 +263,21 @@ func toRFC1123Compliant(name string) string {
 	return name
 }
 
-func placementToCanonicalRepr(p *nvml.GpuInstancePlacement) string {
+func placementString(p *nvml.GpuInstancePlacement) string {
 	sfx := fmt.Sprintf("%d", p.Start)
 	if p.Size > 1 {
 		sfx = fmt.Sprintf("%s-%d", sfx, p.Start+p.Size-1)
 	}
 	return toRFC1123Compliant(fmt.Sprintf("placement-%s", sfx))
+}
+
+// Return canonical name for memory slice (placement) `i` (a zero-based index).
+// Note that this name must be used for memslice-N counters in a SharedCounters
+// counter set, and for corresponding counters in a ConsumesCounters counter
+// set. Counters (as opposed to capacities) are allowed to have hyphens in their
+// name.
+func memsliceCounterName(i int) string {
+	return fmt.Sprintf("memory-slice-%d", i)
 }
 
 // Helper for creating an integer-based DeviceCapacity. Accept any integer type.
