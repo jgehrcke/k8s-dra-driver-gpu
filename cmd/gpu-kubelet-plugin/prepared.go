@@ -37,8 +37,11 @@ type PreparedGpu struct {
 }
 
 type PreparedMigDevice struct {
-	Info   *MigDeviceInfo        `json:"info"`
-	Device *kubeletplugin.Device `json:"device"`
+	// Abstract, allocatable device
+	Requested *MigInfo
+	// Specifc, created device
+	Created *MigDeviceInfo        `json:"info"`
+	Device  *kubeletplugin.Device `json:"device"`
 }
 
 type PreparedVfioDevice struct {
@@ -69,7 +72,8 @@ func (d *PreparedDevice) CanonicalName() string {
 	case GpuDeviceType:
 		return d.Gpu.Info.CanonicalName()
 	case MigDeviceType:
-		return d.Mig.Info.CanonicalName()
+		//return d.Mig.Info.CanonicalName()
+		return d.Mig.Created.CanonicalName()
 	case VfioDeviceType:
 		return d.Vfio.Info.CanonicalName()
 	}
@@ -175,7 +179,7 @@ func (d PreparedDevices) GpuUUIDs() []string {
 func (l PreparedDeviceList) MigDeviceUUIDs() []string {
 	var uuids []string
 	for _, device := range l.MigDevices() {
-		uuids = append(uuids, device.Mig.Info.UUID)
+		uuids = append(uuids, device.Mig.Created.UUID)
 	}
 	slices.Sort(uuids)
 	return uuids

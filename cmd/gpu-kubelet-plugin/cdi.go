@@ -238,10 +238,16 @@ func (cdi *CDIHandler) createStandardNvidiaDeviceSpecFile(allocatable Allocatabl
 		commonEdits.Env,
 		"NVIDIA_VISIBLE_DEVICES=void")
 
-	// Generate device specs for all full GPUs and MIG devices.
+	// Generate device specs for all full GPUs.
 	var deviceSpecs []cdispec.Device
 	for _, device := range allocatable {
 		if device.Type() == VfioDeviceType {
+			// This is done elsewhere.
+			continue
+		}
+
+		if device.Mig != nil {
+			// For MIG devices, create spec later on the fly upon preparation.
 			continue
 		}
 
@@ -261,7 +267,7 @@ func (cdi *CDIHandler) createStandardNvidiaDeviceSpecFile(allocatable Allocatabl
 		spec.WithEdits(*commonEdits.ContainerEdits),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to creat CDI spec: %w", err)
+		return fmt.Errorf("failed to create CDI spec: %w", err)
 	}
 
 	specName := cdiapi.GenerateTransientSpecName(cdiVendor, cdiDeviceClass, cdiBaseSpecIdentifier)
