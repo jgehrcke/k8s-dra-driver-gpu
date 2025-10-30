@@ -30,6 +30,7 @@ import (
 
 type GpuInfo struct {
 	UUID                  string `json:"uuid"`
+	index                 int
 	minor                 int
 	migEnabled            bool
 	memoryBytes           uint64
@@ -42,11 +43,31 @@ type GpuInfo struct {
 	pcieBusID             string
 	pcieRootAttr          *deviceattribute.DeviceAttribute
 	migProfiles           []*MigProfileInfo
+	MigCapable            bool
+
+	// Properties that can only be known after inspecting MIG profiles
+	maxCapacities PartCapacityMap
+	memSliceCount int
 }
 
+// GpuInfo holds all of the relevant information about a GPU.
+// type GpuInfo struct {
+// 	Minor                 int
+// 	UUID                  string
+// 	MemoryBytes           uint64
+// 	ProductName           string
+// 	Brand                 string
+// 	Architecture          string
+// 	CudaComputeCapability string
+// 	MigCapable            bool
+// }
+
+type PartCapacityMap map[resourceapi.QualifiedName]resourceapi.DeviceCapacity
+
 type MigDeviceInfo struct {
-	UUID          string `json:"uuid"`
-	profile       string
+	UUID    string `json:"uuid"`
+	profile string
+
 	parent        *GpuInfo
 	placement     *MigDevicePlacement
 	giProfileInfo *nvml.GpuInstanceProfileInfo
@@ -78,38 +99,106 @@ func (d *MigDeviceInfo) CanonicalName() string {
 	return fmt.Sprintf("gpu-%d-mig-%d-%d-%d", d.parent.minor, d.giInfo.ProfileId, d.placement.Start, d.placement.Size)
 }
 
+func (d *GpuInfo) PartDevAttributes() map[resourceapi.QualifiedName]resourceapi.DeviceAttribute {
+	return map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+		"type": {
+			StringValue: ptr.To(GpuDeviceType),
+		},
+		"uuid": {
+			StringValue: &d.UUID,
+		},
+		"productName": {
+			StringValue: &d.productName,
+		},
+		"brand": {
+			StringValue: &d.brand,
+		},
+		"architecture": {
+			StringValue: &d.architecture,
+		},
+		"cudaComputeCapability": {
+			VersionValue: ptr.To(semver.MustParse(d.cudaComputeCapability).String()),
+		},
+		"driverVersion": {
+			VersionValue: ptr.To(semver.MustParse(d.driverVersion).String()),
+		},
+		"cudaDriverVersion": {
+			VersionValue: ptr.To(semver.MustParse(d.cudaDriverVersion).String()),
+		},
+		"pcieBusID": {
+			StringValue: &d.pcieBusID,
+		},
+	}
+}
+
+// Full device capacity, based on looking at all MIG profiles.
+func (d *GpuInfo) PartCapacities() PartCapacityMap {
+	return d.maxCapacities
+}
+
+func (d *GpuInfo) GetSharedCounterSetName() string {
+	return toRFC1123Compliant(fmt.Sprintf("gpu-%d-counter-set", d.index))
+	//return toRFC1123Compliant(fmt.Sprintf("gpu-%s-counter-set", d.UUID))
+}
+
+func (d *GpuInfo) PartSharedCounterSets() []resourceapi.CounterSet {
+	// For now, model partitions with one counterset per full GPU device
+	counters := capacitiesToCounters(d.maxCapacities)
+
+	// Add one counter (capacity 1) per memory slice.
+	addCountersForMemSlices(counters, 0, d.memSliceCount)
+
+	cs := resourceapi.CounterSet{
+		Name:     d.GetSharedCounterSetName(),
+		Counters: counters,
+	}
+
+	return []resourceapi.CounterSet{cs}
+}
+
+func (d *GpuInfo) PartConsumesCounters() []resourceapi.DeviceCounterConsumption {
+	// Let the full device consume everything. Goals: 1) when the full device is
+	// allocated, all available counters drop to zero. 2) when the smallest
+	// partition gets allocated, the full device cannot be allocated anymore.
+	counters := capacitiesToCounters(d.maxCapacities)
+
+	addCountersForMemSlices(counters, 0, d.memSliceCount)
+
+	dcc := resourceapi.DeviceCounterConsumption{
+		CounterSet: d.GetSharedCounterSetName(),
+		Counters:   counters,
+	}
+	return []resourceapi.DeviceCounterConsumption{dcc}
+}
+
+// For the new partitionable devices API, return the 'full' device announcement.
+func (d *GpuInfo) PartGetDevice() resourceapi.Device {
+	dev := resourceapi.Device{
+		Name:             d.CanonicalName(),
+		Attributes:       d.PartDevAttributes(),
+		Capacity:         d.PartCapacities(),
+		ConsumesCounters: d.PartConsumesCounters(),
+	}
+
+	// Not available in all environments, enrich advertised device only
+	// conditionally.
+	if d.pcieRootAttr != nil {
+		dev.Attributes[d.pcieRootAttr.Name] = d.pcieRootAttr.Value
+	}
+
+	return dev
+}
+
+// Add detail that is only known after inspecting the individual MIG profiles.
+func (d *GpuInfo) AddDetailAfterWalkingMigProfiles(maxcap PartCapacityMap, memSliceCount int) {
+	d.maxCapacities = maxcap
+	d.memSliceCount = memSliceCount
+}
+
 func (d *GpuInfo) GetDevice() resourceapi.Device {
 	device := resourceapi.Device{
-		Name: d.CanonicalName(),
-		Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-			"type": {
-				StringValue: ptr.To(GpuDeviceType),
-			},
-			"uuid": {
-				StringValue: &d.UUID,
-			},
-			"productName": {
-				StringValue: &d.productName,
-			},
-			"brand": {
-				StringValue: &d.brand,
-			},
-			"architecture": {
-				StringValue: &d.architecture,
-			},
-			"cudaComputeCapability": {
-				VersionValue: ptr.To(semver.MustParse(d.cudaComputeCapability).String()),
-			},
-			"driverVersion": {
-				VersionValue: ptr.To(semver.MustParse(d.driverVersion).String()),
-			},
-			"cudaDriverVersion": {
-				VersionValue: ptr.To(semver.MustParse(d.cudaDriverVersion).String()),
-			},
-			"pcieBusID": {
-				StringValue: &d.pcieBusID,
-			},
-		},
+		Name:       d.CanonicalName(),
+		Attributes: d.PartDevAttributes(),
 		Capacity: map[resourceapi.QualifiedName]resourceapi.DeviceCapacity{
 			"memory": {
 				Value: *resource.NewQuantity(int64(d.memoryBytes), resource.BinarySI),

@@ -95,6 +95,7 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 		mpsManager = NewMpsManager(config, nvdevlib, hostDriverRoot, MpsControlDaemonTemplatePath)
 	}
 
+	// Can only do that for devices that exist (not for not-yet-incarnated MIG devices).
 	if err := cdi.CreateStandardDeviceSpecFile(allocatable); err != nil {
 		return nil, fmt.Errorf("unable to create base CDI spec file: %v", err)
 	}
@@ -388,8 +389,18 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 					Device: device,
 				}
 			case MigDeviceType:
+				devinfo := s.allocatable[result.Device]
+				migdev, err := s.nvdevlib.createMigDevice(devinfo.Mig.Parent, devinfo.Mig.Profile, &devinfo.Mig.MemorySlices)
+				if err != nil {
+					return nil, fmt.Errorf("error creating MIG decive: %w", err)
+				}
+
 				preparedDevice.Mig = &PreparedMigDevice{
-					Info:   s.allocatable[result.Device].Mig,
+					// Abstract, allocatable device
+					Requested: devinfo.Mig,
+					// Specifc, created device
+					Created: migdev,
+					// DRA device object
 					Device: device,
 				}
 			}
@@ -452,33 +463,33 @@ func (s *DeviceState) applySharingConfig(ctx context.Context, config configapi.S
 
 	// Apply time-slicing settings (if available and feature gate enabled).
 	if featuregates.Enabled(featuregates.TimeSlicingSettings) && config.IsTimeSlicing() {
-		tsc, err := config.GetTimeSlicingConfig()
-		if err != nil {
-			return nil, fmt.Errorf("error getting timeslice config for requests '%v' in claim '%v': %w", requests, claim.UID, err)
-		}
-		if tsc != nil {
-			err = s.tsManager.SetTimeSlice(allocatableDevices, tsc)
-			if err != nil {
-				return nil, fmt.Errorf("error setting timeslice config for requests '%v' in claim '%v': %w", requests, claim.UID, err)
-			}
-		}
+		// tsc, err := config.GetTimeSlicingConfig()
+		// if err != nil {
+		// 	return nil, fmt.Errorf("error getting timeslice config for requests '%v' in claim '%v': %w", requests, claim.UID, err)
+		// }
+		// if tsc != nil {
+		// 	err = s.tsManager.SetTimeSlice(allocatableDevices, tsc)
+		// 	if err != nil {
+		// 		return nil, fmt.Errorf("error setting timeslice config for requests '%v' in claim '%v': %w", requests, claim.UID, err)
+		// 	}
+		// }
 	}
 
 	// Apply MPS settings (if available and feature gate enabled).
 	if featuregates.Enabled(featuregates.MPSSupport) && config.IsMps() {
-		mpsc, err := config.GetMpsConfig()
-		if err != nil {
-			return nil, fmt.Errorf("error getting MPS configuration: %w", err)
-		}
-		mpsControlDaemon := s.mpsManager.NewMpsControlDaemon(string(claim.UID), allocatableDevices)
-		if err := mpsControlDaemon.Start(ctx, mpsc); err != nil {
-			return nil, fmt.Errorf("error starting MPS control daemon: %w", err)
-		}
-		if err := mpsControlDaemon.AssertReady(ctx); err != nil {
-			return nil, fmt.Errorf("MPS control daemon is not yet ready: %w", err)
-		}
-		configState.MpsControlDaemonID = mpsControlDaemon.GetID()
-		configState.containerEdits = mpsControlDaemon.GetCDIContainerEdits()
+		// mpsc, err := config.GetMpsConfig()
+		// if err != nil {
+		// 	return nil, fmt.Errorf("error getting MPS configuration: %w", err)
+		// }
+		// mpsControlDaemon := s.mpsManager.NewMpsControlDaemon(string(claim.UID), allocatableDevices)
+		// if err := mpsControlDaemon.Start(ctx, mpsc); err != nil {
+		// 	return nil, fmt.Errorf("error starting MPS control daemon: %w", err)
+		// }
+		// if err := mpsControlDaemon.AssertReady(ctx); err != nil {
+		// 	return nil, fmt.Errorf("MPS control daemon is not yet ready: %w", err)
+		// }
+		// configState.MpsControlDaemonID = mpsControlDaemon.GetID()
+		// configState.containerEdits = mpsControlDaemon.GetCDIContainerEdits()
 	}
 
 	return &configState, nil

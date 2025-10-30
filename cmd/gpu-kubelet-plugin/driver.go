@@ -75,15 +75,36 @@ func NewDriver(ctx context.Context, config *Config) (*driver, error) {
 	}
 	driver.pluginhelper = helper
 
-	// Enumerate the set of GPU and MIG devices and publish them
-	var resourceSlice resourceslice.Slice
+	// TODO: Create N+1 resource slices, given N physical GPUs. 1) one slice
+	// with shared counters, for each full GPU 2) for each full GPU, a slice
+	// with the full-GPU-device and all potential MIG profile/placement devices.
+
+	//slices := []resourceslice.Slice{}
+
+	var slice resourceslice.Slice
+	countersets := []resourceapi.CounterSet{}
 	for _, device := range state.allocatable {
-		resourceSlice.Devices = append(resourceSlice.Devices, device.GetDevice())
+		// Full GPU: take note of countersets, indicating absolute capacity.
+		if device.Gpu != nil {
+			countersets = append(countersets, device.Gpu.PartSharedCounterSets()...)
+		}
+
+		// Add all allocatable devices; this includes not-yet-manifested MIG
+		// devices
+		slice.Devices = append(slice.Devices, device.PartGetDevice())
 	}
+
+	// I tried having the sharedCounters in their own slice, and that doesn't seem to work.
+	slice.SharedCounters = countersets
+
+	// var resourceSlice resourceslice.Slice
+	// for _, device := range state.allocatable {
+	// 	resourceSlice.Devices = append(resourceSlice.Devices, device.GetDevice())
+	// }
 
 	resources := resourceslice.DriverResources{
 		Pools: map[string]resourceslice.Pool{
-			config.flags.nodeName: {Slices: []resourceslice.Slice{resourceSlice}},
+			config.flags.nodeName: {Slices: []resourceslice.Slice{slice}},
 		},
 	}
 
