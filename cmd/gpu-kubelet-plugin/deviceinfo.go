@@ -160,34 +160,26 @@ func (d *GpuInfo) GetSharedCounterSetName() string {
 	//return toRFC1123Compliant(fmt.Sprintf("gpu-%s-counter-set", d.UUID))
 }
 
+// For now, define exactly one counter set per full GPU device. Individual
+// partitions consume from that.
+//
+// In that counter set, define one counter per device capacity dimension, and
+// add one counter (capacity 1) per memory slice.
 func (d *GpuInfo) PartSharedCounterSets() []resourceapi.CounterSet {
-	// For now, model partitions with one counterset per full GPU device
-	counters := capacitiesToCounters(d.maxCapacities)
-
-	// Add one counter (capacity 1) per memory slice.
-	addCountersForMemSlices(counters, 0, d.memSliceCount)
-
-	cs := resourceapi.CounterSet{
+	return []resourceapi.CounterSet{{
 		Name:     d.GetSharedCounterSetName(),
-		Counters: counters,
-	}
-
-	return []resourceapi.CounterSet{cs}
+		Counters: addCountersForMemSlices(capacitiesToCounters(d.maxCapacities), 0, d.memSliceCount),
+	}}
 }
 
 func (d *GpuInfo) PartConsumesCounters() []resourceapi.DeviceCounterConsumption {
 	// Let the full device consume everything. Goals: 1) when the full device is
 	// allocated, all available counters drop to zero. 2) when the smallest
 	// partition gets allocated, the full device cannot be allocated anymore.
-	counters := capacitiesToCounters(d.maxCapacities)
-
-	addCountersForMemSlices(counters, 0, d.memSliceCount)
-
-	dcc := resourceapi.DeviceCounterConsumption{
+	return []resourceapi.DeviceCounterConsumption{{
 		CounterSet: d.GetSharedCounterSetName(),
-		Counters:   counters,
-	}
-	return []resourceapi.DeviceCounterConsumption{dcc}
+		Counters:   addCountersForMemSlices(capacitiesToCounters(d.maxCapacities), 0, d.memSliceCount),
+	}}
 }
 
 // For the new partitionable devices API, return the 'full' device announcement.
@@ -277,7 +269,10 @@ func (d *MigDeviceInfo) GetDevice() resourceapi.Device {
 			"encoders":    {Value: *resource.NewQuantity(int64(d.giProfileInfo.EncoderCount), resource.BinarySI)},
 			"jpegEngines": {Value: *resource.NewQuantity(int64(d.giProfileInfo.JpegCount), resource.BinarySI)},
 			"ofaEngines":  {Value: *resource.NewQuantity(int64(d.giProfileInfo.OfaCount), resource.BinarySI)},
-			"memory":      {Value: *resource.NewQuantity(int64(d.giProfileInfo.MemorySizeMB*1024*1024), resource.BinarySI)},
+			// Should we expose this as memoryBytes instead? Seemingly, in the
+			// k8s landscape, that ship has long saileed: container limits for
+			// example also use `memory`.
+			"memory": {Value: *resource.NewQuantity(int64(d.giProfileInfo.MemorySizeMB*1024*1024), resource.BinarySI)},
 		},
 	}
 	for i := d.placement.Start; i < d.placement.Start+d.placement.Size; i++ {
