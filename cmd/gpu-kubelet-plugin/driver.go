@@ -108,7 +108,7 @@ func NewDriver(ctx context.Context, config *Config) (*driver, error) {
 		},
 	}
 
-	healthcheck, err := startHealthcheck(ctx, config)
+	healthcheck, err := startHealthcheck(ctx, config, helper)
 	if err != nil {
 		return nil, fmt.Errorf("start healthcheck: %w", err)
 	}
@@ -117,6 +117,8 @@ func NewDriver(ctx context.Context, config *Config) (*driver, error) {
 	if err := driver.pluginhelper.PublishResources(ctx, resources); err != nil {
 		return nil, err
 	}
+
+	klog.V(4).Infof("Current kubelet plugin registration status: %s", helper.RegistrationStatus())
 
 	return driver, nil
 }
