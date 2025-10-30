@@ -17,11 +17,11 @@ tests-out
 
 # Ignore shell scripts in the repository root;
 # they are typically ad-hoc.
-*.sh
+/*.sh
 
 # Also, go programs in the repo root are typically
 # ad-hoc
-*.go
+/*.go
 
 .vscode
 
