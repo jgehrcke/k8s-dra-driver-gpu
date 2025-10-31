@@ -392,14 +392,15 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 				}
 			case MigDeviceType:
 				devinfo := s.allocatable[result.Device]
-				migdev, err := s.nvdevlib.createMigDevice(devinfo.Mig.Parent, devinfo.Mig.Profile, &devinfo.Mig.MemorySlices)
+				migdev, err := s.nvdevlib.createMigDevice(devinfo.Mig)
 				if err != nil {
 					return nil, fmt.Errorf("error creating MIG device: %w", err)
 				}
 
 				preparedDevice.Mig = &PreparedMigDevice{
 					// Abstract, allocatable device
-					Requested: devinfo.Mig,
+					// encodes a specific mig/profile/placement combination.
+					RequestedCanonicalName: devinfo.Mig.CanonicalName(),
 					// Specifc, created device
 					Created: migdev,
 					// DRA device object
@@ -425,7 +426,8 @@ func (s *DeviceState) unprepareDevices(ctx context.Context, claimUID string, dev
 			case GpuDeviceType:
 				klog.V(4).Infof("unprepare noop for GPU %s", device.Gpu.Info.String())
 			case MigDeviceType:
-				err := s.nvdevlib.deleteMigDevice(device.Mig.Created)
+				mig := device.Mig.Created
+				err := s.nvdevlib.deleteMigDevice(mig.ParentUUID, mig.GIID, mig.CIID)
 				if err != nil {
 					return fmt.Errorf("error deleting MIG device %s: %w", device.Mig.Created.CanonicalName(), err)
 				}
