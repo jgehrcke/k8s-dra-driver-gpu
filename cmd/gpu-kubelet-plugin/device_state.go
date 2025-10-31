@@ -464,15 +464,18 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 				}
 			}
 
+			klog.V(6).Infof("Prepared device for claim '%s': %s", ResourceClaimToString(claim), device.DeviceName)
 			preparedDeviceGroup.Devices = append(preparedDeviceGroup.Devices, preparedDevice)
 		}
 
 		preparedDevices = append(preparedDevices, &preparedDeviceGroup)
 	}
+
 	return preparedDevices, nil
 }
 
 func (s *DeviceState) unprepareDevices(ctx context.Context, claimUID string, devices PreparedDevices) error {
+	klog.V(6).Infof("Unpreparing claim '%s': got previously prepared devices from checkpoint: %v", claimUID, devices.GetDeviceNames())
 	for _, group := range devices {
 		// Unconfigure the vfio-pci devices.
 		if featuregates.Enabled(featuregates.PassthroughSupport) {
@@ -487,9 +490,10 @@ func (s *DeviceState) unprepareDevices(ctx context.Context, claimUID string, dev
 		for _, device := range group.Devices {
 			switch device.Type() {
 			case GpuDeviceType:
-				klog.V(4).Infof("unprepare noop for GPU %s", device.Gpu.Info.String())
+				klog.V(4).Infof("unprepare: regular GPU: noop (GPU %s)", device.Gpu.Info.String())
 			case MigDeviceType:
 				mig := device.Mig.Created
+				klog.V(4).Infof("unprepare: destroy MIG device '%s'", mig.UUID)
 				err := s.nvdevlib.deleteMigDevice(mig.ParentUUID, mig.GIID, mig.CIID)
 				if err != nil {
 					return fmt.Errorf("error deleting MIG device %s: %w", device.Mig.Created.CanonicalName(), err)
