@@ -803,6 +803,32 @@ func (l deviceLib) deleteMigDevice(mig *MigDeviceInfo) error {
 	if ret != nvml.SUCCESS {
 		return fmt.Errorf("error destroying GPU Instance: %v", ret)
 	}
+
+	// TODO: if this was the last incarnated MIG device on this full GPU:
+	// disable MIG mode.
+
+	gpu := mig.parent
+	migs, err := l.getMigDevices(gpu)
+	if err != nil {
+		return fmt.Errorf("error getting MIG devices for %s: %w", gpu.String(), err)
+	}
+
+	if len(migs) > 0 {
+		klog.V(6).Infof("Leaving MIG mode enabled for device %s (currently present MIG devices: %d)", gpu.String(), len(migs))
+		return nil
+	}
+
+	klog.V(4).Infof("Attempting to disable MIG mode for device %s", gpu.String())
+	ret, activationStatus := parent.SetMigMode(nvml.DEVICE_MIG_DISABLE)
+	if ret != nvml.SUCCESS {
+		// activationStatus would return the appropriate error code upon unsuccessful activation
+		klog.Warningf("SetMigMode activationStatus (device %s): %s", gpu.String(), activationStatus)
+		// We could also log this as an error and proceed, and hope for the
+		// state machine to clean this up in the future. Probably not a good
+		// idea.
+		return fmt.Errorf("error disabling MIG mode for device %s: %v", gpu.String(), ret)
+	}
+	klog.V(1).Infof("MIG mode now disabled for device %s", gpu.String())
 	return nil
 }
 
