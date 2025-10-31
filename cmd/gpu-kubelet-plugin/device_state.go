@@ -415,6 +415,21 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 
 func (s *DeviceState) unprepareDevices(ctx context.Context, claimUID string, devices PreparedDevices) error {
 	for _, group := range devices {
+
+		// Dynamically delete MIG devices, if applicable.
+		// Do this before or after MPS/TimeSlicing primitive teardown?
+		for _, device := range group.Devices {
+			switch device.Type() {
+			case GpuDeviceType:
+				klog.V(4).Infof("unprepare noop for GPU %s", device.Gpu.Info.String())
+			case MigDeviceType:
+				err := s.nvdevlib.deleteMigDevice(device.Mig.Created)
+				if err != nil {
+					return fmt.Errorf("error deleting MIG device %s: %w", device.Mig.Created.CanonicalName(), err)
+				}
+			}
+		}
+
 		// Stop any MPS control daemons started for each group of prepared devices.
 		if featuregates.Enabled(featuregates.MPSSupport) {
 			mpsControlDaemon := s.mpsManager.NewMpsControlDaemon(claimUID, group)
