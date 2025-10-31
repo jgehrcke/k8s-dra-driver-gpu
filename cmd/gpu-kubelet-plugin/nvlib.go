@@ -668,7 +668,11 @@ func (l deviceLib) setComputeMode(uuids []string, mode string) error {
 	return nil
 }
 
-func (l deviceLib) createMigDevice(gpu *GpuInfo, profile nvdev.MigProfile, placement *nvml.GpuInstancePlacement) (*MigDeviceInfo, error) {
+func (l deviceLib) createMigDevice(migpp *MigInfo) (*MigDeviceInfo, error) {
+	gpu := migpp.Parent
+	profile := migpp.Profile
+	placement := &migpp.MemorySlices
+
 	if err := l.Init(); err != nil {
 		return nil, err
 	}
@@ -717,12 +721,12 @@ func (l deviceLib) createMigDevice(gpu *GpuInfo, profile nvdev.MigProfile, place
 
 	gi, ret := device.CreateGpuInstanceWithPlacement(&giProfileInfo, placement)
 	if ret != nvml.SUCCESS {
-		return nil, fmt.Errorf("error creating GPU instance for '%v': %v", profile, ret)
+		return nil, fmt.Errorf("error creating GPU instance for '%s': %v", migpp.CanonicalName(), ret)
 	}
 
 	giInfo, ret := gi.GetInfo()
 	if ret != nvml.SUCCESS {
-		return nil, fmt.Errorf("error getting GPU instance info for '%v': %v", profile, ret)
+		return nil, fmt.Errorf("error getting GPU instance info for '%s': %v", migpp.CanonicalName(),, ret)
 	}
 
 	ciProfileInfo, ret := gi.GetComputeInstanceProfileInfo(profileInfo.CIProfileID, profileInfo.CIEngProfileID)
@@ -774,6 +778,7 @@ func (l deviceLib) createMigDevice(gpu *GpuInfo, profile nvdev.MigProfile, place
 		ciInfo:  &ciInfo,
 	}
 
+	klog.V(6).Infof("MIG device created on %s: %s", gpu.String(), migDevInfo.CanonicalName())
 	return migDevInfo, nil
 }
 
