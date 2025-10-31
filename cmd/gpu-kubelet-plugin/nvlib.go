@@ -41,6 +41,7 @@ type deviceLib struct {
 	driverLibraryPath string
 	devRoot           string
 	nvidiaSMIPath     string
+	gpuInfosByUUID    map[string]*GpuInfo
 }
 
 func newDeviceLib(driverRoot root) (*deviceLib, error) {
@@ -67,6 +68,7 @@ func newDeviceLib(driverRoot root) (*deviceLib, error) {
 		devRoot:           driverRoot.getDevRoot(),
 		nvidiaSMIPath:     nvidiaSMIPath,
 		nvpci:             nvpci,
+		gpuInfosByUUID:    make(map[string]*GpuInfo),
 	}
 	return &d, nil
 }
@@ -177,6 +179,9 @@ func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (AllocatableDevic
 		if err != nil {
 			return fmt.Errorf("error getting info for GPU %v: %w", i, err)
 		}
+
+		// Store gpuInfo object for later re-use (lookup by UUID)
+		l.gpuInfosByUUID[gpuInfo.UUID] = gpuInfo
 
 		// For this full device, inspect all MIG profiles and their possible
 		// placements. This enriches `gpuInfo` with additional properties (such
@@ -581,13 +586,13 @@ func (l deviceLib) getMigDevices(gpuInfo *GpuInfo) (map[string]*MigDeviceInfo, e
 
 		infos[uuid] = &MigDeviceInfo{
 			UUID:          uuid,
-			profile:       migProfile.String(),
+			Profile:       migProfile.String(),
 			parent:        gpuInfo,
 			placement:     &placement,
 			giProfileInfo: giProfileInfo,
-			giInfo:        &giInfo,
+			gIInfo:        &giInfo,
 			ciProfileInfo: ciProfileInfo,
-			ciInfo:        &ciInfo,
+			cIInfo:        &ciInfo,
 			pcieBusID:     gpuInfo.pcieBusID,
 			pcieRootAttr:  gpuInfo.pcieRootAttr,
 		}
@@ -726,7 +731,7 @@ func (l deviceLib) createMigDevice(migpp *MigInfo) (*MigDeviceInfo, error) {
 
 	giInfo, ret := gi.GetInfo()
 	if ret != nvml.SUCCESS {
-		return nil, fmt.Errorf("error getting GPU instance info for '%s': %v", migpp.CanonicalName(),, ret)
+		return nil, fmt.Errorf("error getting GPU instance info for '%s': %v", migpp.CanonicalName(), ret)
 	}
 
 	ciProfileInfo, ret := gi.GetComputeInstanceProfileInfo(profileInfo.CIProfileID, profileInfo.CIEngProfileID)
@@ -771,32 +776,42 @@ func (l deviceLib) createMigDevice(migpp *MigInfo) (*MigDeviceInfo, error) {
 	}
 
 	migDevInfo := &MigDeviceInfo{
-		UUID:    uuid,
-		parent:  gpu,
-		profile: profile.String(),
-		giInfo:  &giInfo,
-		ciInfo:  &ciInfo,
+		UUID:       uuid,
+		CIID:       int(ciInfo.Id),
+		GIID:       int(giInfo.Id),
+		ParentUUID: gpu.UUID,
+		parent:     gpu,
+		Profile:    profile.String(),
+		gIInfo:     &giInfo,
+		cIInfo:     &ciInfo,
+		placement: &MigDevicePlacement{
+			GpuInstancePlacement: *placement,
+		},
 	}
 
-	klog.V(6).Infof("MIG device created on %s: %s", gpu.String(), migDevInfo.CanonicalName())
+	klog.V(6).Infof("MIG device created on %s: %s (%s)", gpu.String(), migDevInfo.CanonicalName(), migDevInfo.UUID)
 	return migDevInfo, nil
 }
 
-func (l deviceLib) deleteMigDevice(mig *MigDeviceInfo) error {
+func (l deviceLib) deleteMigDevice(parentUUID string, giId int, ciId int) error {
+	klog.V(6).Infof("delete MIG device %s/%d/%d", parentUUID, giId, ciId)
+
 	if err := l.Init(); err != nil {
 		return err
 	}
 	defer l.alwaysShutdown()
 
-	parent, ret := l.nvmllib.DeviceGetHandleByUUID(mig.parent.UUID)
+	parentNvmlDev, ret := l.nvmllib.DeviceGetHandleByUUID(parentUUID)
 	if ret != nvml.SUCCESS {
-		return fmt.Errorf("error getting device from UUID '%v': %v", mig.parent.UUID, ret)
+		return fmt.Errorf("error getting device from UUID '%v': %v", parentUUID, ret)
 	}
-	gi, ret := parent.GetGpuInstanceById(int(mig.giInfo.Id))
+
+	gi, ret := parentNvmlDev.GetGpuInstanceById(giId)
 	if ret != nvml.SUCCESS {
 		return fmt.Errorf("error getting GPU instance ID for MIG device: %v", ret)
 	}
-	ci, ret := gi.GetComputeInstanceById(int(mig.ciInfo.Id))
+
+	ci, ret := gi.GetComputeInstanceById(ciId)
 	if ret != nvml.SUCCESS {
 		return fmt.Errorf("error getting Compute instance ID for MIG device: %v", ret)
 	}
@@ -809,10 +824,13 @@ func (l deviceLib) deleteMigDevice(mig *MigDeviceInfo) error {
 		return fmt.Errorf("error destroying GPU Instance: %v", ret)
 	}
 
-	// TODO: if this was the last incarnated MIG device on this full GPU:
-	// disable MIG mode.
+	// Expect the parent GPU to be represented in in `l.gpuInfosByUUID` (it is, after )
+	gpu, ok := l.gpuInfosByUUID[parentUUID]
+	if !ok {
+		// TODO: this is a programming error -- panic instead
+		return fmt.Errorf("parentUUID not in gpuInfosByUUID: %s", parentUUID)
+	}
 
-	gpu := mig.parent
 	migs, err := l.getMigDevices(gpu)
 	if err != nil {
 		return fmt.Errorf("error getting MIG devices for %s: %w", gpu.String(), err)
@@ -823,8 +841,8 @@ func (l deviceLib) deleteMigDevice(mig *MigDeviceInfo) error {
 		return nil
 	}
 
-	klog.V(4).Infof("Attempting to disable MIG mode for device %s", gpu.String())
-	ret, activationStatus := parent.SetMigMode(nvml.DEVICE_MIG_DISABLE)
+	klog.V(6).Infof("Attempting to disable MIG mode for device %s", gpu.String())
+	ret, activationStatus := parentNvmlDev.SetMigMode(nvml.DEVICE_MIG_DISABLE)
 	if ret != nvml.SUCCESS {
 		// activationStatus would return the appropriate error code upon unsuccessful activation
 		klog.Warningf("SetMigMode activationStatus (device %s): %s", gpu.String(), activationStatus)

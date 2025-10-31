@@ -38,23 +38,16 @@ type PreparedGpu struct {
 
 type PreparedMigDevice struct {
 	// Abstract, allocatable device
-<<<<<<< HEAD
-	Requested *MigInfo
-	// Specifc, created device
-	Created *MigDeviceInfo        `json:"info"`
+	//Requested *MigInfo `json:"requested"`
+	RequestedCanonicalName DeviceName `json:"requestedCanonicalName"`
+	// Specifc, created device. Detail needed for deletion and book-keeping.
+	Created *MigDeviceInfo        `json:"created"`
 	Device  *kubeletplugin.Device `json:"device"`
 }
 
 type PreparedVfioDevice struct {
 	Info   *VfioDeviceInfo       `json:"info"`
 	Device *kubeletplugin.Device `json:"device"`
-=======
-	//Requested *MigInfo `json:"requested"`
-	RequestedCanonicalName DeviceName `json:"requestedCanonicalName"`
-	// Specifc, created device. Detail needed for deletion and book-keeping.
-	Created *MigDeviceInfo        `json:"created"`
-	Device  *kubeletplugin.Device `json:"device"`
->>>>>>> 2cf167aa (gpu plugin: prepared: add GetDeviceNames())
 }
 
 type PreparedDeviceGroup struct {
