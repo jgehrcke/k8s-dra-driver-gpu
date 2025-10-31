@@ -108,9 +108,9 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 	}
 
 	// Can only do that for devices that exist (not for not-yet-incarnated MIG devices).
-	if err := cdi.CreateStandardDeviceSpecFile(allocatable); err != nil {
-		return nil, fmt.Errorf("unable to create base CDI spec file: %v", err)
-	}
+	// if err := cdi.CreateStandardDeviceSpecFile(allocatable); err != nil {
+	// 	return nil, fmt.Errorf("unable to create base CDI spec file: %v", err)
+	// }
 
 	checkpointManager, err := checkpointmanager.NewCheckpointManager(config.DriverPluginPath())
 	if err != nil {
@@ -301,6 +301,8 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 		return nil, fmt.Errorf("claim not yet allocated")
 	}
 
+	klog.V(7).Infof("Preparing devices for claim %s", ResourceClaimToString(claim))
+
 	// Retrieve the full set of device configs for the driver.
 	configs, err := GetOpaqueDeviceConfigs(
 		configapi.StrictDecoder,
@@ -418,10 +420,10 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 
 		for _, result := range results {
 			cdiDevices := []string{}
-			if d := s.cdi.GetStandardDevice(s.allocatable[result.Device]); d != "" {
-				cdiDevices = append(cdiDevices, d)
-			}
-			if d := s.cdi.GetClaimDevice(string(claim.UID), s.allocatable[result.Device], preparedDeviceGroupConfigState[c].containerEdits); d != "" {
+			// The claim-based CDI spec is generated soon; Expect it to be the
+			// complete CDI spec gererated freshly, with all devices specified
+			// in that spec -- a CDI spec of kind `k8s.gpu.nvidia.com/claim`
+			if d := s.cdi.GetClaimDeviceName(string(claim.UID), s.allocatable[result.Device], preparedDeviceGroupConfigState[c].containerEdits); d != "" {
 				cdiDevices = append(cdiDevices, d)
 			}
 
