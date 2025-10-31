@@ -110,6 +110,10 @@ func (d *GpuInfo) CanonicalName() string {
 	return fmt.Sprintf("gpu-%d", d.minor)
 }
 
+func (d *GpuInfo) String() string {
+	return fmt.Sprintf("%s-%s", d.CanonicalName(), d.UUID)
+}
+
 func (d *MigDeviceInfo) CanonicalName() string {
 	return fmt.Sprintf("gpu-%d-mig-%d-%d-%d", d.parent.minor, d.giInfo.ProfileId, d.placement.Start, d.placement.Size)
 }
