@@ -31,10 +31,13 @@ import (
 	"k8s.io/utils/ptr"
 )
 
-
+// Naming convention: this name is used for announcement (device name announced
+// in a DRA ResourceSlice), and it's also played back to us upon a request,
+// which is when we look it up in the AllocatableDevices map. Conceptually, this
+// is hence the same as kubeletplugin.Device.DeviceName (documented with
+// 'DeviceName identifies the device inside that pool')
 type DeviceName = string
 
-// What is the relevance of this string?
 type AllocatableDevices map[DeviceName]*AllocatableDevice
 
 //type AllocatableDevices []AllocatableDevice
@@ -57,15 +60,8 @@ type MigInfo struct {
 	MemorySlices nvml.GpuInstancePlacement
 }
 
-// Naming convention: this name is used for announcement (device name announced
-// in a DRA ResourceSlice), and it's also played back to us upon a request,
-// which is when we look it up in the AllocatableDevices map.
 func (i *MigInfo) CanonicalName() DeviceName {
-	placementSfx := placementString(&i.MemorySlices)
-	// Remove the dot in e.g. `4g.95gb` -- device names must not contain dots,
-	// and this is used in a device name.
-	profname := strings.ReplaceAll(i.Profile.String(), ".", "")
-	return toRFC1123Compliant(fmt.Sprintf("gpu-%d-mig-%s-%s", i.Parent.index, profname, placementSfx))
+	return migppCanonicalName(i.Parent, i.Profile.String(), &i.MemorySlices)
 }
 
 // Note: this should be the same regardless of the placement.
@@ -355,7 +351,18 @@ func placementString(p *nvml.GpuInstancePlacement) string {
 	if p.Size > 1 {
 		sfx = fmt.Sprintf("%s-%d", sfx, p.Start+p.Size-1)
 	}
-	return toRFC1123Compliant(fmt.Sprintf("placement-%s", sfx))
+	// first, I had `placement-` in there -- but that may be too bulky
+	return toRFC1123Compliant(fmt.Sprintf("%s", sfx))
+}
+
+// `profile string` must be what's returned by profile.String(), the
+// classical/canonical profile string notation, with a dot.
+func migppCanonicalName(parent *GpuInfo, profile string, p *nvml.GpuInstancePlacement) string {
+	placementSuffix := placementString(p)
+	// Remove the dot in e.g. `4g.95gb` -- device names must not contain dots,
+	// and this is used in a device name.
+	profname := strings.ReplaceAll(profile, ".", "")
+	return toRFC1123Compliant(fmt.Sprintf("gpu-%d-mig-%s-%s", parent.minor, profname, placementSuffix))
 }
 
 // Return canonical name for memory slice (placement) `i` (a zero-based index).
