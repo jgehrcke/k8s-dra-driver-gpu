@@ -245,7 +245,7 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 		spec.WithDeviceSpecs(deviceSpecs),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to creat CDI spec: %w", err)
+		return fmt.Errorf("failed to create CDI spec: %w", err)
 	}
 
 	// Transform the spec to make it aware that it is running inside a container.
