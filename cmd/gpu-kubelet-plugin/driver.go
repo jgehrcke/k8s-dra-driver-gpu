@@ -148,7 +148,14 @@ func (d *driver) Shutdown() error {
 }
 
 func (d *driver) PrepareResourceClaims(ctx context.Context, claims []*resourceapi.ResourceClaim) (map[types.UID]kubeletplugin.PrepareResult, error) {
-	klog.V(6).Infof("PrepareResourceClaims called with %d claim(s)", len(claims))
+
+	if len(claims) == 0 {
+		// That's probably the health check, log that on higher verbosity level
+		klog.V(7).Infof("PrepareResourceClaims called with %d claim(s)", len(claims))
+	} else {
+		klog.V(6).Infof("PrepareResourceClaims called with %d claim(s)", len(claims))
+	}
+
 	results := make(map[types.UID]kubeletplugin.PrepareResult)
 
 	for _, claim := range claims {
