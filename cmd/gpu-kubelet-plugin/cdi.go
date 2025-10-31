@@ -31,8 +31,6 @@ import (
 	cdiapi "tags.cncf.io/container-device-interface/pkg/cdi"
 	cdiparser "tags.cncf.io/container-device-interface/pkg/parser"
 	cdispec "tags.cncf.io/container-device-interface/specs-go"
-
-	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
 )
 
 const (
@@ -162,59 +160,24 @@ func (cdi *CDIHandler) writeSpec(spec spec.Interface, specName string) error {
 
 	// Write the spec out to disk.
 	return cdi.cache.WriteSpec(spec.Raw(), specName)
-
 }
 
-func (cdi *CDIHandler) CreateStandardDeviceSpecFile(allocatable AllocatableDevices) error {
-	if err := cdi.createStandardNvidiaDeviceSpecFile(allocatable); err != nil {
-		klog.Errorf("failed to create standard nvidia device spec file: %v", err)
-		return err
-	}
+// func (cdi *CDIHandler) CreateStandardDeviceSpecFile(allocatable AllocatableDevices) error {
+// 	if err := cdi.createStandardNvidiaDeviceSpecFile(allocatable); err != nil {
+// 		klog.Errorf("failed to create standard nvidia device spec file: %v", err)
+// 		return err
+// 	}
 
-	if featuregates.Enabled(featuregates.PassthroughSupport) {
-		if err := cdi.createStandardVfioDeviceSpecFile(allocatable); err != nil {
-			klog.Errorf("failed to create standard vfio device spec file: %v", err)
-			return err
-		}
-	}
-	return nil
-}
+// 	if featuregates.Enabled(featuregates.PassthroughSupport) {
+// 		if err := cdi.createStandardVfioDeviceSpecFile(allocatable); err != nil {
+// 			klog.Errorf("failed to create standard vfio device spec file: %v", err)
+// 			return err
+// 		}
+// 	}
+// 	return nil
+// }
 
-func (cdi *CDIHandler) createStandardVfioDeviceSpecFile(allocatable AllocatableDevices) error {
-	commonEdits := GetVfioCommonCDIContainerEdits()
-	var deviceSpecs []cdispec.Device
-	for _, device := range allocatable {
-		if device.Type() != VfioDeviceType {
-			continue
-		}
-		edits := GetVfioCDIContainerEdits(device.Vfio)
-		dspec := cdispec.Device{
-			Name:           device.CanonicalName(),
-			ContainerEdits: *edits.ContainerEdits,
-		}
-		deviceSpecs = append(deviceSpecs, dspec)
-	}
-
-	if len(deviceSpecs) == 0 {
-		return nil
-	}
-
-	spec, err := spec.New(
-		spec.WithVendor(cdiVendor),
-		spec.WithClass(cdiDeviceClass),
-		spec.WithDeviceSpecs(deviceSpecs),
-		spec.WithEdits(*commonEdits.ContainerEdits),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to creat CDI spec: %w", err)
-	}
-
-	specName := cdiapi.GenerateTransientSpecName(cdiVendor, cdiDeviceClass, cdiVfioSpecIdentifier)
-	klog.Infof("Writing vfio spec for %s to %s", specName, cdi.cdiRoot)
-	return cdi.writeSpec(spec, specName)
-}
-
-func (cdi *CDIHandler) createStandardNvidiaDeviceSpecFile(allocatable AllocatableDevices) error {
+func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices PreparedDevices) error {
 	// Initialize NVML in order to get the device edits.
 	if r := cdi.nvml.Init(); r != nvml.SUCCESS {
 		return fmt.Errorf("failed to initialize NVML: %v", r)
@@ -225,7 +188,9 @@ func (cdi *CDIHandler) createStandardNvidiaDeviceSpecFile(allocatable Allocatabl
 		}
 	}()
 
-	// Generate the set of common edits.
+	// Generate those parts of the container spec that are note device-specific.
+	// Inject things like driver library mounts and meta devices.
+
 	commonEdits, err := cdi.nvcdiDevice.GetCommonEdits()
 	if err != nil {
 		return fmt.Errorf("failed to get common CDI spec edits: %w", err)
@@ -238,31 +203,85 @@ func (cdi *CDIHandler) createStandardNvidiaDeviceSpecFile(allocatable Allocatabl
 		commonEdits.Env,
 		"NVIDIA_VISIBLE_DEVICES=void")
 
-	// Generate device specs for all full GPUs.
 	var deviceSpecs []cdispec.Device
-	for _, device := range allocatable {
-		if device.Type() == VfioDeviceType {
-			// This is done elsewhere.
-			continue
-		}
 
-		if device.Mig != nil {
-			// For MIG devices, create spec later on the fly upon preparation.
-			continue
-		}
+	for _, group := range preparedDevices {
+		for _, dev := range group.Devices {
+			duuid := ""
 
-		dspecs, err := cdi.nvcdiDevice.GetDeviceSpecsByID(device.UUID())
-		if err != nil {
-			return fmt.Errorf("unable to get device spec for %s: %w", device.CanonicalName(), err)
+			// Construct claim-specific CDI device name in accordance with the
+			// naming convention is encoded in GetClaimDeviceName() below.
+			dname := fmt.Sprintf("%s-%s", claimUID, dev.CanonicalName())
+
+			var dspec cdispec.Device
+			if dev.Type() == VfioDeviceType {
+				// Note(JP): overwrite commonEdits -- this wasn't used in the
+				// original vfio dev PR, but shouldn't we also use
+				// `cdi.nvcdiDevice.GetCommonEdits()` here? Also: assume that
+				// all devices in `preparedDevices` are vfio devices.
+				commonEdits = GetVfioCommonCDIContainerEdits()
+				dspec = cdispec.Device{
+					Name:           dname,
+					ContainerEdits: *GetVfioCDIContainerEdits(dev.Vfio.Info).ContainerEdits,
+				}
+
+			} else if dev.Mig != nil {
+				duuid = dev.Mig.Created.UUID
+				dspecs, err := cdi.nvcdiDevice.GetDeviceSpecsByID(duuid)
+				if err != nil {
+					return fmt.Errorf("unable to get device spec for %s: %w", dname, err)
+				}
+				dspec = dspecs[0]
+			} else {
+				duuid = dev.Gpu.Info.UUID
+				dspecs, err := cdi.nvcdiDevice.GetDeviceSpecsByID(duuid)
+				if err != nil {
+					return fmt.Errorf("unable to get device spec for %s: %w", dname, err)
+				}
+				dspec = dspecs[0]
+			}
+
+			// For a just-created MIG device I see this emit a msg on stderr:
+			//
+			// ERROR: migGetDevFileInfo 212 result=11ERROR: init 310
+			// result=11ERROR: migGetDevFileInfo 212 result=11ERROR: init 310
+			// result=11
+			//
+			// Evan said that "Seems like nvsandboxutils " "There is a feature
+			// flag in the CDI API to disable it, but you may need a code change
+			// in the driver ..." Probably triggered here:
+			// https://github.com/NVIDIA/nvidia-container-toolkit/blob/e03ac3644d63ec30849dffebd0170811e4903e78/internal/platform-support/dgpu/nvsandboxutils.go#L67
+			//
+
+			// Note(JP): for a regular GPU, this canonical name is for example
+			// `gpu-0`, with the numerical suffix as of the time of writing
+			// reflecting the device minor. NVMLs' DeviceSetMigMode() is
+			// documented with 'This API may unbind or reset the device to
+			// activate the requested mode. Thus, the attributes associated with
+			// the device, such as minor number, might change. The caller of
+			// this API is expected to query such attributes again.' -- if the
+			// minor is indeed not necessarily stable, there may be problems
+			// associating this spec _long-term_ with that name. Maye always
+			// dynamically generate spec during prepare().
+			dspec.Name = dname
+			deviceSpecs = append(deviceSpecs, dspec)
+			klog.V(6).Infof("dspec for dev %s: len(dspec.ContainerEdits.DeviceNodes): %d", dname, len(dspec.ContainerEdits.DeviceNodes))
+
+			// If there edits passed as part of the device config state (set on
+			// the group), add them to the spec of each device in that group.
+			if group.ConfigState.containerEdits != nil {
+				deviceSpec := cdispec.Device{
+					Name:           fmt.Sprintf("%s-%s", claimUID, dname),
+					ContainerEdits: *group.ConfigState.containerEdits.ContainerEdits,
+				}
+				deviceSpecs = append(deviceSpecs, deviceSpec)
+			}
 		}
-		dspecs[0].Name = device.CanonicalName()
-		deviceSpecs = append(deviceSpecs, dspecs[0])
 	}
 
-	// Generate base spec from commonEdits and deviceEdits.
 	spec, err := spec.New(
 		spec.WithVendor(cdiVendor),
-		spec.WithClass(cdiDeviceClass),
+		spec.WithClass(cdiClaimClass),
 		spec.WithDeviceSpecs(deviceSpecs),
 		spec.WithEdits(*commonEdits.ContainerEdits),
 	)
@@ -271,63 +290,20 @@ func (cdi *CDIHandler) createStandardNvidiaDeviceSpecFile(allocatable Allocatabl
 	}
 
 	specName := cdiapi.GenerateTransientSpecName(cdiVendor, cdiDeviceClass, cdiBaseSpecIdentifier)
-	klog.Infof("Writing spec for %s to %s", specName, cdi.cdiRoot)
-	return cdi.writeSpec(spec, specName)
-}
-
-func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices PreparedDevices) error {
-	// Generate claim specific specs for each device.
-	var deviceSpecs []cdispec.Device
-	for _, group := range preparedDevices {
-		// If there are no edits passed back as part of the device config state, skip it
-		if group.ConfigState.containerEdits == nil {
-			continue
-		}
-
-		// Apply any edits passed back as part of the device config state to all devices
-		for _, device := range group.Devices {
-			deviceSpec := cdispec.Device{
-				Name:           fmt.Sprintf("%s-%s", claimUID, device.CanonicalName()),
-				ContainerEdits: *group.ConfigState.containerEdits.ContainerEdits,
-			}
-
-			deviceSpecs = append(deviceSpecs, deviceSpec)
-		}
-	}
-
-	// If there are no claim specific deviceSpecs, just return without creating the spec file
-	if len(deviceSpecs) == 0 {
-		return nil
-	}
-
-	// Generate the claim specific device spec for this driver.
-	spec, err := spec.New(
-		spec.WithVendor(cdiVendor),
-		spec.WithClass(cdiClaimClass),
-		spec.WithDeviceSpecs(deviceSpecs),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create CDI spec: %w", err)
-	}
-
-	// Write the spec out to disk.
-	specName := cdiapi.GenerateTransientSpecName(cdiVendor, cdiClaimClass, claimUID)
-	klog.Infof("Writing claim spec for %s to %s", specName, cdi.cdiRoot)
+	klog.V(6).Infof("Writing CDI spec '%s' for claim '%s'", specName, claimUID)
 	return cdi.writeSpec(spec, specName)
 }
 
 func (cdi *CDIHandler) DeleteClaimSpecFile(claimUID string) error {
 	specName := cdiapi.GenerateTransientSpecName(cdiVendor, cdiClaimClass, claimUID)
+	klog.V(6).Infof("Delete CDI spec file: '%s', claim '%s'", specName, claimUID)
 	return cdi.cache.RemoveSpec(specName)
 }
 
-func (cdi *CDIHandler) GetStandardDevice(device *AllocatableDevice) string {
-	return cdiparser.QualifiedName(cdiVendor, cdiDeviceClass, device.CanonicalName())
-}
-
-func (cdi *CDIHandler) GetClaimDevice(claimUID string, device *AllocatableDevice, containerEdits *cdiapi.ContainerEdits) string {
-	if containerEdits == nil {
-		return ""
-	}
+// All devices to be injected into a container are defined in a single,
+// transient CDI spec. This function returns the fully qualified identifier for
+// a device defined in that spec. Example:
+// k8s.gpu.nvidia.com/claim=dab5ab50-d59a-42a6-af16-cfd4628c0f7a-gpu-0
+func (cdi *CDIHandler) GetClaimDeviceName(claimUID string, device *AllocatableDevice, containerEdits *cdiapi.ContainerEdits) string {
 	return cdiparser.QualifiedName(cdiVendor, cdiClaimClass, fmt.Sprintf("%s-%s", claimUID, device.CanonicalName()))
 }
