@@ -95,6 +95,8 @@ func (d *GpuInfo) CanonicalName() string {
 	return fmt.Sprintf("gpu-%d", d.minor)
 }
 
+// String() contains both the GPU index/minor for easy recognizability, but also
+// the UUID for precision. It is intended for usage in log messages.
 func (d *GpuInfo) String() string {
 	return fmt.Sprintf("%s-%s", d.CanonicalName(), d.UUID)
 }
