@@ -307,7 +307,7 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 		spec.WithDeviceSpecs(deviceSpecs),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to creat CDI spec: %w", err)
+		return fmt.Errorf("failed to create CDI spec: %w", err)
 	}
 
 	// Write the spec out to disk.
