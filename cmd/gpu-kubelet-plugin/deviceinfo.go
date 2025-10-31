@@ -66,14 +66,20 @@ type PartCapacityMap map[resourceapi.QualifiedName]resourceapi.DeviceCapacity
 
 type MigDeviceInfo struct {
 	UUID    string `json:"uuid"`
-	profile string
+	Profile string `json:"profile"`
 
+	// Selectively serialize details to checkpoint JSON file, needed for
+	// controlled deletion.
+	ParentUUID string `json:"parentUUID"`
+	CIID       int    `json:"ciId"`
+	GIID       int    `json:"giId"`
+
+	gIInfo        *nvml.GpuInstanceInfo
+	cIInfo        *nvml.ComputeInstanceInfo
 	parent        *GpuInfo
 	placement     *MigDevicePlacement
 	giProfileInfo *nvml.GpuInstanceProfileInfo
-	giInfo        *nvml.GpuInstanceInfo
 	ciProfileInfo *nvml.ComputeInstanceProfileInfo
-	ciInfo        *nvml.ComputeInstanceInfo
 	pcieBusID     string
 	pcieRootAttr  *deviceattribute.DeviceAttribute
 }
@@ -91,7 +97,7 @@ func (p MigProfileInfo) String() string {
 	return p.profile.String()
 }
 
-func (d *GpuInfo) CanonicalName() string {
+func (d *GpuInfo) CanonicalName() DeviceName {
 	return fmt.Sprintf("gpu-%d", d.minor)
 }
 
@@ -102,7 +108,7 @@ func (d *GpuInfo) String() string {
 }
 
 func (d *MigDeviceInfo) CanonicalName() string {
-	return fmt.Sprintf("gpu-%d-mig-%d-%d-%d", d.parent.minor, d.giInfo.ProfileId, d.placement.Start, d.placement.Size)
+	return migppCanonicalName(d.parent, d.Profile, &d.placement.GpuInstancePlacement)
 }
 
 func (d *GpuInfo) PartDevAttributes() map[resourceapi.QualifiedName]resourceapi.DeviceAttribute {
@@ -223,7 +229,7 @@ func (d *MigDeviceInfo) GetDevice() resourceapi.Device {
 				StringValue: &d.parent.UUID,
 			},
 			"profile": {
-				StringValue: &d.profile,
+				StringValue: &d.Profile,
 			},
 			"productName": {
 				StringValue: &d.parent.productName,
