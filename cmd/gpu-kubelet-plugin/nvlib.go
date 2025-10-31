@@ -541,6 +541,35 @@ func (l deviceLib) createMigDevice(gpu *GpuInfo, profile nvdev.MigProfile, place
 		return nil, fmt.Errorf("error getting GPU device handle: %v", ret)
 	}
 
+	// This API is more convenient -- why not use it here?
+	ndev, err := l.NewDevice(device)
+	if err != nil {
+		return nil, fmt.Errorf("error instantiating nvml dev: %w", err)
+	}
+
+	// nvml GetMigMode distinguishes between current and pending -- not exposed
+	// in go-nvlib yet. Maybe that distinction is important here.
+	// migModeCurrent, migModePending, err := device.GetMigMode()
+	// https://github.com/NVIDIA/go-nvlib/blame/7d260da4747c220a6972ebc83e4eb7116fc9b89a/pkg/nvlib/device/device.go#L225
+	migEnabled, err := ndev.IsMigEnabled()
+	if err != nil {
+		return nil, fmt.Errorf("error checking if MIG mode enabled for device %s: %w", ndev, err)
+	}
+
+	if !migEnabled {
+		klog.V(6).Infof("Attempting to enable MIG mode for device %s", gpu.String())
+		// If this is newer than A100 and if device unused: enable MIG.
+		ret, activationStatus := device.SetMigMode(nvml.DEVICE_MIG_ENABLE)
+		if ret != nvml.SUCCESS {
+			// activationStatus would return the appropriate error code upon unsuccessful activation
+			klog.Warningf("SetMigMode activationStatus (device %s): %s", gpu.String(), activationStatus)
+			return nil, fmt.Errorf("error enabling MIG mode for device %s: %v", gpu.String(), ret)
+		}
+		klog.V(1).Infof("MIG mode now enabled for device %s", gpu.String())
+	} else {
+		klog.V(6).Infof("MIG mode already enabled for device %s", gpu.String())
+	}
+
 	giProfileInfo, ret := device.GetGpuInstanceProfileInfo(profileInfo.GIProfileID)
 	if ret != nvml.SUCCESS {
 		return nil, fmt.Errorf("error getting GPU instance profile info for '%v': %v", profile, ret)
@@ -572,7 +601,7 @@ func (l deviceLib) createMigDevice(gpu *GpuInfo, profile nvdev.MigProfile, place
 	}
 
 	uuid := ""
-	err := walkMigDevices(device, func(i int, migDevice nvml.Device) error {
+	err = walkMigDevices(device, func(i int, migDevice nvml.Device) error {
 		giID, ret := migDevice.GetGpuInstanceId()
 		if ret != nvml.SUCCESS {
 			return fmt.Errorf("error getting GPU instance ID for MIG device: %v", ret)

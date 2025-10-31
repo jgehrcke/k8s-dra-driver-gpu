@@ -392,7 +392,7 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 				devinfo := s.allocatable[result.Device]
 				migdev, err := s.nvdevlib.createMigDevice(devinfo.Mig.Parent, devinfo.Mig.Profile, &devinfo.Mig.MemorySlices)
 				if err != nil {
-					return nil, fmt.Errorf("error creating MIG decive: %w", err)
+					return nil, fmt.Errorf("error creating MIG device: %w", err)
 				}
 
 				preparedDevice.Mig = &PreparedMigDevice{
