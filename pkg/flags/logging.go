@@ -29,13 +29,13 @@ import (
 )
 
 type LoggingConfig struct {
-	config *logsapi.LoggingConfiguration
+	Config *logsapi.LoggingConfiguration
 }
 
 // NewLoggingConfig creates a new logging configuration.
 func NewLoggingConfig() *LoggingConfig {
 	return &LoggingConfig{
-		config: logsapi.NewLoggingConfiguration(),
+		Config: logsapi.NewLoggingConfiguration(),
 	}
 }
 
@@ -43,7 +43,7 @@ func NewLoggingConfig() *LoggingConfig {
 // line flags and before running any code which emits log entries.
 // It uses the global feature gate singleton.
 func (l *LoggingConfig) Apply() error {
-	return logsapi.ValidateAndApply(l.config, featuregates.FeatureGates)
+	return logsapi.ValidateAndApply(l.Config, featuregates.FeatureGates)
 }
 
 // Flags returns the flags for logging configuration (NOT including feature gates).
@@ -51,7 +51,7 @@ func (l *LoggingConfig) Flags() []cli.Flag {
 	var fs pflag.FlagSet
 
 	// This also registers klog configuration flags (such as -v).
-	logsapi.AddFlags(l.config, &fs)
+	logsapi.AddFlags(l.Config, &fs)
 
 	// Note: We do NOT add the feature-gates flag here anymore.
 	// That's handled by FeatureGateConfig to maintain proper separation of concerns.
