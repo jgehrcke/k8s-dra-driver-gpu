@@ -74,10 +74,16 @@ type MigDeviceInfo struct {
 	CIID       int    `json:"ciId"`
 	GIID       int    `json:"giId"`
 
+	// Is the placement encoded already in CIID and GIID? In any case, for now,
+	// store this in the JSON checkpoint because in CanonicalName() we rely on
+	// this -- and this must work after JSON deserialization. TODO: introduce
+	// cleaner data type carrying precisely (and just) what we want to store
+	// about a created MIG device in the checkpoint JSON.
+	Placement *MigDevicePlacement `json:"placement"`
+
 	gIInfo        *nvml.GpuInstanceInfo
 	cIInfo        *nvml.ComputeInstanceInfo
 	parent        *GpuInfo
-	placement     *MigDevicePlacement
 	giProfileInfo *nvml.GpuInstanceProfileInfo
 	ciProfileInfo *nvml.ComputeInstanceProfileInfo
 	pcieBusID     string
@@ -108,7 +114,7 @@ func (d *GpuInfo) String() string {
 }
 
 func (d *MigDeviceInfo) CanonicalName() string {
-	return migppCanonicalName(d.parent, d.Profile, &d.placement.GpuInstancePlacement)
+	return migppCanonicalName(d.parent, d.Profile, &d.Placement.GpuInstancePlacement)
 }
 
 func (d *GpuInfo) PartDevAttributes() map[resourceapi.QualifiedName]resourceapi.DeviceAttribute {
@@ -268,7 +274,10 @@ func (d *MigDeviceInfo) GetDevice() resourceapi.Device {
 			"memory": {Value: *resource.NewQuantity(int64(d.giProfileInfo.MemorySizeMB*1024*1024), resource.BinarySI)},
 		},
 	}
-	for i := d.placement.Start; i < d.placement.Start+d.placement.Size; i++ {
+	for i := d.Placement.Start; i < d.Placement.Start+d.Placement.Size; i++ {
+		// TODO: review memorySlice (legacy) vs memory-slice -- I believe I
+		// prefer memory-slice because that works for counters. Do we even need
+		// to announce the slices as capacity?
 		capacity := resourceapi.QualifiedName(fmt.Sprintf("memorySlice%d", i))
 		device.Capacity[capacity] = resourceapi.DeviceCapacity{
 			Value: *resource.NewQuantity(1, resource.BinarySI),
