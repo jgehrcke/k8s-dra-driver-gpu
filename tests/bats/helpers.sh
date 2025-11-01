@@ -172,3 +172,28 @@ apply_check_delete_workload_imex_chan_inject() {
   kubectl delete -f demo/specs/imex/channel-injection.yaml
   kubectl wait --for=delete pods imex-channel-injection --timeout=10s
 }
+
+
+# Run cmd in nvidia-mig-manager pod because that one has highest privileges. I
+# use this for example to run `nvcnt gb-nvl-027-compute06 nvidia-smi`
+nvmm() {
+  if [ -z "$1" ]; then
+    echo "Usage: nvcnt <node-name> [command...]"
+    return 1
+  fi
+  local node="$1"
+  shift  # Remove first argument, leaving remaining args in $@
+
+  local pod
+  pod=$(kubectl get pod -n gpu-operator -l app=nvidia-mig-manager \
+    --field-selector spec.nodeName="$node" \
+    --no-headers -o custom-columns=":metadata.name")
+
+  if [ -z "$pod" ]; then
+    echo "No pod found on node $node"
+    return 1
+  fi
+
+  echo "Executing on pod $pod (node: $node)..."
+  kubectl -n gpu-operator exec -it "$pod" -- "$@"
+}
