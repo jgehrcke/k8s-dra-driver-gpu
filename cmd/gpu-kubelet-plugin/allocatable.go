@@ -73,7 +73,8 @@ func (i MigInfo) PartCapacities() PartCapacityMap {
 		"encoders":        intcap(p.EncoderCount),
 		"jpegEngines":     intcap(p.JpegCount),
 		"ofaEngines":      intcap(p.OfaCount),
-		"memory":          intcap(int64(p.MemorySizeMB * 1024 * 1024)), // Encode unit in name? 'bytes'
+		// In the k8s world, we love announcing unit-less memory :-).
+		"memory": intcap(int64(p.MemorySizeMB * 1024 * 1024)),
 	}
 }
 
