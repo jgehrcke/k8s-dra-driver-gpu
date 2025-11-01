@@ -52,7 +52,7 @@ iupgrade_wait() {
     --timeout=1m5s \
     --create-namespace \
     --namespace nvidia-dra-driver-gpu \
-    --set resources.gpus.enabled=false \
+    --set gpuResourcesEnabledOverride=true \
     --set nvidiaDriverRoot="${TEST_NVIDIA_DRIVER_ROOT}" "${ADDITIONAL_INSTALL_ARGS[@]}"
 
   # Valueable output to have in the logs in case things went pearshaped.
