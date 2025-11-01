@@ -43,9 +43,10 @@ func LogStartupConfig(parsedFlags any, loggingConfig *LoggingConfig) {
 	klog.Infof("\nFeature gates: %#v\nVerbosity: %d\nFlags: %s",
 		// Flat boolean map -- no pretty-printing needed.
 		featuregates.ToMap(),
-		loggingConfig.config.Verbosity,
 		// Based on go-spew's Sdump(), with indentation. Type information is
-		// always displayed (cannot be disabled).
+		// always displayed (cannot be disabled). Rely on `parsedFlags` to also
+		// contain the klog log verbosity (we want to log this here in any case,
+		// so that the log output explicitly mentions that).
 		dump.Pretty(parsedFlags),
 	)
 
