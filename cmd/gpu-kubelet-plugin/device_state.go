@@ -59,18 +59,19 @@ type DeviceState struct {
 
 func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 	containerDriverRoot := root(config.flags.containerDriverRoot)
+	devRoot := containerDriverRoot.getDevRoot()
+	klog.Infof("Using devRoot=%v", devRoot)
+
 	nvdevlib, err := newDeviceLib(containerDriverRoot)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create device library: %w", err)
 	}
 
+	klog.Infof("Traverse GPU devices")
 	allocatable, err := nvdevlib.enumerateAllPossibleDevices(config)
 	if err != nil {
 		return nil, fmt.Errorf("error enumerating all possible devices: %w", err)
 	}
-
-	devRoot := containerDriverRoot.getDevRoot()
-	klog.Infof("using devRoot=%v", devRoot)
 
 	hostDriverRoot := config.flags.hostDriverRoot
 
@@ -221,7 +222,29 @@ func (s *DeviceState) Unprepare(ctx context.Context, claimUID string) error {
 
 	switch pc.CheckpointState {
 	case ClaimCheckpointStatePrepareStarted:
-		klog.Infof("unprepare noop: claim preparation started but not completed: %v", claimUID)
+		// TODO: revert potential state mutations -- e.g. disable MIG mode,
+		// destroy any potential MIG device -- (but: only by MIG UUID
+		// identification -- deletion by just CI and GI id may attempt
+		// destruction underneath another claim)
+		//
+		// Currently, we only store this:
+		//
+		// "checkpointState": "PrepareStarted", "status": {
+		//   "allocation": {
+		//     "devices": {
+		//       "results": [
+		//         {
+		//           "request": "mig-1g",
+		//           "driver": "gpu.nvidia.com",
+		//           "pool": "gb-nvl-027-compute06",
+		//           "device": "gpu-0-mig-1g24gb-0"
+		//         }
+		//       ]
+		//     },
+		//
+		// `gpu-0-mig-1g24gb-0` does uniquely identify a profile/placement that
+		// we could attempt to delete here -- but that doesn't seem safe.
+		klog.Infof("unprepare noop: claim preparation started but not completed for claim '%s' (devices: %v)", claimUID, pc.Status.Allocation.Devices.Results)
 		return nil
 	case ClaimCheckpointStatePrepareCompleted:
 		if err := s.unprepareDevices(ctx, claimUID, pc.PreparedDevices); err != nil {
@@ -421,6 +444,17 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 			}
 
 			klog.V(6).Infof("Prepared device for claim '%s': %s", ResourceClaimToString(claim), device.DeviceName)
+			// TODO: here is maybe a decent opportunity to update the
+			// checkpoint, reflecting the device preparation (still within
+			// PrepareStarted state) -- there is potential for crashes and early
+			// termination between here and final claim preparation; and we need
+			// to retain the opportunity to revert changes, based on the
+			// checkpoint ('unprepare previously partially prepared claims').
+			// For example, a prepare devices failed: `error creating MIG
+			// device: error creating GPU instance for 'gpu-0-mig-1g24gb-0':
+			// Insufficient Resources,},},}`` may leave an enabled MIG mode
+			// behind (not the most extreme example, can be resolved by other
+			// means -- but just an example)
 			preparedDeviceGroup.Devices = append(preparedDeviceGroup.Devices, preparedDevice)
 		}
 
@@ -431,20 +465,22 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 }
 
 func (s *DeviceState) unprepareDevices(ctx context.Context, claimUID string, devices PreparedDevices) error {
-	klog.V(6).Infof("Unpreparing claim '%s': got previously prepared devices from checkpoint: %v", claimUID, devices.GetDeviceNames())
+	klog.V(6).Infof("Unpreparing claim '%s', previously prepared devices from checkpoint: %v", claimUID, devices.GetDeviceNames())
 	for _, group := range devices {
 
 		// Dynamically delete MIG devices, if applicable.
 		// Do this before or after MPS/TimeSlicing primitive teardown?
+		// EDIT: must be done after (TODO)
 		for _, device := range group.Devices {
 			switch device.Type() {
 			case GpuDeviceType:
-				klog.V(4).Infof("unprepare: regular GPU: noop (GPU %s)", device.Gpu.Info.String())
+				klog.V(4).Infof("Unprepare: regular GPU: noop (GPU %s)", device.Gpu.Info.String())
 			case MigDeviceType:
 				mig := device.Mig.Created
-				klog.V(4).Infof("unprepare: destroy MIG device '%s'", mig.UUID)
+				klog.V(4).Infof("Unprepare: destroy MIG device '%s'", mig.UUID)
 				err := s.nvdevlib.deleteMigDevice(mig.ParentUUID, mig.GIID, mig.CIID)
 				if err != nil {
+					//CRASH IN CANONICAL NAME
 					return fmt.Errorf("error deleting MIG device %s: %w", device.Mig.Created.CanonicalName(), err)
 				}
 			}
