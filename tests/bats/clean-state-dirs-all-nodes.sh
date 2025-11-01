@@ -19,11 +19,9 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-# TODO: think about wiping /var/run/cdi, too
-
 rm_kubelet_plugin_dirs_from_node () {
     local NODE_NAME="$1"
-    echo "Run privileged pod to remove kubelet plugin directories on node ${NODE_NAME}"
+    echo "Run privileged pod to remove /run/cdi/* and kubelet plugin directories on node ${NODE_NAME}"
     kubectl run "privpod-rm-plugindirs-${NODE_NAME}" \
         --rm \
         --image=busybox \

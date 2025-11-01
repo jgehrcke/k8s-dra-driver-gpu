@@ -52,7 +52,7 @@ iupgrade_wait() {
     --timeout=1m5s \
     --create-namespace \
     --namespace nvidia-dra-driver-gpu \
-    --set resources.gpus.enabled=false \
+    --set gpuResourcesEnabledOverride=true \
     --set nvidiaDriverRoot="${TEST_NVIDIA_DRIVER_ROOT}" "${ADDITIONAL_INSTALL_ARGS[@]}"
 
   # Valueable output to have in the logs in case things went pearshaped.
@@ -139,7 +139,8 @@ show_kubelet_plugin_error_logs() {
     kubectl logs \
     -l nvidia-dra-driver-gpu-component=kubelet-plugin \
     -n nvidia-dra-driver-gpu \
-    --prefix --tail=-1 | grep -E "^(E|W)[0-9]{4}"
+    --all-containers \
+    --prefix --tail=-1 | grep -E "^(E|W)[0-9]{4}" -iE "error"
   ) || true
   echo -e "KUBELET PLUGIN ERROR LOGS END\n\n"
 }
@@ -190,10 +191,52 @@ nvmm() {
     --no-headers -o custom-columns=":metadata.name")
 
   if [ -z "$pod" ]; then
-    echo "No pod found on node $node"
+    echo "get pod -n gpu-operator -l app=nvidia-mig-manager: no pod found on node $node"
     return 1
   fi
 
   echo "Executing on pod $pod (node: $node)..."
   kubectl -n gpu-operator exec -it "$pod" -- "$@"
+}
+
+restart_kubelet_on_node() {
+  local NODEIP="$1"
+  echo "sytemctl restart kubelet.service on ${NODEIP}"
+  # Assume that current user has password-less sudo privileges
+  ssh "${USER}@${NODEIP}" 'sudo systemctl restart kubelet.service'
+}
+
+restart_kubelet_all_nodes() {
+  for nodeip in $(kubectl get nodes -o jsonpath='{range .items[*]}{.status.addresses[?(@.type=="InternalIP")].address}{"\n"}{end}'); do
+    restart_kubelet_on_node "$nodeip"
+  done
+  #wait
+  echo "restart kubelets: done"
+}
+
+kplog () {
+  if [[ -z "$1" || -z "$2" ]]; then
+    echo "Usage: kplog [gpus|compute-domains] <node-hint-for-grep> [args]"
+    return 1
+  fi
+  local nodehint="$2"
+  local cont="$1"
+  shift
+  shift # Remove first argument, leaving remaining args in $@
+
+  local node=$(kubectl get nodes | grep "$nodehint" | awk '{print $1}')
+  echo "identified node: $node"
+
+  local pod
+  pod=$(kubectl get pod -n nvidia-dra-driver-gpu -l nvidia-dra-driver-gpu-component=kubelet-plugin \
+    --field-selector spec.nodeName="$node" \
+    --no-headers -o custom-columns=":metadata.name")
+
+  if [ -z "$pod" ]; then
+    echo " get pod -n nvidia-dra-driver-gpu -l nvidia-dra-driver-gpu-component=kubelet-plugin: no pod found on node $node"
+    return 1
+  fi
+
+  echo "Executing on pod $pod (node: $node)..."
+  kubectl logs -n nvidia-dra-driver-gpu "$pod" -c "$cont" "$@"
 }

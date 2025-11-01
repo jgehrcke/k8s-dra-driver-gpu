@@ -107,6 +107,7 @@ tests: image
 			--timing \
 			--abort \
 			tests/bats/test_basics.bats \
+			tests/bats/test_gpu_basic.bats \
 			tests/bats/test_cd_imex_chan_inject.bats \
 			tests/bats/test_cd_mnnvl_workload.bats \
 			tests/bats/test_cd_misc.bats \
