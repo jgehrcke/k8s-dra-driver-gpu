@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"slices"
 	"sync"
 
@@ -31,6 +32,7 @@ import (
 
 	configapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
 	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
+	"github.com/sirupsen/logrus"
 )
 
 type OpaqueDeviceConfig struct {
@@ -72,6 +74,15 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 	klog.Infof("using devRoot=%v", devRoot)
 
 	hostDriverRoot := config.flags.hostDriverRoot
+
+	// Let nvcdi logs see the light of day (emit to standard streams) when we've
+	// been configured with verbosity level 7 or higher.
+	cdilogger := logrus.New()
+	if config.flags.klogVerbosity < 7 {
+		klog.Infof("Muting CDI logger (verbosity is smaller 7: %d)", config.flags.klogVerbosity)
+		cdilogger.SetOutput(io.Discard)
+	}
+
 	cdi, err := NewCDIHandler(
 		WithNvml(nvdevlib.nvmllib),
 		WithDeviceLib(nvdevlib),
@@ -81,6 +92,7 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 		WithNVIDIACDIHookPath(config.flags.nvidiaCDIHookPath),
 		WithCDIRoot(config.flags.cdiRoot),
 		WithVendor(cdiVendor),
+		WithLogger(cdilogger),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create CDI handler: %w", err)
