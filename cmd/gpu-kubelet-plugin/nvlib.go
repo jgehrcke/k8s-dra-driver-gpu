@@ -114,6 +114,27 @@ func (l deviceLib) alwaysShutdown() {
 func (l deviceLib) enumerateAllPossibleDevices(config *Config) (AllocatableDevices, error) {
 	//alldevices := make(AllocatableDevices)
 
+	// TODO: make good decisions about incarnated MIG devices found during
+	// program startup. We could
+	//
+	// 1) assume they are under control of an external  entity, and not announce
+	// them. That's likely not true. As hard as we try, _we_ might actually
+	// leave a MIG device behind where there should be no more (as of bugs, as
+	// of aggressive ops, ...).
+	//
+	// 2) not do anything: bad idea, we announce availability and the scheduler
+	// will assign a job, and prepare() will try to create a specific MIG device
+	// (incl placement) and that will fail because that MIG device already
+	// exists -- users see something like "prepare devices failed: error
+	// creating MIG device: error creating GPU instance for
+	// 'gpu-0-mig-1g24gb-0': Insufficient Resources
+	//
+	// 3) Use the node-local checkpoint as the source of truth. Any MIG device
+	// that corresponds to "partially prepared" claims must be destroyed, any
+	// MIG device that is not mentioned must be destroyed (only those of
+	// completely prepared claims can stay; assuming that the central scheduler
+	// state is equivalent).
+
 	// Get the full list of allocatable devices from GPU 0 in this machine
 	// (development state, iterate over full GPU devices later)
 	allocatable, err := l.GetPerGpuAllocatableDevices(0)
@@ -588,7 +609,7 @@ func (l deviceLib) getMigDevices(gpuInfo *GpuInfo) (map[string]*MigDeviceInfo, e
 			UUID:          uuid,
 			Profile:       migProfile.String(),
 			parent:        gpuInfo,
-			placement:     &placement,
+			Placement:     &placement,
 			giProfileInfo: giProfileInfo,
 			gIInfo:        &giInfo,
 			ciProfileInfo: ciProfileInfo,
@@ -784,7 +805,7 @@ func (l deviceLib) createMigDevice(migpp *MigInfo) (*MigDeviceInfo, error) {
 		Profile:    profile.String(),
 		gIInfo:     &giInfo,
 		cIInfo:     &ciInfo,
-		placement: &MigDevicePlacement{
+		Placement: &MigDevicePlacement{
 			GpuInstancePlacement: *placement,
 		},
 	}
@@ -794,7 +815,7 @@ func (l deviceLib) createMigDevice(migpp *MigInfo) (*MigDeviceInfo, error) {
 }
 
 func (l deviceLib) deleteMigDevice(parentUUID string, giId int, ciId int) error {
-	klog.V(6).Infof("delete MIG device %s/%d/%d", parentUUID, giId, ciId)
+	klog.V(6).Infof("Delete MIG device: %s/%d/%d", parentUUID, giId, ciId)
 
 	if err := l.Init(); err != nil {
 		return err
@@ -923,7 +944,7 @@ func (l deviceLib) inspectMigProfilesAndPlacements(gpuInfo *GpuInfo, device nvde
 		return nil
 	})
 
-	klog.Infof("per-capacity maximum across all MIG profiles+placements: %v", maxCapacities)
+	klog.Infof("Per-capacity maximum across all MIG profiles+placements: %v", maxCapacities)
 	klog.Infof("maxMemSlicesConsumed: %d", maxMemSlicesConsumed)
 
 	if err != nil {
