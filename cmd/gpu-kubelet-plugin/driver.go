@@ -77,11 +77,36 @@ func NewDriver(ctx context.Context, config *Config) (*driver, error) {
 	}
 	driver.pluginhelper = helper
 
-	// TODO: Create N+1 resource slices, given N physical GPUs. 1) one slice
+	// Note(JP): I first considered model 1, and then implemented model model 2.
+	//
+	// Model 1) Create G+1 resource slices, given G physical GPUs. 1) one slice
 	// with shared counters, for each full GPU 2) for each full GPU, a slice
 	// with the full-GPU-device and all potential MIG profile/placement devices.
-
-	//slices := []resourceslice.Slice{}
+	// That model is inspired by KEP 4815 which talks about "require that
+	// ResourceSlice objects can only contain either SharedCounters or Devices".
+	// In practice, that does not seem to be a requirement (yet?); in fact, it
+	// doesn't seem to work to consume from a shared counter _not_ specified in
+	// the same ResourceSlice. Which brings me to model 2.
+	//
+	// Model 2) Create G resource slices, given G physical GPUs. Each slice
+	// describes the abstract full device capacity by definining _one_ counter
+	// set as part of `SharedCounters` (there could be 8 counter sets in total,
+	// but try to get away using one). Then, in the same resource slice define
+	// all devices allocatable for that physical GPU. That is, M possible MIG
+	// devices, and 1 device representing the full GPU. Hence:
+	//
+	// - G resource slices
+	// - Each resource slice:
+	//       - Defines `SharedCounters` with 1 counter set
+	//       - Defines M+1 devices
+	//
+	//
+	//
+	// Specific quote from KEP 4815 does does not make sense to be right now:
+	// "The decision to require that ResourceSlice objects can only contain
+	// either SharedCounters or Devices was made to prevent having to enforce
+	// overly strict validation to make sure that ResourceSlice objects can't
+	// exceed the etcd limit."
 
 	var slice resourceslice.Slice
 	countersets := []resourceapi.CounterSet{}
@@ -125,7 +150,15 @@ func NewDriver(ctx context.Context, config *Config) (*driver, error) {
 	}
 	driver.healthcheck = healthcheck
 
-	if err := driver.publishResources(ctx, config); err != nil {
+	// Note(JP): from KEP 4815: "we will add client-side validation in the
+	// ResourceSlice controller helper, so that any errors in the ResourceSlices
+	// will be caught before they even are applied to the APIServer" -- the
+	// helper below is being referred to.
+	//
+	// This will be a TODO soon:
+	// https://github.com/kubernetes/kubernetes/commit/a171795e313ee9f407fef4897c1a1e2052120991
+
+	if err := driver.pluginhelper.PublishResources(ctx, resources); err != nil {
 		return nil, err
 	}
 
