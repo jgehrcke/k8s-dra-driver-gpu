@@ -50,13 +50,31 @@ type AllocatableDevice struct {
 	Vfio *VfioDeviceInfo
 }
 
-// MigInfo encodes profile and placement. Maybe rename to AbstractMigInfo or
-// AbstractMigDevice because this does not encode a materialized device.
+// MigInfo describes an abstract MIG device with precise specification of parent
+// GPU, MIG profile and physcical placement on the parent GPU.
+//
+// Does not necessarily encode a _concrete_ (materialized / created /
+// incarnated) device. In terms of abstract MIG device descriptions, there are
+// many useful levels of precision / abstraction / refinement. For example:
+//
+// 1) specify MIG profile; do not specify parent, placement 2) specify MIG
+// profile, parent; do not specify placement 3) specify MIG profile, parent,
+// placement.
+//
+// This type is case (3); it leaves no degrees of freedom.
+//
+// TODO(JP): maybe rename to AbstractMigInfo or AbstractMigDevice or MigPP.
+// TODO2(JP): clarify how CI id and GI id are not orthogonal to placement. Maybe
+// add a method that translates between the two. I don't think we need to wait
+// for creation to then know the CI ID and GI ID. TODO3(JP): clarify the
+// relevance of the three-tuple of parent,ciid,giid for precisely describing a
+// MIG device, and how that's a fundamental data structure. Maybe define its own
+// type for it, and use it elsewhere.
 type MigInfo struct {
 	Parent        *GpuInfo
 	Profile       nvdev.MigProfile
 	GIProfileInfo nvml.GpuInstanceProfileInfo
-	// JP: rename to Placement?
+	// TODO(JP): rename to Placement?
 	MemorySlices nvml.GpuInstancePlacement
 }
 
@@ -64,7 +82,7 @@ func (i *MigInfo) CanonicalName() DeviceName {
 	return migppCanonicalName(i.Parent, i.Profile.String(), &i.MemorySlices)
 }
 
-// TODO: add memory slices?
+// TODO(JP): add memory slices?
 //
 // Note(JP): for now, I feel like we may want to keep capacity agnostic to
 // placement. That would imply not announcing specific memory slices as part of
@@ -128,10 +146,10 @@ func (i MigInfo) PartAttributes() map[resourceapi.QualifiedName]resourceapi.Devi
 			StringValue: &i.Parent.UUID,
 		},
 		"parentIndex": {
-			IntValue: ptr.To(int64(i.Parent.index)), // TODO: expose?
+			IntValue: ptr.To(int64(i.Parent.index)), // TODO: really expose?
 		},
 		"parentMinor": {
-			IntValue: ptr.To(int64(i.Parent.minor)), // TODO: expose?
+			IntValue: ptr.To(int64(i.Parent.minor)), // TODO: really expose?
 		},
 		"profile": {
 			StringValue: ptr.To(i.Profile.String()),
