@@ -106,5 +106,6 @@ tests: image
 			--no-tempdir-cleanup \
 			--timing \
 			--abort \
+			tests/bats/test_gpu_basic.bats \
 			tests/bats/test_gpu_dynmig.bats \
 		"

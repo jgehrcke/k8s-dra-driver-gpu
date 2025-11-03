@@ -60,6 +60,7 @@ timeout -v 5 kubectl delete -f demo/specs/imex/nvbandwidth-test-job-2.yaml 2> /d
 timeout -v 5 kubectl delete -f tests/bats/specs/nvb2.yaml 2> /dev/null
 timeout -v 5 kubectl delete pods -l env=batssuite 2> /dev/null
 timeout -v 2 kubectl delete resourceclaim batssuite-rc-bad-opaque-config --force 2> /dev/null
+timeout -v 2 kubectl delete -f demo/specs/imex/simple-mig-test 2> /dev/null
 
 # TODO: maybe more brute-forcing/best-effort: it might make sense to submit all
 # workload in this test suite into a special namespace (not `default`), and to
@@ -86,4 +87,6 @@ timeout -v 10 kubectl delete crds computedomains.resource.nvidia.com || echo "CR
 # cleanup, fail hard if this does not succeed).
 set -e
 bash tests/bats/clean-state-dirs-all-nodes.sh
+
 set +x
+echo "cleanup: done"
