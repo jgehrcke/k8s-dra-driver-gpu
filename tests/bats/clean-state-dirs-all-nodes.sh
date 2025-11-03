@@ -40,7 +40,7 @@ rm_kubelet_plugin_dirs_from_node () {
                 "mountPath": "/host",
                 "name": "host-root"
             }],
-            "command": ["/bin/sh", "-c", "rm -rfv /host/var/lib/kubelet/plugins/*"]
+            "command": ["/bin/sh", "-c", "rm -rfv /host/run/cdi/* ; rm -rfv /host/var/lib/kubelet/plugins/*"]
             }],
             "volumes": [{
             "name": "host-root",
