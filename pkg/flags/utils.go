@@ -40,7 +40,7 @@ func pflagToCLI(flag *pflag.Flag, category string) cli.Flag {
 
 func LogStartupConfig(parsedFlags any, loggingConfig *LoggingConfig) {
 	// Always log component startup config (level 0).
-	klog.Infof("\nFeature gates: %#v\nVerbosity: %d\nFlags: %s",
+	klog.Infof("\nFeature gates: %#v\nFlags: %s",
 		// Flat boolean map -- no pretty-printing needed.
 		featuregates.ToMap(),
 		// Based on go-spew's Sdump(), with indentation. Type information is
