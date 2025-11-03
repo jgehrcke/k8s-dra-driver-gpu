@@ -58,7 +58,7 @@ confirm_mod_mode_disabled_all_nodes() {
   confirm_mod_mode_disabled_all_nodes
 }
 
-@test "1 pod, 2 containers (1 MIG each)" {
+@test "1 pod, 2 containers (1 MIG each, same parent)" {
   confirm_mod_mode_disabled_all_nodes
 
   local _specpath="tests/bats/specs/gpu-multiple-mig.yaml"
