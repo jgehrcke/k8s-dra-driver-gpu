@@ -1,9 +1,22 @@
 # shellcheck disable=SC2148
 # shellcheck disable=SC2329
 
+setup_file () {
+  load 'helpers.sh'
+  _common_setup
+  local _iargs=("--set" "logVerbosity=6")
+  iupgrade_wait "${TEST_CHART_REPO}" "${TEST_CHART_VERSION}" _iargs
+  run kubectl logs \
+    -l nvidia-dra-driver-gpu-component=kubelet-plugin \
+    -n nvidia-dra-driver-gpu \
+    -c gpus \
+    --prefix --tail=-1
+  assert_output --partial "About to announce device gpu-0-mig-1g24gb-0"
+}
+
 # Executed before entering each test in this file.
 setup() {
-   load 'helpers.sh'
+  load 'helpers.sh'
   _common_setup
   log_objects
 }
@@ -15,23 +28,17 @@ bats::on_failure() {
   echo -e "FAILURE HOOK END\n\n"
 }
 
-@test "1 pod, 1 MIG" {
+confirm_mod_mode_disabled_all_nodes() {
   # Confirm that MIG mode is disabled for all GPUs on all nodes.
   for node in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
-     nvmm $node sh -c 'nvidia-smi --query-gpu=index,mig.mode.current --format=csv'
-     run nvmm $node sh -c 'nvidia-smi --query-gpu=index,mig.mode.current --format=csv'
+     nvmm "$node" sh -c 'nvidia-smi --query-gpu=index,mig.mode.current --format=csv'
+     run nvmm "$node" sh -c 'nvidia-smi --query-gpu=index,mig.mode.current --format=csv'
      refute_output --partial "Enabled"
   done
+}
 
-  local _iargs=("--set" "logVerbosity=6")
-  iupgrade_wait "${TEST_CHART_REPO}" "${TEST_CHART_VERSION}" _iargs
-  run kubectl logs \
-    -l nvidia-dra-driver-gpu-component=kubelet-plugin \
-    -n nvidia-dra-driver-gpu \
-    -c gpus \
-    --prefix --tail=-1
-  assert_output --partial "About to announce device gpu-0-mig-1g24gb-0"
-
+@test "1 pod, 1 MIG" {
+  confirm_mod_mode_disabled_all_nodes
   kubectl apply -f tests/bats/specs/gpu-simple-mig.yaml
   kubectl wait --for=condition=READY pods pod-mig1g --timeout=10s
   run kubectl logs pod-mig1g
@@ -48,30 +55,11 @@ bats::on_failure() {
 
   kubectl delete -f tests/bats/specs/gpu-simple-mig.yaml
   kubectl wait --for=delete pods pod-mig1g --timeout=10s
-
-  # Confirm that MIG mode is disabled for all GPUs on all nodes.
-  for node in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
-     run nvmm "$node" sh -c 'nvidia-smi --query-gpu=index,mig.mode.current --format=csv'
-     refute_output --partial "Enabled"
-  done
+  confirm_mod_mode_disabled_all_nodes
 }
 
-@test "1 pod, 2 MIGs" {
-  # Confirm that MIG mode is disabled for all GPUs on all nodes.
-  for node in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
-     nvmm $node sh -c 'nvidia-smi --query-gpu=index,mig.mode.current --format=csv'
-     run nvmm $node sh -c 'nvidia-smi --query-gpu=index,mig.mode.current --format=csv'
-     refute_output --partial "Enabled"
-  done
-
-  local _iargs=("--set" "logVerbosity=6")
-  iupgrade_wait "${TEST_CHART_REPO}" "${TEST_CHART_VERSION}" _iargs
-  run kubectl logs \
-    -l nvidia-dra-driver-gpu-component=kubelet-plugin \
-    -n nvidia-dra-driver-gpu \
-    -c gpus \
-    --prefix --tail=-1
-  assert_output --partial "About to announce device gpu-0-mig-1g24gb-0"
+@test "1 pod, 2 containers (1 MIG each)" {
+  confirm_mod_mode_disabled_all_nodes
 
   local _specpath="tests/bats/specs/gpu-multiple-mig.yaml"
   local _podname="pod-2mig"
@@ -95,10 +83,5 @@ bats::on_failure() {
 
   kubectl delete -f  "${_specpath}"
   kubectl wait --for=delete pods "${_podname}" --timeout=10s
-
-  # Confirm that MIG mode is disabled for all GPUs on all nodes.
-  for node in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
-     run nvmm "$node" sh -c 'nvidia-smi --query-gpu=index,mig.mode.current --format=csv'
-     refute_output --partial "Enabled"
-  done
+  confirm_mod_mode_disabled_all_nodes
 }
