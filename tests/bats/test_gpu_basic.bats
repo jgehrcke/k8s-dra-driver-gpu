@@ -1,23 +1,9 @@
 # shellcheck disable=SC2148
 # shellcheck disable=SC2329
 
-# Executed before entering each test in this file.
-setup() {
-   load 'helpers.sh'
+setup_file () {
+  load 'helpers.sh'
   _common_setup
-  log_objects
-}
-
-
-bats::on_failure() {
-  echo -e "\n\nFAILURE HOOK START"
-  log_objects
-  show_kubelet_plugin_error_logs
-  #get_all_cd_daemon_logs_for_cd_name "imex-channel-injection" || true
-  echo -e "FAILURE HOOK END\n\n"
-}
-
-@test "simple gpu" {
   local _iargs=("--set" "logVerbosity=6")
   iupgrade_wait "${TEST_CHART_REPO}" "${TEST_CHART_VERSION}" _iargs
   run kubectl logs \
@@ -25,21 +11,104 @@ bats::on_failure() {
     -n nvidia-dra-driver-gpu \
     -c gpus \
     --prefix --tail=-1
-  assert_output --partial "About to announce device gpu-0"
+}
 
-  kubectl apply -f tests/bats/specs/gpu-simple-full.yaml
+# Executed before entering each test in this file.
+setup() {
+   load 'helpers.sh'
+  _common_setup
+  log_objects
+}
+
+bats::on_failure() {
+  echo -e "\n\nFAILURE HOOK START"
+  log_objects
+  show_kubelet_plugin_error_logs
+  echo -e "FAILURE HOOK END\n\n"
+}
+
+@test "1 pod(s), 1 full GPU" {
+  local _specpath="tests/bats/specs/gpu-simple-full.yaml"
   local _podname="pod-full-gpu"
-  kubectl wait --for=condition=READY pods "${_podname}" --timeout=10s
-  run kubectl logs "${_podname}"
+
+  kubectl apply -f "${_specpath}"
+  kubectl wait --for=condition=READY pods "${_podname}" --timeout=8s
 
   # Confirm the following pattern:
   # GPU 0: NVIDIA GB200 (UUID: GPU-7277883e-ce1e-3b6e-6cc1-6d52e80cdb86)
+  run kubectl logs "${_podname}"
   assert_output --partial "UUID: GPU-"
-
-  # Make sure the output contains two lines (first wc -l for debuggability)
-  echo "${output}" | wc -l
   echo "${output}" | wc -l | grep 1
-
-  kubectl delete -f tests/bats/specs/gpu-simple-full.yaml
+  kubectl delete -f  "${_specpath}"
   kubectl wait --for=delete pods "${_podname}" --timeout=10s
+}
+
+@test "2 pod(s), 1 full GPU each" {
+  local _specpath="tests/bats/specs/gpu-2pods-2gpus.yaml"
+
+  kubectl apply -f "${_specpath}"
+  kubectl wait --for=condition=READY pods pod1 --timeout=8s
+  kubectl wait --for=condition=READY pods pod2 --timeout=8s
+
+  run kubectl logs pod1
+  assert_output --partial "UUID: GPU-"
+  echo "${output}" | wc -l | grep 1
+  local uid1="${output}"
+
+  run kubectl logs pod2
+  assert_output --partial "UUID: GPU-"
+  echo "${output}" | wc -l | grep 1
+  local uid2="${output}"
+
+  assert_not_equal "$uid1" "$uid2"
+
+  kubectl delete -f  "${_specpath}"
+  kubectl wait --for=delete pods pod1 --timeout=10s
+  kubectl wait --for=delete pods pod2 --timeout=10s
+}
+
+@test "2 pod(s), 1 full GPU (shared, 1 RC)" {
+  local _specpath="tests/bats/specs/gpu-2pods-1gpu.yaml"
+
+  kubectl apply -f "${_specpath}"
+  kubectl wait --for=condition=READY pods pod1 --timeout=8s
+  kubectl wait --for=condition=READY pods pod2 --timeout=8s
+
+  run kubectl logs pod1
+  assert_output --partial "UUID: GPU-"
+  echo "${output}" | wc -l | grep 1
+  local uid1="${output}"
+
+  run kubectl logs pod2
+  assert_output --partial "UUID: GPU-"
+  echo "${output}" | wc -l | grep 1
+  local uid2="${output}"
+
+  assert_equal "$uid1" "$uid2"
+
+  kubectl delete -f  "${_specpath}"
+  kubectl wait --for=delete pods pod1 --timeout=10s
+  kubectl wait --for=delete pods pod2 --timeout=10s
+}
+
+@test "1 pod(s), 2 cntrs, 1 full GPU (shared, 1 RCT)" {
+  local _specpath="tests/bats/specs/gpu-1pod-2cnt-1gpu.yaml"
+
+  kubectl apply -f "${_specpath}"
+  kubectl wait --for=condition=READY pods pod1 --timeout=8s
+
+  run kubectl logs pod1 -c ctr0
+  assert_output --partial "UUID: GPU-"
+  echo "${output}" | wc -l | grep 1
+  local uid1="${output}"
+
+  run kubectl logs pod1 -c ctr1
+  assert_output --partial "UUID: GPU-"
+  echo "${output}" | wc -l | grep 1
+  local uid2="${output}"
+
+  assert_equal "$uid1" "$uid2"
+
+  kubectl delete -f  "${_specpath}"
+  kubectl wait --for=delete pods pod1 --timeout=10s
 }

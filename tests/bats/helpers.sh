@@ -139,7 +139,8 @@ show_kubelet_plugin_error_logs() {
     kubectl logs \
     -l nvidia-dra-driver-gpu-component=kubelet-plugin \
     -n nvidia-dra-driver-gpu \
-    --prefix --tail=-1 | grep -E "^(E|W)[0-9]{4}"
+    --all-containers \
+    --prefix --tail=-1 | grep -E "^(E|W)[0-9]{4}" -iE "error"
   ) || true
   echo -e "KUBELET PLUGIN ERROR LOGS END\n\n"
 }
