@@ -63,7 +63,47 @@ func (i *MigInfo) CanonicalName() DeviceName {
 	return migppCanonicalName(i.Parent, i.Profile.String(), &i.MemorySlices)
 }
 
-// Note: this should be the same regardless of the placement.
+// TODO: add memory slices?
+//
+// Note(JP): for now, I feel like we may want to keep capacity agnostic to
+// placement. That would imply not announcing specific memory slices as part of
+// capacity (specific memory slices encode placement). That makes sense to me,
+// but I may of course miss something here.
+//
+// I have noted that in an example spec in KEP 4815 we _do_ enumerate memory
+// slices in a partition's capacity. Example:
+//
+//   - name: gpu-0-mig-2g.10gb-0-1
+//     attributes:
+//     ...
+//     capacity:
+//     ...
+//     decoders:
+//     value: "1"
+//     encoders:
+//     value: "0"
+//     ...
+//     memorySlice0:
+//     value: "1"
+//     memorySlice1:
+//     value: "1"
+//     multiprocessors:
+//     value: "28"
+//     ...
+//
+// 1) There, we only announce those slices with value 1 but we do _not_ announce
+// memory slices not consumed (value: 0). That's inconsistent with other
+// capacity dimensions which (in the example above) are enumerated despite
+// having a value of zero (e.g. `encoders` above).
+//
+// 2) Semantically, to me, capacity I think can (and should?) be
+// placement-agnostic. I am happy to be convinced otherwise.
+//
+// 3) If `capacity“ is in our case always encoding the _same_ information as
+// `consumesCounters` then that's duplication and feels like an API design flaw
+// or API usage flow. It feels like these parts of the resource slice device
+// spec serve a different meaning, and hence allow for different information
+// content. Again, I may miss something.
 func (i MigInfo) PartCapacities() PartCapacityMap {
 	p := i.GIProfileInfo
 	return PartCapacityMap{
@@ -122,36 +162,41 @@ func (i MigInfo) PartAttributes() map[resourceapi.QualifiedName]resourceapi.Devi
 func capacitiesToCounters(m PartCapacityMap) map[string]resourceapi.Counter {
 	counters := make(map[string]resourceapi.Counter)
 	for name, cap := range m {
+		// Automatically derive counter name from capacity to ensure consistency.
 		counters[toRFC1123Compliant(string(name))] = resourceapi.Counter{Value: cap.Value}
 	}
 	return counters
 }
 
+// This device is a partition of a physical GPU. The
+//
+// Construct `DeviceCounterConsumption`, describing which fractions precisely
+// this partition consumes of the the full device.
+//
+// Each entry in capacity is modeled as a counter (consuming from the parent
+// device). In addition, this MIG device, if allocated, consumes at least one
+// specific memory slice. Each memory slice is modeled with its own counter
+// (capacity: 1). Note that for example on a B200 GPU, the `3g.90gb` device
+// consumes 4 out of 8 memory slices in total, but only 3 out of seven SMs. That
+// is, with two `3g.90gb` devices allocated all memory slices are consumed, and
+// one SM -- while unallocated -- cannot be used anymore. The parent is a full
+// GPU device.
+//
+// When this device is allocated, it consumes from the parent's CounterSet. The
+// parent's counter set is referred to by name. Use a naming convention:
+// currently, a full GPU has precisely one counter set associated with it, and
+// its name has the form 'gpu-%d-counter-set' where the placeholder is the GPU
+// index (change to UUID)?
 func (i MigInfo) PartConsumesCounters() []resourceapi.DeviceCounterConsumption {
-	// Each entry in capacity is also modeled as consumable counter (consuming
-	// from the parent device). In addition, this MIG device, if allocated,
-	// consumes at least one specific memory slice. Each memory slice is modeled
-	// with its own counter (capacity: 1). Note that for example on a B200 GPU,
-	// the `3g.90gb` device consumes 4 out of 8 memory slices in total, but only
-	// 3 out of seven SMs. That is, with two `3g.90gb` devices allocated all
-	// memory slices are consumed, and one SM -- while unallocated -- cannot be
-	// used anymore.
 	return []resourceapi.DeviceCounterConsumption{{
-		// The parent is a full GPU device. When this device is allocated, it
-		// consumes from the parent's CounterSet. The parent's counter set is
-		// referred to by name. Use a naming convention: currently, a full GPU
-		// has precisely one counter set associated with it, and its name has
-		// the form 'gpu-%d-counter-set' where the placeholder is the GPU index
-		// (change to UUID)?
 		CounterSet: i.Parent.GetSharedCounterSetName(),
-
-		Counters: addCountersForMemSlices(capacitiesToCounters(i.PartCapacities()), int(i.MemorySlices.Start), int(i.MemorySlices.Size)),
+		Counters:   addCountersForMemSlices(capacitiesToCounters(i.PartCapacities()), int(i.MemorySlices.Start), int(i.MemorySlices.Size)),
 	}}
 }
 
 // Insert one counter for each memory slice consumed, as given by the `start`
-// and `size` parameters (nvml.GpuInstancePlacement). Mutate the input map in
-// place, and (also) return it.
+// and `size` parameters (from a nvml.GpuInstancePlacement). Mutate the input
+// map in place, and (also) return it.
 func addCountersForMemSlices(counters map[string]resourceapi.Counter, start int, size int) map[string]resourceapi.Counter {
 	for i := start; i < start+size; i++ {
 		counters[memsliceCounterName(i)] = resourceapi.Counter{Value: *resource.NewQuantity(1, resource.BinarySI)}
@@ -243,8 +288,8 @@ func (d AllocatableDevices) Names() []string {
 }
 
 // toRFC1123Compliant converts the input to a DNS name compliant with RFC 1123.
-// Note that a device name in DRA must not contain dots either, so let's just
-// remove them?
+// Note that a device name in DRA must not contain dots either (this function
+// does not always return a string that can be used as a device name).
 func toRFC1123Compliant(name string) string {
 	name = strings.ToLower(name)
 	re := regexp.MustCompile(`[^a-z0-9-.]`)
@@ -266,7 +311,8 @@ func placementString(p *nvml.GpuInstancePlacement) string {
 		sfx = fmt.Sprintf("%s-%d", sfx, p.Start+p.Size-1)
 	}
 	// first, I had `placement-` in there -- but that may be too bulky
-	return toRFC1123Compliant(fmt.Sprintf("%s", sfx))
+	//return toRFC1123Compliant(fmt.Sprintf("%s", sfx))
+	return toRFC1123Compliant(sfx)
 }
 
 // `profile string` must be what's returned by profile.String(), the
