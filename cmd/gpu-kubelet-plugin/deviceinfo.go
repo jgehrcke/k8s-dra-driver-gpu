@@ -28,6 +28,7 @@ import (
 	"k8s.io/utils/ptr"
 )
 
+// Represents a specific, full, physical GPU device.
 type GpuInfo struct {
 	UUID                  string `json:"uuid"`
 	index                 int
@@ -51,20 +52,9 @@ type GpuInfo struct {
 	memSliceCount int
 }
 
-// GpuInfo holds all of the relevant information about a GPU.
-// type GpuInfo struct {
-// 	Minor                 int
-// 	UUID                  string
-// 	MemoryBytes           uint64
-// 	ProductName           string
-// 	Brand                 string
-// 	Architecture          string
-// 	CudaComputeCapability string
-// 	MigCapable            bool
-// }
-
 type PartCapacityMap map[resourceapi.QualifiedName]resourceapi.DeviceCapacity
 
+// Represents a specific, incarnated (created) MIG device.
 type MigDeviceInfo struct {
 	UUID    string `json:"uuid"`
 	Profile string `json:"profile"`
@@ -293,6 +283,11 @@ func (d *MigDeviceInfo) GetDevice() resourceapi.Device {
 			"memory": {Value: *resource.NewQuantity(int64(d.giProfileInfo.MemorySizeMB*1024*1024), resource.BinarySI)},
 		},
 	}
+
+	// Note(JP): noted elsewhere; what's the purpose of announcing memory slices
+	// as capacity? Are users interested? That effectively shows 'placement' to
+	// users. Does it also allow users to request placement? Do we want to allow
+	// users to request specific placement?
 	for i := d.Placement.Start; i < d.Placement.Start+d.Placement.Size; i++ {
 		// TODO: review memorySlice (legacy) vs memory-slice -- I believe I
 		// prefer memory-slice because that works for counters. Do we even need
