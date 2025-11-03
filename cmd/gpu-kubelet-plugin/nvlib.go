@@ -17,11 +17,14 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	resourceapi "k8s.io/api/resource/v1"
@@ -41,6 +44,54 @@ type deviceLib struct {
 	gpuInfosByUUID    map[string]*GpuInfo
 }
 
+const (
+	procDevicesPath      = "/proc/devices"
+	nvidiaCapsDeviceName = "nvidia-caps"
+)
+
+type nvcapDeviceInfo struct {
+	major  int
+	minor  int
+	mode   int
+	modify int
+	path   string
+}
+
+// MIG minors are predictable, and can be looked up:
+//
+// cat /proc/driver/nvidia-caps/mig-minors
+//
+// ...
+// gpu0/gi0/access 3
+// gpu0/gi0/ci0/access 4
+// gpu0/gi0/ci1/access 5
+// gpu0/gi0/ci2/access 6
+// ...
+// gpu3/gi3/ci3/access 439
+// gpu3/gi3/ci4/access 440
+// gpu3/gi3/ci5/access 441
+// ...
+// gpu6/gi11/ci5/access 918
+// gpu6/gi11/ci6/access 919
+// gpu6/gi11/ci7/access 920
+//
+// func getNVCapDevNodeInfoForMigMinor(migminor int) (*nvcapDeviceInfo, error) {
+// 	major, err := getDeviceMajor(nvidiaCapsDeviceName)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("error getting device major: %w", err)
+// 	}
+
+// 	info := &nvcapDeviceInfo{
+// 		major:  major,
+// 		minor:  migminor,
+// 		mode:   0666,
+// 		modify: 0,
+// 		path:   fmt.Sprintf("/dev/nvidia-caps/nvidia-cap%d", migminor),
+// 	}
+
+// 	return info, nil
+// }
+
 func newDeviceLib(driverRoot root) (*deviceLib, error) {
 	driverLibraryPath, err := driverRoot.getDriverLibraryPath()
 	if err != nil {
@@ -57,6 +108,9 @@ func newDeviceLib(driverRoot root) (*deviceLib, error) {
 	nvmllib := nvml.New(
 		nvml.WithLibraryPath(driverLibraryPath),
 	)
+
+	//nvmllib.nvsandboxutilslib
+
 	d := deviceLib{
 		Interface:         nvdev.New(nvmllib),
 		nvmllib:           nvmllib,
@@ -65,6 +119,9 @@ func newDeviceLib(driverRoot root) (*deviceLib, error) {
 		nvidiaSMIPath:     nvidiaSMIPath,
 		gpuInfosByUUID:    make(map[string]*GpuInfo),
 	}
+
+	// Populate `l.gpuInfosByUUID`.
+	//d.VisitAllDevices()
 	return &d, nil
 }
 
@@ -160,6 +217,27 @@ type PerGpuAllocatableDevices struct {
 	SystemInfo    SystemInfo
 }
 
+// Discover all (physical, full) GPUs. Assume that the result does not change at
+// runtime. Populate `l.gpuInfosByUUID`.
+// func (l deviceLib) VisitAllDevices() {
+// 	if err := l.Init(); err != nil {
+// 		return nil, err
+// 	}
+// 	defer l.alwaysShutdown()
+
+// 	err := l.VisitDevices(func(i int, d nvdev.Device) error {
+// 		gpuInfo, err := l.getGpuInfo(i, d)
+// 		if err != nil {
+// 			return fmt.Errorf("error getting info for GPU %v: %w", i, err)
+// 		}
+
+// 		return nil
+// 	})
+// 	if err != nil {
+// 		return nil, fmt.Errorf("error visiting devices: %w", err)
+// 	}
+// }
+
 // GetPerGpuAllocatableDevices gets the set of allocatable devices using
 // NVDeviceLib.  A list of GPU indices can be optionally provided to limit the
 // set of allocatable devices to just those GPUs. If no indices are provided,
@@ -170,10 +248,6 @@ func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (AllocatableDevic
 		return nil, err
 	}
 	defer l.alwaysShutdown()
-
-	// allocatable := PerGpuAllocatableDevices{
-	// 	DevicesPerGPU: make(map[int]AllocatableDevices),
-	// }
 
 	allocatable := make(AllocatableDevices)
 
@@ -571,7 +645,6 @@ func (l deviceLib) createMigDevice(migpp *MigInfo) (*MigDeviceInfo, error) {
 		return nil, fmt.Errorf("error getting GPU device handle: %v", ret)
 	}
 
-	// This API is more convenient -- why not use it here?
 	ndev, err := l.NewDevice(device)
 	if err != nil {
 		return nil, fmt.Errorf("error instantiating nvml dev: %w", err)
@@ -586,18 +659,20 @@ func (l deviceLib) createMigDevice(migpp *MigInfo) (*MigDeviceInfo, error) {
 		return nil, fmt.Errorf("error checking if MIG mode enabled for device %s: %w", ndev, err)
 	}
 
+	logpfx := fmt.Sprintf("Create %s", migpp.CanonicalName())
+
 	if !migEnabled {
-		klog.V(6).Infof("Attempting to enable MIG mode for device %s", gpu.String())
+		klog.V(6).Infof("%s: Attempting to enable MIG mode for to-be parent %s", logpfx, gpu.String())
 		// If this is newer than A100 and if device unused: enable MIG.
 		ret, activationStatus := device.SetMigMode(nvml.DEVICE_MIG_ENABLE)
 		if ret != nvml.SUCCESS {
 			// activationStatus would return the appropriate error code upon unsuccessful activation
-			klog.Warningf("SetMigMode activationStatus (device %s): %s", gpu.String(), activationStatus)
+			klog.Warningf("%s: SetMigMode activationStatus (device %s): %s", logpfx, gpu.String(), activationStatus)
 			return nil, fmt.Errorf("error enabling MIG mode for device %s: %v", gpu.String(), ret)
 		}
-		klog.V(1).Infof("MIG mode now enabled for device %s", gpu.String())
+		klog.V(1).Infof("%s: MIG mode now enabled for device %s", logpfx, gpu.String())
 	} else {
-		klog.V(6).Infof("MIG mode already enabled for device %s", gpu.String())
+		klog.V(6).Infof("%s: MIG mode already enabled for device %s", logpfx, gpu.String())
 	}
 
 	giProfileInfo, ret := device.GetGpuInstanceProfileInfo(profileInfo.GIProfileID)
@@ -670,7 +745,13 @@ func (l deviceLib) createMigDevice(migpp *MigInfo) (*MigDeviceInfo, error) {
 		},
 	}
 
-	klog.V(6).Infof("MIG device created on %s: %s (%s)", gpu.String(), migDevInfo.CanonicalName(), migDevInfo.UUID)
+	// giCapsInfoPath := fmt.Sprintf("/proc/driver/nvidia/capabilities/gpu%d/mig/gi%d/access", gpu.minor, giInfo.Id)
+	// l.parseNVCapDeviceInfo(giCapsInfoPath)
+
+	// ciCapsInfoPath := fmt.Sprintf("/proc/driver/nvidia/capabilities/gpu%d/mig/gi%d/ci%d/access", gpu.minor, giInfo.Id, ciInfo.Id)
+	// l.parseNVCapDeviceInfo(ciCapsInfoPath)
+
+	klog.V(6).Infof("%s: MIG device created on %s: %s", logpfx, gpu.String(), migDevInfo.UUID)
 	return migDevInfo, nil
 }
 
@@ -785,17 +866,14 @@ func (l deviceLib) inspectMigProfilesAndPlacements(gpuInfo *GpuInfo, device nvde
 			}
 			infos = append(infos, mi)
 
-			// Some profile/placement combinations do not use the right-most
-			// memory slice.
-			//maxMemSlicesConsumed = max(maxMemSlicesConsumed, int(giPlacement.Start+giPlacement.Size)) // works
-
 			// Assume that the largest MIG profile consumes all memory slices,
-			// and hence we can infer the memory slice count by looking at all
-			// Size properties.
+			// and hence we can infer the memory slice count by looking at the
+			// Size property of all MigPP objects, and picking the maximum.
 			maxMemSlicesConsumed = max(maxMemSlicesConsumed, int(giPlacement.Size))
 
-			// Across all MIG profiles, identify the largest capacity dimensions.
-			// These are probably all corresponding to the same profile.
+			// Across all MIG profiles, identify the largest value for each
+			// capacity dimension. They probably all corresponding to the same
+			// profile.
 			caps := mi.PartCapacities()
 			for name, cap := range caps {
 				setMax(maxCapacities, name, cap)
@@ -805,7 +883,7 @@ func (l deviceLib) inspectMigProfilesAndPlacements(gpuInfo *GpuInfo, device nvde
 	})
 
 	klog.Infof("Per-capacity maximum across all MIG profiles+placements: %v", maxCapacities)
-	klog.Infof("maxMemSlicesConsumed: %d", maxMemSlicesConsumed)
+	klog.Infof("Largest MIG placement size seen (maxMemSlicesConsumed): %d", maxMemSlicesConsumed)
 
 	if err != nil {
 		return nil, fmt.Errorf("error visiting MIG profiles: %w", err)
@@ -826,4 +904,96 @@ func setMax(m map[resourceapi.QualifiedName]resourceapi.DeviceCapacity, k resour
 	if cur, ok := m[k]; !ok || v.Value.Value() > cur.Value.Value() {
 		m[k] = v
 	}
+}
+
+// copied straight from CD plugin
+// that for examplex returns 510 when /proc/devices contains
+// 510 nvidia-caps
+func getDeviceMajor(name string) (int, error) {
+
+	re := regexp.MustCompile(
+		// The `(?s)` flag makes `.` match newlines. The greedy modifier in
+		// `.*?` ensures to pick the first match after "Character devices".
+		// Extract the number as capture group (the first and only group).
+		"(?s)Character devices:.*?" +
+			"([0-9]+) " + regexp.QuoteMeta(name) +
+			// Require `name` to be newline-terminated (to not match on a device
+			// that has `name` as prefix).
+			"\n.*Block devices:",
+	)
+
+	data, err := os.ReadFile(procDevicesPath)
+	if err != nil {
+		return -1, fmt.Errorf("error reading '%s': %w", procDevicesPath, err)
+	}
+
+	// Expect precisely one match: first element is the total match, second
+	// element corresponds to first capture group within that match (i.e., the
+	// number of interest).
+	matches := re.FindStringSubmatch(string(data))
+	if len(matches) != 2 {
+		return -1, fmt.Errorf("error parsing '%s': unexpected regex match: %v", procDevicesPath, matches)
+	}
+
+	// Convert capture group content to integer. Perform upper bound check:
+	// value must fit into 32-bit integer (it's then also guaranteed to fit into
+	// a 32-bit unsigned integer, which is the type that must be passed to
+	// unix.Mkdev()).
+	major, err := strconv.ParseInt(matches[1], 10, 32)
+	if err != nil {
+		return -1, fmt.Errorf("int conversion failed for '%v': %w", matches[1], err)
+	}
+
+	// ParseInt() always returns an integer of explicit type `int64`. We have
+	// performed an upper bound check so it's safe to convert this to `int`
+	// (which is documented as "int is a signed integer type that is at least 32
+	// bits in size", so in theory it could be smaller than int64).
+	return int(major), nil
+}
+
+func parseNVCapDeviceInfo(nvcapsFilePath string) (*nvcapDeviceInfo, error) {
+	klog.V(6).Infof("Parse %s", nvcapsFilePath)
+
+	file, err := os.Open(nvcapsFilePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	info := &nvcapDeviceInfo{}
+
+	major, err := getDeviceMajor(nvidiaCapsDeviceName)
+	if err != nil {
+		return nil, fmt.Errorf("error getting device major: %w", err)
+	}
+
+	klog.V(7).Infof("Got major for %s: %d", nvidiaCapsDeviceName, major)
+	info.major = major
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+
+		switch key {
+		case "DeviceFileMinor":
+			_, _ = fmt.Sscanf(value, "%d", &info.minor)
+		case "DeviceFileMode":
+			_, _ = fmt.Sscanf(value, "%d", &info.mode)
+		case "DeviceFileModify":
+			_, _ = fmt.Sscanf(value, "%d", &info.modify)
+		}
+	}
+	info.path = fmt.Sprintf("/dev/nvidia-caps/nvidia-cap%d", info.minor)
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	return info, nil
 }
