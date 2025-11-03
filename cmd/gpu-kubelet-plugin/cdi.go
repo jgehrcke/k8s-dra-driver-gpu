@@ -199,12 +199,12 @@ func (cdi *CDIHandler) writeSpec(spec spec.Interface, specName string) error {
 //		Minor:    int64(ciCapsInfo.minor),
 //	}
 
-// Create CDI `deviceNodes` spec for `/dev/nvidia-caps/nvidia-cap<CIm>` and
-// `/dev/nvidia-caps/nvidia-cap<GIm>`, to be injected into user workload
-// container.
+// Construct and return the CDI `deviceNodes` specification for the two
+// character devices `/dev/nvidia-caps/nvidia-cap<CIm>` and
+// `/dev/nvidia-caps/nvidia-cap<GIm>` for a specific MIG device.
 //
-// Context: for a container to get access to a MIG device, it needs three device
-// nodes injected:
+// Context: for containerized workload to see and use a specific MIG device, it
+// needs to be able to open three character device nodes:
 //
 // 1) `/dev/nvidia<Pm>`, with <Pm> referring to the parent's minor. This exists
 // on the host.
@@ -229,12 +229,22 @@ func (cdi *CDIHandler) GetDevNodesForMigDevice(mig *MigDeviceInfo) ([]*cdispec.D
 		return nil, fmt.Errorf("failed to parse CI capabilities file %s: %w", cpath, err)
 	}
 
-	devnodes := []*cdispec.DeviceNode{cdiDevNodeFromNVCapDevInfo(giCapsInfo), cdiDevNodeFromNVCapDevInfo(ciCapsInfo)}
+	devnodes := []*cdispec.DeviceNode{cdiCharDevNode(giCapsInfo), cdiCharDevNode(ciCapsInfo)}
 	spew.Printf("%s=%#v\n", "devnodes", devnodes)
 	return devnodes, nil
 }
 
-func cdiDevNodeFromNVCapDevInfo(i *nvcapDeviceInfo) *cdispec.DeviceNode {
+// Construct and return a CDI `deviceNodes` entry. Adding this to a CDI
+// container specification at the high level has the purpose of granting cgroup
+// access to the containerized application for being able to access (open) a
+// certain character device node as identified by `i.path`. The special device
+// type "c" below specifically instructs the container runtime to create (mknod)
+// the character device (for the container, accessible from within the
+// container, not visible on the host), and to grant the cgroup privilege to the
+// container to open that device. References:
+// https://github.com/opencontainers/runtime-spec/blob/main/config-linux.md#allowed-device-list
+// https://www.kernel.org/doc/Documentation/cgroup-v1/devices.txt
+func cdiCharDevNode(i *nvcapDeviceInfo) *cdispec.DeviceNode {
 	return &cdispec.DeviceNode{
 		Path:     i.path,
 		Type:     "c",
