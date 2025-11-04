@@ -16,7 +16,6 @@
 include $(CURDIR)/versions.mk
 include $(CURDIR)/common.mk
 
-
 # The to-be-tested Helm chart. Ignored when setting TEST_CHART_LOCAL.
 TEST_CHART_REPO ?= "oci://ghcr.io/nvidia/k8s-dra-driver-gpu"
 TEST_CHART_VERSION ?= "$(VERSION_GHCR_CHART)"
@@ -53,8 +52,10 @@ TEST_CHART_REPO = "deployments/helm/nvidia-dra-driver-gpu"
 TEST_CHART_VERSION = $(VERSION:v%=%)
 endif
 
-BATS_IMAGE = batstests:$(GIT_COMMIT_SHORT)
+BATS_IMAGE ?= batstests:$(GIT_COMMIT_SHORT)
+BATS_ARGS ?= --print-output-on-failure --no-tempdir-cleanup --timing --abort
 KUBECONFIG ?= $(HOME)/.kube/config
+RUNDIR_PARENT ?= /tmp/k8s-dra-driver-gpu-tests-out-$(USER)
 
 # Add `docker run` arguments when not running
 # in Github Actions / GitLab CI.
@@ -62,6 +63,42 @@ DOCKER_RUN_FLAGS :=
 ifeq ($(CI),)
   DOCKER_RUN_FLAGS += -it
 endif
+
+DOCKER_ENVS = \
+	--env KUBECONFIG=$(KUBECONFIG) \
+	--env TEST_CHART_REPO=$(TEST_CHART_REPO) \
+	--env TEST_CHART_VERSION=$(TEST_CHART_VERSION) \
+	--env TEST_CHART_LASTSTABLE_REPO=$(TEST_CHART_LASTSTABLE_REPO) \
+	--env TEST_CHART_LASTSTABLE_VERSION=$(TEST_CHART_LASTSTABLE_VERSION) \
+	--env TEST_CRD_UPGRADE_TARGET_GIT_REF=$(TEST_CRD_UPGRADE_TARGET_GIT_REF) \
+	--env TEST_NVIDIA_DRIVER_ROOT=$(TEST_NVIDIA_DRIVER_ROOT) \
+	--env TEST_EXPECTED_IMAGE_SPEC_SUBSTRING=$(TEST_EXPECTED_IMAGE_SPEC_SUBSTRING)
+
+DOCKER_UID := $(shell id -u)
+DOCKER_GID := $(shell id -g)
+DOCKER_USER := $(DOCKER_UID):$(DOCKER_GID)
+
+DOCKER_MOUNTS = \
+	-v /tmp:/tmp \
+	-v $(CURDIR):/cwd \
+	-v $(dir $(abspath $(KUBECONFIG))):$(dir $(abspath $(KUBECONFIG)))
+
+# Helper to run bats inside container
+# $(1) = whitespace-separated list of test files
+define RUN_BATS
+	@export _RUNDIR_PARENT="$(RUNDIR_PARENT)"; \
+	mkdir -p "$${_RUNDIR_PARENT}"; \
+	export _RUNDIR="$$(mktemp -p "$${_RUNDIR_PARENT}" -d -t bats-tests-$$(date +%s)-XXXXX)"; \
+	echo "Run dir: $${_RUNDIR}"; \
+	docker run --rm $(DOCKER_RUN_FLAGS) $(DOCKER_MOUNTS) $(DOCKER_ENVS) \
+	  -u $(DOCKER_USER) --entrypoint /bin/bash $(BATS_IMAGE) \
+	  -c "set -ex; cd /cwd; \
+	      echo 'Running k8s cluster cleanup (invasive)...'; \
+	      bash tests/bats/cleanup-from-previous-run.sh 2>&1 | tee -a $${_RUNDIR}/cleanup.outerr; \
+	      set +x; echo '--- STARTING TEST SUITE ---'; set -x; \
+	      TMPDIR="$${_RUNDIR}" bats $(BATS_ARGS) $(1) \
+      "
+endef
 
 default: tests
 
@@ -75,43 +112,35 @@ image:
 # suite/file 'setup' in bats, but we'd lose output on success). During dev, you
 # may want to add --show-output-of-passing-tests (and read bats docs for other
 # cmdline args).
-.PHONY: tests
+.PHONY: tests-gpu tests-cd
+
+# Run GPU plugin specific tests
+tests-gpu: image
+	$(call RUN_BATS, \
+		tests/bats/test_basics.bats \
+		tests/bats/test_gpu_basic.bats \
+		tests/bats/test_gpu_stress.bats)
+
+# Run Compute Domain specific tests
+tests-cd: image
+	$(call RUN_BATS, \
+		tests/bats/test_basics.bats \
+		tests/bats/test_cd_imex_chan_inject.bats \
+		tests/bats/test_cd_mnnvl_workload.bats \
+		tests/bats/test_cd_misc.bats \
+		tests/bats/test_cd_logging.bats \
+		tests/bats/test_cd_failover.bats \
+		tests/bats/test_cd_updowngrade.bats)
+
+# Run complete tests
 tests: image
-	export _RUNDIR_PARENT=/tmp/k8s-dra-driver-gpu-tests-out-$${USER} && \
-	mkdir -p "$${_RUNDIR_PARENT}" && \
-	export _RUNDIR=$$(mktemp -p $${_RUNDIR_PARENT} -d -t bats-tests-$$(date +%s)-XXXXX) && \
-	docker run \
-		--rm \
-		$(DOCKER_RUN_FLAGS) \
-		-v /tmp:/tmp \
-		-v $(CURDIR):/cwd \
-		-v $(HOME)/.kube/:$(HOME)/.kube \
-		--env KUBECONFIG=$(KUBECONFIG) \
-		--env TEST_CHART_REPO=$(TEST_CHART_REPO) \
-		--env TEST_CHART_VERSION=$(TEST_CHART_VERSION) \
-		--env TEST_CHART_LASTSTABLE_REPO=$(TEST_CHART_LASTSTABLE_REPO) \
-		--env TEST_CHART_LASTSTABLE_VERSION=$(TEST_CHART_LASTSTABLE_VERSION) \
-		--env TEST_CRD_UPGRADE_TARGET_GIT_REF=$(TEST_CRD_UPGRADE_TARGET_GIT_REF) \
-		--env TEST_NVIDIA_DRIVER_ROOT=$(TEST_NVIDIA_DRIVER_ROOT) \
-		--env TEST_EXPECTED_IMAGE_SPEC_SUBSTRING=$(TEST_EXPECTED_IMAGE_SPEC_SUBSTRING) \
-		-u $(shell id -u ${USER}):$(shell id -g ${USER}) \
-		--entrypoint "/bin/bash"\
-		$(BATS_IMAGE) \
-		-c "set -ex; cd /cwd; \
-			echo 'Running k8s cluster cleanup (invasive)... '; \
-			bash tests/bats/cleanup-from-previous-run.sh 2>&1 | tee -a $${_RUNDIR}/cleanup.outerr; \
-			set +x; echo '--- STARTING TEST SUITE ---'; set -x; \
-			TMPDIR=$${_RUNDIR} bats \
-			--print-output-on-failure \
-			--no-tempdir-cleanup \
-			--timing \
-			--abort \
-			tests/bats/test_basics.bats \
-			tests/bats/test_gpu_basic.bats \
-			tests/bats/test_cd_imex_chan_inject.bats \
-			tests/bats/test_cd_mnnvl_workload.bats \
-			tests/bats/test_cd_misc.bats \
-			tests/bats/test_cd_logging.bats \
-			tests/bats/test_cd_failover.bats \
-			tests/bats/test_cd_updowngrade.bats \
-		"
+	$(call RUN_BATS, \
+		tests/bats/test_basics.bats \
+		tests/bats/test_gpu_basic.bats \
+		tests/bats/test_cd_imex_chan_inject.bats \
+		tests/bats/test_cd_mnnvl_workload.bats \
+		tests/bats/test_cd_misc.bats \
+		tests/bats/test_cd_logging.bats \
+		tests/bats/test_cd_failover.bats \
+		tests/bats/test_cd_updowngrade.bats \
+		tests/bats/test_gpu_stress.bats)

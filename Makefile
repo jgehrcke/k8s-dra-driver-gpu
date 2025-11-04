@@ -221,7 +221,14 @@ PHONY: .shell
 		--user $$(id -u):$$(id -g) \
 		$(BUILDIMAGE)
 
-.PHONY: bats
+.PHONY: bats bats-cd bats-gpu
 bats:
 	make -f tests/bats/Makefile tests
 
+# Run compute domain specific tests
+bats-cd:
+	make -f tests/bats/Makefile tests-cd
+
+# Run GPU plugin specific tests
+bats-gpu:
+	make -f tests/bats/Makefile tests-gpu
