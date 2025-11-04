@@ -44,7 +44,7 @@ _generate_pods_manifest() {
     kubectl apply -f tests/bats/specs/rc-shared-gpu.yaml
 
     # Generate and apply pods spec
-    manifest="${TMPDIR:-/tmp}/pods-shared-${loop}.yaml"
+    manifest="${BATS_TEST_TMPDIR:-/tmp}/pods-shared-${loop}.yaml"
     _generate_pods_manifest "$manifest"
     kubectl apply  -f "$manifest"
 
@@ -66,7 +66,7 @@ _generate_pods_manifest() {
     # Cleanup
     kubectl delete pods  -l 'env=batssuite,test=stress-shared' --timeout=90s
     kubectl delete -f tests/bats/specs/rc-shared-gpu.yaml --timeout=90s
-    kubectl wait  --for=delete pods -l 'env=batssuite,test=stress-shared' --timeout=60s || true
+    kubectl wait  --for=delete pods -l 'env=batssuite,test=stress-shared' --timeout=60s
 
     if [[ "$loop" -lt "$STRESS_LOOPS" ]]; then
       echo "Sleeping ${STRESS_DELAY}s before next loop..."
