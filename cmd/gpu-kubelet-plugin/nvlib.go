@@ -1004,7 +1004,7 @@ func getDeviceMajor(name string) (int, error) {
 }
 
 func parseNVCapDeviceInfo(nvcapsFilePath string) (*nvcapDeviceInfo, error) {
-	klog.V(6).Infof("Parse %s", nvcapsFilePath)
+	// klog.V(6).Infof("Parse %s", nvcapsFilePath)
 
 	file, err := os.Open(nvcapsFilePath)
 	if err != nil {

@@ -215,9 +215,7 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 	//commonEdits, err := cdi.nvcdiDevice.GetCommonEdits()
 
 	// this may initialize nvsandboxutilslib under the hood
-	klog.V(6).Infof("Call nvcdiDevice.GetCommonEdits()")
 	commonEdits, err := cdi.nvcdiClaim.GetCommonEdits()
-
 	if err != nil {
 		return fmt.Errorf("failed to get common CDI spec edits: %w", err)
 	}
@@ -247,8 +245,6 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 				duuid = dev.Gpu.Info.UUID
 			}
 
-			klog.V(7).Infof("Call nvcdiDevice.GetDeviceSpecsByID(%s)", duuid)
-
 			// For a just-created MIG device I see this emit a msg on stderr:
 			//
 			// ERROR: migGetDevFileInfo 212 result=11ERROR: init 310
@@ -260,11 +256,11 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 			// in the driver ..." Probably triggered here:
 			// https://github.com/NVIDIA/nvidia-container-toolkit/blob/e03ac3644d63ec30849dffebd0170811e4903e78/internal/platform-support/dgpu/nvsandboxutils.go#L67
 			//
+			klog.V(7).Infof("Call nvcdiDevice.GetDeviceSpecsByID(%s)", duuid)
 			dspecs, err := cdi.nvcdiClaim.GetDeviceSpecsByID(duuid)
 			if err != nil {
 				return fmt.Errorf("unable to get device spec for %s: %w", dname, err)
 			}
-			klog.V(7).Infof("Call GetDeviceSpecsByID(%s) returned", duuid)
 
 			// Note(JP): for a regular GPU, this canonical name is for example
 			// `gpu-0`, with the numerical suffix as of the time of writing
