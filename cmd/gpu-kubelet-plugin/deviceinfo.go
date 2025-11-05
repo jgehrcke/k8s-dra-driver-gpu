@@ -53,16 +53,17 @@ type GpuInfo struct {
 
 type PartCapacityMap map[resourceapi.QualifiedName]resourceapi.DeviceCapacity
 
-// Represents a specific, incarnated (created) MIG device.
+// Represents a specific (concrete, incarnated, created) MIG device.
 type MigDeviceInfo struct {
 	UUID    string `json:"uuid"`
 	Profile string `json:"profile"`
 
-	// Selectively serialize details to checkpoint JSON file, needed for
-	// controlled deletion.
-	ParentUUID string `json:"parentUUID"`
-	CIID       int    `json:"ciId"`
-	GIID       int    `json:"giId"`
+	// Selectively serialize details to checkpoint JSON file, needed mainly
+	// for controlled deletion.
+	ParentUUID  string `json:"parentUUID"`
+	ParentMinor int    `json:"parentMinor"`
+	CIID        int    `json:"ciId"`
+	GIID        int    `json:"giId"`
 
 	// Is the placement encoded already in CIID and GIID? In any case, for now,
 	// store this in the JSON checkpoint because in CanonicalName() we rely on
@@ -104,7 +105,7 @@ func (d *GpuInfo) String() string {
 }
 
 func (d *MigDeviceInfo) CanonicalName() string {
-	return migppCanonicalName(d.parent, d.Profile, &d.Placement.GpuInstancePlacement)
+	return migppCanonicalName(d.ParentMinor, d.Profile, &d.Placement.GpuInstancePlacement)
 }
 
 func (d *GpuInfo) PartDevAttributes() map[resourceapi.QualifiedName]resourceapi.DeviceAttribute {
