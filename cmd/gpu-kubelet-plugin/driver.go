@@ -77,6 +77,33 @@ func NewDriver(ctx context.Context, config *Config) (*driver, error) {
 	}
 	driver.pluginhelper = helper
 
+	resources := driver.GenerateDriverResources(config.flags.nodeName)
+
+	healthcheck, err := startHealthcheck(ctx, config, helper)
+	if err != nil {
+		return nil, fmt.Errorf("start healthcheck: %w", err)
+	}
+	driver.healthcheck = healthcheck
+
+	// Note(JP): from KEP 4815: "we will add client-side validation in the
+	// ResourceSlice controller helper, so that any errors in the ResourceSlices
+	// will be caught before they even are applied to the APIServer" -- the
+	// helper below is being referred to.
+	//
+	// This will be a TODO soon:
+	// https://github.com/kubernetes/kubernetes/commit/a171795e313ee9f407fef4897c1a1e2052120991
+	if err := driver.pluginhelper.PublishResources(ctx, resources); err != nil {
+		return nil, err
+	}
+
+	klog.V(4).Infof("Current kubelet plugin registration status: %s", helper.RegistrationStatus())
+
+	return driver, nil
+}
+
+// GenerateDriverResources() returns the set of DRA ResourceSlices announced by
+// this DRA driver to the system.
+func (d *driver) GenerateDriverResources(nodeName string) resourceslice.DriverResources {
 	// Note(JP): I first considered model 1, and then implemented model model 2.
 	//
 	// Model 1) Create G+1 resource slices, given G physical GPUs. 1) one slice
@@ -108,63 +135,43 @@ func NewDriver(ctx context.Context, config *Config) (*driver, error) {
 	// overly strict validation to make sure that ResourceSlice objects can't
 	// exceed the etcd limit."
 
-	var slice resourceslice.Slice
-	countersets := []resourceapi.CounterSet{}
+	var gpuslices []resourceslice.Slice
 
-	// Iterate through allocatable devices, in stable sort order (by device
-	// name) This makes the order of devices presented in a resource slice
-	// predictable (I hope).
-	for _, devname := range slices.Sorted(maps.Keys(state.allocatable)) {
-		device := state.allocatable[devname]
-		klog.V(4).Infof("About to announce device %s", devname)
+	// Iterate through map in predictable order, so that the slices get
+	// published in predictable order.
+	for _, minor := range slices.Sorted(maps.Keys(d.state.perGPUAllocatable)) {
+		allocatable := d.state.perGPUAllocatable[minor]
+		var slice resourceslice.Slice
+		countersets := []resourceapi.CounterSet{}
 
-		//for _, device := range state.allocatable.SortedPairs() {
-		// Full GPU: take note of countersets, indicating absolute capacity.
+		// Stable sort order by devicename -- makes the order of devices
+		// presented in a resource slice predictable. Good for debuggability /
+		// readability, and leads to a minimal slice diff during kubelet plugin
+		// restart (the slice diff is logged).
+		for _, devname := range slices.Sorted(maps.Keys(allocatable)) {
+			device := allocatable[devname]
+			klog.V(4).Infof("About to announce device %s", devname)
 
-		if device.Gpu != nil {
-			countersets = append(countersets, device.Gpu.PartSharedCounterSets()...)
+			// Full GPU: take note of countersets, indicating absolute capacity.
+			// For now this is expected to be one counter set.
+			if device.Gpu != nil {
+				countersets = append(countersets, device.Gpu.PartSharedCounterSets()...)
+			}
+
+			// Add all allocatable devices for this physical GPU to this slice.
+			// This includes not-yet-manifested MIG devices, and the physical
+			// GPU itself.
+			slice.Devices = append(slice.Devices, device.PartGetDevice())
 		}
-
-		// Add all allocatable devices; this includes not-yet-manifested MIG
-		// devices
-		slice.Devices = append(slice.Devices, device.PartGetDevice())
+		slice.SharedCounters = countersets
+		gpuslices = append(gpuslices, slice)
 	}
 
-	// I tried having the sharedCounters in their own slice, and that doesn't seem to work.
-	slice.SharedCounters = countersets
-
-	// var resourceSlice resourceslice.Slice
-	// for _, device := range state.allocatable {
-	// 	resourceSlice.Devices = append(resourceSlice.Devices, device.GetDevice())
-	// }
-
-	resources := resourceslice.DriverResources{
+	return resourceslice.DriverResources{
 		Pools: map[string]resourceslice.Pool{
-			config.flags.nodeName: {Slices: []resourceslice.Slice{slice}},
+			nodeName: {Slices: gpuslices},
 		},
 	}
-
-	healthcheck, err := startHealthcheck(ctx, config, helper)
-	if err != nil {
-		return nil, fmt.Errorf("start healthcheck: %w", err)
-	}
-	driver.healthcheck = healthcheck
-
-	// Note(JP): from KEP 4815: "we will add client-side validation in the
-	// ResourceSlice controller helper, so that any errors in the ResourceSlices
-	// will be caught before they even are applied to the APIServer" -- the
-	// helper below is being referred to.
-	//
-	// This will be a TODO soon:
-	// https://github.com/kubernetes/kubernetes/commit/a171795e313ee9f407fef4897c1a1e2052120991
-
-	if err := driver.pluginhelper.PublishResources(ctx, resources); err != nil {
-		return nil, err
-	}
-
-	klog.V(4).Infof("Current kubelet plugin registration status: %s", helper.RegistrationStatus())
-
-	return driver, nil
 }
 
 func (d *driver) Shutdown() error {

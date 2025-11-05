@@ -54,6 +54,11 @@ type DeviceState struct {
 	allocatable    AllocatableDevices
 	config         *Config
 
+	// Same set of allocatable devices as stored in `allocatable`, but grouped
+	// by physical GPU. This is useful for grouped announcement (e.g., when
+	// announcing one ResourceSlice per physical GPU).
+	perGPUAllocatable PerGPUMinorAllocatableDevices
+
 	nvdevlib          *deviceLib
 	checkpointManager checkpointmanager.CheckpointManager
 }
@@ -68,8 +73,7 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 		return nil, fmt.Errorf("failed to create device library: %w", err)
 	}
 
-	klog.Infof("Traverse GPU devices")
-	allocatable, err := nvdevlib.enumerateAllPossibleDevices(config)
+	allocatable, perGPUAllocatable, err := nvdevlib.enumerateAllPossibleDevices(config)
 	if err != nil {
 		return nil, fmt.Errorf("error enumerating all possible devices: %w", err)
 	}
@@ -134,7 +138,12 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 		cdi:               cdi,
 		tsManager:         tsManager,
 		mpsManager:        mpsManager,
+<<<<<<< HEAD
 		vfioPciManager:    vfioPciManager,
+=======
+		allocatable:       allocatable,
+		perGPUAllocatable: perGPUAllocatable,
+>>>>>>> de1f95a4 (implement one resource slice per GPU, fix index/minor)
 		config:            config,
 		nvdevlib:          nvdevlib,
 		checkpointManager: checkpointManager,
