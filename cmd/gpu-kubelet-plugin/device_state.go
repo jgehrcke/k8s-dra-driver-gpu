@@ -336,7 +336,7 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 		return nil, fmt.Errorf("claim not yet allocated")
 	}
 
-	klog.V(7).Infof("Preparing devices for claim %s", ResourceClaimToString(claim))
+	klog.V(6).Infof("Preparing devices for claim %s", ResourceClaimToString(claim))
 
 	// Retrieve the full set of device configs for the driver.
 	configs, err := GetOpaqueDeviceConfigs(
@@ -540,10 +540,14 @@ func (s *DeviceState) unprepareDevices(ctx context.Context, claimUID string, dev
 				klog.V(4).Infof("Unprepare: regular GPU: noop (GPU %s)", device.Gpu.Info.String())
 			case MigDeviceType:
 				mig := device.Mig.Created
-				klog.V(4).Infof("Unprepare: destroy MIG device '%s'", mig.UUID)
+				klog.V(4).Infof("Unprepare: tear down MIG device '%s' for claim '%s'", mig.UUID, claimUID)
 				err := s.nvdevlib.deleteMigDevice(mig.ParentUUID, mig.GIID, mig.CIID)
 				if err != nil {
-					//CRASH IN CANONICAL NAME
+					// Such errors are expected, but they also are somewhat
+					// worrisome. This may for example be 'error destroying GPU
+					// Instance: In use by another client' and resolve itself
+					// soon. Log an explicit warning, at least.
+					klog.Warningf("Error deleting MIG device %s: %s", device.Mig.Created.CanonicalName(), err)
 					return fmt.Errorf("error deleting MIG device %s: %w", device.Mig.Created.CanonicalName(), err)
 				}
 			}
