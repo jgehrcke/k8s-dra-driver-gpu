@@ -885,18 +885,22 @@ func (l deviceLib) createMigDevice(migpp *MigInfo) (*MigDeviceInfo, error) {
 		},
 	}
 
-	// giCapsInfoPath := fmt.Sprintf("/proc/driver/nvidia/capabilities/gpu%d/mig/gi%d/access", gpu.minor, giInfo.Id)
-	// l.parseNVCapDeviceInfo(giCapsInfoPath)
-
-	// ciCapsInfoPath := fmt.Sprintf("/proc/driver/nvidia/capabilities/gpu%d/mig/gi%d/ci%d/access", gpu.minor, giInfo.Id, ciInfo.Id)
-	// l.parseNVCapDeviceInfo(ciCapsInfoPath)
-
 	klog.V(6).Infof("%s: MIG device created on %s: %s", logpfx, gpu.String(), migDevInfo.UUID)
 	return migDevInfo, nil
 }
 
+// TODO(JP): the three function arguments provided represent that fundamental
+// 3-tuple for precisely describing a concrete MIG device. Introduce a data type
+// for just that, and pass it into the function. Notably, the MIG device's UUID
+// does not need to be known here (I hope -- should the MIG device UUID from the
+// allocated claim be checked against the to-be-deleted MIG device? Is there
+// _any_ chance that the "same" MIG device was re-created in the meantime? In
+// that case it might have the same 3-tuple, but a different UUID. Further
+// questions: are MIG UUIDs random? Can a MIG UUID be looked up given the
+// 3-tuple?
 func (l deviceLib) deleteMigDevice(parentUUID string, giId int, ciId int) error {
-	klog.V(6).Infof("Delete MIG device: %s/%d/%d", parentUUID, giId, ciId)
+	migStr := fmt.Sprintf("MIG(%s, %d, %d)", parentUUID, giId, ciId)
+	klog.V(6).Infof("Delete MIG device: %s", migStr)
 
 	if err := l.Init(); err != nil {
 		return err
@@ -908,29 +912,77 @@ func (l deviceLib) deleteMigDevice(parentUUID string, giId int, ciId int) error 
 		return fmt.Errorf("error getting device from UUID '%v': %v", parentUUID, ret)
 	}
 
-	gi, ret := parentNvmlDev.GetGpuInstanceById(giId)
-	if ret != nvml.SUCCESS {
-		return fmt.Errorf("error getting GPU instance ID for MIG device: %v", ret)
+	// The order of destroying 1) compute instance and 2) GPU instance matters.
+	// These resources are hierarchical: compute instances are created inside a
+	// GPU instance, so the parent GPU instance cannot be destroyed while
+	// children (compute instances) still exist.
+	gi, gires := parentNvmlDev.GetGpuInstanceById(giId)
+
+	// Ref docs document this error with "If device doesn't have MIG mode
+	// enabled" -- for the unlikely case that we end up in this state (MIG mode
+	// was disabled out-of-band?), this should be treated as deletion success.
+	if gires == nvml.ERROR_NOT_SUPPORTED {
+		klog.Infof("Delete %s: GetGpuInstanceById yielded ERROR_NOT_SUPPORTED: MIG disabled, treat as success", migStr)
+		return nil
 	}
 
-	ci, ret := gi.GetComputeInstanceById(ciId)
-	if ret != nvml.SUCCESS {
-		return fmt.Errorf("error getting Compute instance ID for MIG device: %v", ret)
+	// UNINITIALIZED, INVALID_ARGUMENT, NO_PERMISSION
+	if gires != nvml.SUCCESS && gires != nvml.ERROR_NOT_FOUND {
+		return fmt.Errorf("error getting GPU instance handle for MIG device: %v", ret)
 	}
-	ret = ci.Destroy()
-	if ret != nvml.SUCCESS {
-		return fmt.Errorf("error destroying Compute Instance: %v", ret)
+
+	if gires == nvml.ERROR_NOT_FOUND {
+		// In this case assume that no compute instances exist (as of the GI>CI
+		// hierarchy) and proceed with attempt-to-disable-MIG-mode
+		klog.Infof("Delete %s: GI was not found skip CI cleanup", migStr)
+		if err := l.maybeDisableMigMode(parentUUID, parentNvmlDev); err != nil {
+			return fmt.Errorf("failed maybeDisableMigMode: %w", err)
+		}
+		return nil
 	}
+
+	// Remainder, with `gi` actually being valid.
+	ci, cires := gi.GetComputeInstanceById(ciId)
+
+	// Can never be `ERROR_NOT_SUPPORTED` at this point. Can be UNINITIALIZED,
+	// INVALID_ARGUMENT, NO_PERMISSION: for those three, it's worth erroring out
+	// here (to be retried later).
+	if cires != nvml.SUCCESS && cires != nvml.ERROR_NOT_FOUND {
+		return fmt.Errorf("error getting Compute instance handle for MIG device %s: %v", migStr, ret)
+	}
+
+	// A previous, partial cleanup may actually have already deleted that. Seen
+	// in practice. Ignore, and proceed with deleting GPU instance below.
+	if cires == nvml.ERROR_NOT_FOUND {
+		klog.Infof("Delete %s: CI not found, ignore", migStr)
+	} else {
+		ret := ci.Destroy()
+		if ret != nvml.SUCCESS {
+			return fmt.Errorf("error destroying Compute instance: %v", ret)
+		}
+	}
+
+	// That can for example fail with "In use by another client", in which case
+	// we may have performed only a partical cleanup (CI already destroyed; seen
+	// in practice).
 	ret = gi.Destroy()
 	if ret != nvml.SUCCESS {
 		return fmt.Errorf("error destroying GPU Instance: %v", ret)
 	}
 
-	// Expect the parent GPU to be represented in in `l.gpuInfosByUUID` (it is, after )
-	gpu, ok := l.gpuInfosByUUID[parentUUID]
+	if err := l.maybeDisableMigMode(parentUUID, parentNvmlDev); err != nil {
+		return fmt.Errorf("failed maybeDisableMigMode: %w", err)
+	}
+
+	return nil
+}
+
+func (l deviceLib) maybeDisableMigMode(uuid string, nvmldev nvml.Device) error {
+	// Expect the parent GPU to be represented in in `l.gpuInfosByUUID`
+	gpu, ok := l.gpuInfosByUUID[uuid]
 	if !ok {
 		// TODO: this is a programming error -- panic instead
-		return fmt.Errorf("parentUUID not in gpuInfosByUUID: %s", parentUUID)
+		return fmt.Errorf("uuid not in gpuInfosByUUID: %s", uuid)
 	}
 
 	migs, err := l.getMigDevices(gpu)
@@ -944,7 +996,7 @@ func (l deviceLib) deleteMigDevice(parentUUID string, giId int, ciId int) error 
 	}
 
 	klog.V(6).Infof("Attempting to disable MIG mode for device %s", gpu.String())
-	ret, activationStatus := parentNvmlDev.SetMigMode(nvml.DEVICE_MIG_DISABLE)
+	ret, activationStatus := nvmldev.SetMigMode(nvml.DEVICE_MIG_DISABLE)
 	if ret != nvml.SUCCESS {
 		// activationStatus would return the appropriate error code upon unsuccessful activation
 		klog.Warningf("SetMigMode activationStatus (device %s): %s", gpu.String(), activationStatus)
