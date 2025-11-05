@@ -186,7 +186,13 @@ func (d *driver) PrepareResourceClaims(ctx context.Context, claims []*resourceap
 		// That's probably the health check, log that on higher verbosity level
 		klog.V(7).Infof("PrepareResourceClaims called with %d claim(s)", len(claims))
 	} else {
-		klog.V(6).Infof("PrepareResourceClaims called with %d claim(s)", len(claims))
+		// Log canonical string representation for each claim injected here --
+		// we've noticed that this can greatly facilitate debugging.
+		var rcs []string
+		for _, c := range claims {
+			rcs = append(rcs, ResourceClaimToString(c))
+		}
+		klog.V(6).Infof("PrepareResourceClaims called with %d claim(s): %v", len(claims), rcs)
 	}
 
 	results := make(map[types.UID]kubeletplugin.PrepareResult)
