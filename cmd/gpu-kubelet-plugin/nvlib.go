@@ -163,7 +163,7 @@ func (l deviceLib) alwaysShutdown() {
 }
 
 // Yield the devices that are allocatable, on this node.
-func (l deviceLib) enumerateAllPossibleDevices(config *Config) (AllocatableDevices, error) {
+func (l deviceLib) enumerateAllPossibleDevices(config *Config) (AllocatableDevices, PerGPUMinorAllocatableDevices, error) {
 	//alldevices := make(AllocatableDevices)
 
 	// TODO: make good decisions about incarnated MIG devices found during
@@ -189,33 +189,30 @@ func (l deviceLib) enumerateAllPossibleDevices(config *Config) (AllocatableDevic
 
 	// Get the full list of allocatable devices from GPU 0 in this machine
 	// (development state, iterate over full GPU devices later)
-	allocatable, err := l.GetPerGpuAllocatableDevices(0)
+
+	//allocatable, err := l.GetPerGpuAllocatableDevices(0)
+
+	perGPUAllocatable, err := l.GetPerGpuAllocatableDevices()
 	if err != nil {
-		klog.Fatalf("Error TODO %v", err)
+		return nil, nil, fmt.Errorf("error enumerating allocatable devices: %w", err)
 	}
 
-	// for idx, devices := range allocatable.DevicesPerGPU {
-	// 	for name, dev := range devices {
-	// 		alldevices[fmt.Sprintf("dev-%d-%s", idx, name)] = dev
-	// 	}
-	// }
+	all := make(AllocatableDevices)
+	for _, devices := range perGPUAllocatable {
+		for name, dev := range devices {
+			all[name] = dev
+		}
+	}
 
 	//return alldevices, nil
-	return allocatable, nil
-}
-
-// SystemInfo holds info pertinent to all devices.
-type SystemInfo struct {
-	DriverVersion     string
-	CudaDriverVersion string
+	return all, perGPUAllocatable, nil
 }
 
 // PerGpuAllocatableDevices holds the list of allocatable devices per GPU.
 // QQ(JP): what's the int-index good for/
-type PerGpuAllocatableDevices struct {
-	DevicesPerGPU map[int]AllocatableDevices
-	SystemInfo    SystemInfo
-}
+
+type GPUMinor = int
+type PerGPUMinorAllocatableDevices map[GPUMinor]AllocatableDevices
 
 // Discover all (physical, full) GPUs. Assume that the result does not change at
 // runtime. Populate `l.gpuInfosByUUID`.
@@ -243,18 +240,25 @@ type PerGpuAllocatableDevices struct {
 // set of allocatable devices to just those GPUs. If no indices are provided,
 // the full set of allocatable devices across all GPUs are returned.
 // NOTE: Both full GPUs and MIG devices are returned as part of this call.
-func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (AllocatableDevices, error) {
+func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (PerGPUMinorAllocatableDevices, error) {
+	klog.Infof("Traverse GPU devices")
+
 	if err := l.Init(); err != nil {
 		return nil, err
 	}
 	defer l.alwaysShutdown()
 
-	allocatable := make(AllocatableDevices)
+	// Flat representation of all allocatable devices
+	// allAllocatable := make(AllocatableDevices)
+	perGPUAllocatable := make(PerGPUMinorAllocatableDevices)
 
 	err := l.VisitDevices(func(i int, d nvdev.Device) error {
 		if indices != nil && !slices.Contains(indices, i) {
 			return nil
 		}
+
+		// Just those allocatable devices for this physical GPU
+		thisGPUAllocatable := make(AllocatableDevices)
 
 		gpuInfo, err := l.getGpuInfo(i, d)
 		if err != nil {
@@ -273,18 +277,21 @@ func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (AllocatableDevic
 			return fmt.Errorf("error getting MIG info for GPU %v: %w", i, err)
 		}
 
-		allocatable[gpuInfo.CanonicalName()] = &AllocatableDevice{
+		dev := &AllocatableDevice{
 			Gpu: gpuInfo,
 		}
-		//allocatable.DevicesPerGPU[gpuInfo.index] = append(allocatable.DevicesPerGPU[gpuInfo.index], gpuDevice)
+		//allAllocatable[gpuInfo.CanonicalName()] = dev
+		thisGPUAllocatable[gpuInfo.CanonicalName()] = dev
 
 		for _, migpp := range migpps {
-			allocatable[migpp.CanonicalName()] = &AllocatableDevice{
+			dev := &AllocatableDevice{
 				Mig: migpp,
 			}
-			//allocatable.Devices[gpuInfo.Index] = append(allocatable.Devices[gpuInfo.Index], migDevice)
+			//allAllocatable[migpp.CanonicalName()] = dev
+			thisGPUAllocatable[migpp.CanonicalName()] = dev
 		}
 
+		perGPUAllocatable[gpuInfo.minor] = thisGPUAllocatable
 		return nil
 	})
 	if err != nil {
@@ -293,7 +300,7 @@ func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (AllocatableDevic
 
 	// Should we try to return an object here that retains a stable sort oder
 	// over devices, by name? (a normal map does not cut it).
-	return allocatable, nil
+	return perGPUAllocatable, nil
 }
 
 // This enumerates full GPUs and currently (statically) configured MIG devices

@@ -144,9 +144,9 @@ func (i MigInfo) PartAttributes() map[resourceapi.QualifiedName]resourceapi.Devi
 		"parentUUID": {
 			StringValue: &i.Parent.UUID,
 		},
-		"parentIndex": {
-			IntValue: ptr.To(int64(i.Parent.index)), // TODO: really expose?
-		},
+		// "parentIndex": {
+		// 	IntValue: ptr.To(int64(i.Parent.index)), // TODO: really expose?
+		// },
 		"parentMinor": {
 			IntValue: ptr.To(int64(i.Parent.minor)), // TODO: really expose?
 		},

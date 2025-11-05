@@ -30,8 +30,8 @@ import (
 
 // Represents a specific, full, physical GPU device.
 type GpuInfo struct {
-	UUID                  string `json:"uuid"`
-	index                 int
+	UUID string `json:"uuid"`
+	//index                 int
 	minor                 int
 	migEnabled            bool
 	memoryBytes           uint64
@@ -146,8 +146,7 @@ func (d *GpuInfo) PartCapacities() PartCapacityMap {
 }
 
 func (d *GpuInfo) GetSharedCounterSetName() string {
-	return toRFC1123Compliant(fmt.Sprintf("gpu-%d-counter-set", d.index))
-	//return toRFC1123Compliant(fmt.Sprintf("gpu-%s-counter-set", d.UUID))
+	return toRFC1123Compliant(fmt.Sprintf("gpu-%d-counter-set", d.minor))
 }
 
 // For now, define exactly one counter set per full GPU device. Individual
