@@ -270,9 +270,7 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 	//commonEdits, err := cdi.nvcdiDevice.GetCommonEdits()
 
 	// this may initialize nvsandboxutilslib under the hood
-	klog.V(6).Infof("Call nvcdiDevice.GetCommonEdits()")
 	commonEdits, err := cdi.nvcdiClaim.GetCommonEdits()
-
 	if err != nil {
 		return fmt.Errorf("failed to get common CDI spec edits: %w", err)
 	}
