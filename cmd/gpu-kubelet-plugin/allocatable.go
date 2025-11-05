@@ -79,7 +79,7 @@ type MigInfo struct {
 }
 
 func (i *MigInfo) CanonicalName() DeviceName {
-	return migppCanonicalName(i.Parent, i.Profile.String(), &i.MemorySlices)
+	return migppCanonicalName(i.Parent.minor, i.Profile.String(), &i.MemorySlices)
 }
 
 // TODO(JP): add memory slices?
@@ -421,13 +421,14 @@ func placementString(p *nvml.GpuInstancePlacement) string {
 }
 
 // `profile string` must be what's returned by profile.String(), the
-// classical/canonical profile string notation, with a dot.
-func migppCanonicalName(parent *GpuInfo, profile string, p *nvml.GpuInstancePlacement) string {
+// classical/canonical profile string notation, with a dot. This must not crash
+// when fed with data from a MigDeviceInfo object deserialized from JSON.
+func migppCanonicalName(parentMinor int, profile string, p *nvml.GpuInstancePlacement) string {
 	placementSuffix := placementString(p)
 	// Remove the dot in e.g. `4g.95gb` -- device names must not contain dots,
 	// and this is used in a device name.
 	profname := strings.ReplaceAll(profile, ".", "")
-	return toRFC1123Compliant(fmt.Sprintf("gpu-%d-mig-%s-%s", parent.minor, profname, placementSuffix))
+	return toRFC1123Compliant(fmt.Sprintf("gpu-%d-mig-%s-%s", parentMinor, profname, placementSuffix))
 }
 
 // Return canonical name for memory slice (placement) `i` (a zero-based index).
