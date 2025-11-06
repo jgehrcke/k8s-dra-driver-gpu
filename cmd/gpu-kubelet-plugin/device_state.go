@@ -143,6 +143,20 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 		return nil, fmt.Errorf("unable to get checkpoint: %v", err)
 	}
 
+	// Check for existing 'completed' claim preparation before updating the
+	// checkpoint with 'PrepareStarted'. Otherwise, we effectively mark a
+	// perfectly prepared claim as only partially prepared, which may have
+	// negative side effects during Unprepare() (currently a noop in this case:
+	// unprepare noop: claim preparation started but not completed).
+	preparedClaim, exists := checkpoint.V2.PreparedClaims[claimUID]
+	if exists && preparedClaim.CheckpointState == ClaimCheckpointStatePrepareCompleted {
+		// Make this a noop. Associated device(s) has/ave been prepared by us.
+		// Prepare() must be idempotent, as it may be invoked more than once per
+		// claim (and actual device preparation must happen at most once).
+		klog.V(6).Infof("skip prepare: claim %v found in checkpoint", claimUID)
+		return preparedClaim.PreparedDevices.GetDevices(), nil
+	}
+
 	err = s.updateCheckpoint(func(checkpoint *Checkpoint) {
 		checkpoint.V2.PreparedClaims[claimUID] = PreparedClaim{
 			CheckpointState: ClaimCheckpointStatePrepareStarted,
@@ -153,15 +167,6 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 		return nil, fmt.Errorf("unable to update checkpoint: %w", err)
 	}
 	klog.V(6).Infof("checkpoint updated for claim %v", claimUID)
-
-	preparedClaim, exists := checkpoint.V2.PreparedClaims[claimUID]
-	if exists && preparedClaim.CheckpointState == ClaimCheckpointStatePrepareCompleted {
-		// Make this a noop. Associated device(s) has/ave been prepared by us.
-		// Prepare() must be idempotent, as it may be invoked more than once per
-		// claim (and actual device preparation must happen at most once).
-		klog.V(6).Infof("skip prepare: claim %v found in checkpoint", claimUID)
-		return preparedClaim.PreparedDevices.GetDevices(), nil
-	}
 
 	preparedDevices, err := s.prepareDevices(ctx, claim)
 	if err != nil {
