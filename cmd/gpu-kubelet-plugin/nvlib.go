@@ -451,8 +451,9 @@ func (l deviceLib) getGpuInfo(index int, device nvdev.Device) (*GpuInfo, error) 
 	}
 
 	gpuInfo := &GpuInfo{
-		UUID:                  uuid,
-		minor:                 minor,
+		UUID:  uuid,
+		minor: minor,
+		// index is not initialized here
 		migEnabled:            migEnabled,
 		memoryBytes:           memory.Total,
 		productName:           productName,
@@ -832,6 +833,11 @@ func (l deviceLib) deleteMigDevice(parentUUID string, giId int, ciId int) error 
 	// That can for example fail with "In use by another client", in which case
 	// we may have performed only a partical cleanup (CI already destroyed; seen
 	// in practice).
+
+	// Note that this operation may take O(1 s). In a machine supporting many
+	// MIG devices and significant job throughput, this may become noticeable.
+	// In a stressing test, I have seen the prep/unprep lock acquisition time
+	// out after 10 seconds, when requests pile up.
 	ret = gi.Destroy()
 	if ret != nvml.SUCCESS {
 		return fmt.Errorf("error destroying GPU Instance: %v", ret)

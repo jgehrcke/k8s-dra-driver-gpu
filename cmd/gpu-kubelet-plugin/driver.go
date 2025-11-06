@@ -230,15 +230,21 @@ func (d *driver) HandleError(ctx context.Context, err error, msg string) {
 }
 
 func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
-	release, err := d.pulock.Acquire(ctx, flock.WithTimeout(10*time.Second))
+	// queue things a little longer than 10 seconds.
+	t0 := time.Now()
+	release, err := d.pulock.Acquire(ctx, flock.WithTimeout(300*time.Second))
 	if err != nil {
 		return kubeletplugin.PrepareResult{
 			Err: fmt.Errorf("error acquiring prep/unprep lock: %w", err),
 		}
 	}
 	defer release()
+	klog.Infof("Prepare lock acquisition took %.3f s", time.Since(t0).Seconds())
 
+	t0 = time.Now()
 	devs, err := d.state.Prepare(ctx, claim)
+	klog.Infof("Prepare took %.3f s (claim %s)", time.Since(t0).Seconds(), ResourceClaimToString(claim))
+	//devs, err := d.state.Prepare(ctx, claim)
 
 	if err != nil {
 		return kubeletplugin.PrepareResult{
@@ -250,16 +256,20 @@ func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.Res
 	return kubeletplugin.PrepareResult{Devices: devs}
 }
 
-func (d *driver) nodeUnprepareResource(ctx context.Context, claimNs kubeletplugin.NamespacedObject) error {
-	release, err := d.pulock.Acquire(ctx, flock.WithTimeout(10*time.Second))
+func (d *driver) nodeUnprepareResource(ctx context.Context, claimRef kubeletplugin.NamespacedObject) error {
+	t0 := time.Now()
+	release, err := d.pulock.Acquire(ctx, flock.WithTimeout(300*time.Second))
 	if err != nil {
 		return fmt.Errorf("error acquiring prep/unprep lock: %w", err)
 	}
 	defer release()
+	klog.Infof("Unprepare lock acquisition took %.3f s", time.Since(t0).Seconds())
 
-	if err := d.state.Unprepare(ctx, string(claimNs.UID)); err != nil {
-		return fmt.Errorf("error unpreparing devices for claim %v: %w", claimNs.UID, err)
+	t0 = time.Now()
+	if err := d.state.Unprepare(ctx, string(claimRef.UID)); err != nil {
+		return fmt.Errorf("error unpreparing devices for claim %v: %w", claimRef.UID, err)
 	}
+	klog.Infof("Unprepare took %.3f s (claim %s)", time.Since(t0).Seconds(), claimRef.String())
 
 	return nil
 }
