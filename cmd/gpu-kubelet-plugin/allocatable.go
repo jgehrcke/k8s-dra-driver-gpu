@@ -132,7 +132,14 @@ func (i MigInfo) PartCapacities() PartCapacityMap {
 		"encoders":        intcap(p.EncoderCount),
 		"jpegEngines":     intcap(p.JpegCount),
 		"ofaEngines":      intcap(p.OfaCount),
-		// In the k8s world, we love announcing unit-less memory :-).
+		// In the k8s world, we love announcing unit-less memory :-). However,
+		// it's important to know that `memory` here must be announced with the
+		// unit "Bytes". The MIG profile's MemorySizeMB` property comes straight
+		// from NVML and is documented in the public API docs with "Memory size
+		// in MBytes". As it says "MB" and not MiB", one could assume that unit
+		// to be 10^6 Bytes. However Update: in nvml.h this type's property is
+		// documented with `memorySizeMB; //!< Device memory size (in MiB)`.
+		// Hence, the unit is 2^20 Bytes (1024 * 1024 Bytes).
 		"memory": intcap(int64(p.MemorySizeMB * 1024 * 1024)),
 	}
 }
