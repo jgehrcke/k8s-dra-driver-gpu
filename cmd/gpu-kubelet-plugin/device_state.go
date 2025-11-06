@@ -234,6 +234,38 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 	return preparedDevices.GetDevices(), nil
 }
 
+// Quick&dirty; call me only once during startup for now -- before starting the
+// driver logic (before accepting requests from the kubelet). This needs to be
+// thought through properly.
+func (s *DeviceState) DestroyUnknownMIGDevices() {
+	logpfx := "Destroy unknown MIG devices"
+	cp, err := s.getCheckpoint()
+	if err != nil {
+		klog.Errorf("%s: unable to get checkpoint: %s", logpfx, err)
+		return
+	}
+
+	// Get checkpointed claims in PrepareCompleted state (explicitly not
+	// PrepareStarted - those are of course good cleanup candidates in general).
+	filtered := make(PreparedClaimsByUIDV2)
+	for uid, claim := range cp.V2.PreparedClaims {
+		if claim.CheckpointState == ClaimCheckpointStatePrepareCompleted {
+			filtered[uid] = claim
+		}
+	}
+
+	var expectedDeviceNames []DeviceName
+	for _, cpclaim := range filtered {
+		expectedDeviceNames = append(expectedDeviceNames, cpclaim.Status.Allocation.Devices.Results[0].Device)
+	}
+
+	if err := s.nvdevlib.obliterateStaleMIGDevices(expectedDeviceNames); err != nil {
+		klog.Errorf("%s: obliterateStaleMIGDevices failed: %s", logpfx, err)
+	}
+
+	klog.Infof("%s: done", logpfx)
+}
+
 func (s *DeviceState) Unprepare(ctx context.Context, claimUID string) error {
 	s.Lock()
 	defer s.Unlock()
@@ -487,6 +519,16 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 				}
 			case MigDeviceType:
 				devinfo := s.allocatable[result.Device]
+				// Maybe: persist anything to disk that may be useful for
+				// cleaning up a partial prepare. Here, we have valuable
+				// information: claim UID, mig device placement (also encoded by
+				// the canonical MIG device name). Note that the
+				// `PrepareStarted` checkpoint entry really only stores e.g.
+				// `gpu-3-mig-1g24gb-5` as the only tangible piece of
+				// information that we can use to delete a specific device.
+				// However, deleting a MIG device requires parrent UUID, CI and
+				// GI ID. Those are 'hard' (not impossible) to reconstruct based
+				// on just that name.
 				migdev, err := s.nvdevlib.createMigDevice(devinfo.Mig)
 				if err != nil {
 					return nil, fmt.Errorf("error creating MIG device: %w", err)

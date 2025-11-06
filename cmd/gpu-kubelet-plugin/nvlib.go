@@ -396,6 +396,47 @@ func (l deviceLib) discoverVfioDevice(gpuInfo *GpuInfo) (*AllocatableDevice, err
 	return nil, fmt.Errorf("error discovering VFIO device by PCIe bus ID: %s", gpuInfo.pcieBusID)
 }
 
+// Tear down any MIG devices that are present and don't belong to completed claims.
+func (l deviceLib) obliterateStaleMIGDevices(expectedDeviceNames []DeviceName) error {
+	if err := l.Init(); err != nil {
+		return err
+	}
+	defer l.alwaysShutdown()
+
+	err := l.VisitDevices(func(i int, d nvdev.Device) error {
+		ginfo, err := l.getGpuInfo(i, d)
+		if err != nil {
+			return fmt.Errorf("error getting info for GPU %d: %w", i, err)
+		}
+
+		migs, err := l.getMigDevices(ginfo)
+		if err != nil {
+			return fmt.Errorf("error getting MIG devices for GPU %d: %w", i, err)
+		}
+
+		for _, mdi := range migs {
+			// That's the name we announce the device with via DRA, i.e. it's
+			// node-unique, and must (by definition) precisely describe a
+			// specific device within a node.
+			canoname := mdi.CanonicalName()
+			expected := slices.Contains(expectedDeviceNames, canoname)
+			if !expected {
+				klog.Warningf("Found unexpected MIG device (%s), destroy", canoname)
+				if err := l.deleteMigDevice(ginfo.UUID, mdi.GIID, mdi.CIID); err != nil {
+					return fmt.Errorf("could not delete unexpected MIG device (%s): %w", canoname, err)
+				}
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("error visiting devices: %w", err)
+	}
+	return nil
+}
+
 // This enumerates full GPUs and currently (statically) configured MIG devices
 // func (l deviceLib) enumerateGpusAndMigDevices(config *Config) (AllocatableDevices, error) {
 // 	if err := l.Init(); err != nil {
@@ -691,8 +732,12 @@ func (l deviceLib) getMigDevices(gpuInfo *GpuInfo) (map[string]*MigDeviceInfo, e
 		infos[uuid] = &MigDeviceInfo{
 			UUID:          uuid,
 			Profile:       migProfile.String(),
-			parent:        gpuInfo,
+			ParentMinor:   gpuInfo.minor,
+			ParentUUID:    gpuInfo.UUID,
+			CIID:          int(ciInfo.Id),
+			GIID:          int(giInfo.Id),
 			Placement:     &placement,
+			parent:        gpuInfo,
 			giProfileInfo: giProfileInfo,
 			gIInfo:        &giInfo,
 			ciProfileInfo: ciProfileInfo,
@@ -880,18 +925,20 @@ func (l deviceLib) createMigDevice(migpp *MigInfo) (*MigDeviceInfo, error) {
 		return nil, fmt.Errorf("unable to find MIG device for GI and CI just created")
 	}
 
+	// Should use two types here, one just for the 3-tuple, and then the rest of
+	// the info. Things get confusing.
 	migDevInfo := &MigDeviceInfo{
 		UUID:       uuid,
 		CIID:       int(ciInfo.Id),
 		GIID:       int(giInfo.Id),
 		ParentUUID: gpu.UUID,
-		parent:     gpu,
 		Profile:    profile.String(),
-		gIInfo:     &giInfo,
-		cIInfo:     &ciInfo,
 		Placement: &MigDevicePlacement{
 			GpuInstancePlacement: *placement,
 		},
+		gIInfo: &giInfo,
+		cIInfo: &ciInfo,
+		parent: gpu,
 	}
 
 	klog.V(6).Infof("%s: MIG device created on %s: %s", logpfx, gpu.String(), migDevInfo.UUID)
