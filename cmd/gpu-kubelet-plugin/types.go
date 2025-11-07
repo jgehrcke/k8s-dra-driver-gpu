@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	resourcev1 "k8s.io/api/resource/v1"
+	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 )
 
 const (
@@ -36,4 +37,20 @@ type UUIDProvider interface {
 
 func ResourceClaimToString(rc *resourcev1.ResourceClaim) string {
 	return fmt.Sprintf("%s/%s:%s", rc.Namespace, rc.Name, rc.UID)
+}
+
+func ClaimsToStrings(claims []*resourcev1.ResourceClaim) []string {
+	var results []string
+	for _, c := range claims {
+		results = append(results, ResourceClaimToString(c))
+	}
+	return results
+}
+
+func ClaimRefsToStrings(claimRefs []kubeletplugin.NamespacedObject) []string {
+	var results []string
+	for _, r := range claimRefs {
+		results = append(results, r.String())
+	}
+	return results
 }

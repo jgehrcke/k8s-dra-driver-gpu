@@ -199,11 +199,7 @@ func (d *driver) PrepareResourceClaims(ctx context.Context, claims []*resourceap
 	} else {
 		// Log canonical string representation for each claim injected here --
 		// we've noticed that this can greatly facilitate debugging.
-		var rcs []string
-		for _, c := range claims {
-			rcs = append(rcs, ResourceClaimToString(c))
-		}
-		klog.V(6).Infof("PrepareResourceClaims called with %d claim(s): %v", len(claims), rcs)
+		klog.V(6).Infof("Prepare called for: %v", ClaimsToStrings(claims))
 	}
 
 	results := make(map[types.UID]kubeletplugin.PrepareResult)
@@ -216,10 +212,8 @@ func (d *driver) PrepareResourceClaims(ctx context.Context, claims []*resourceap
 }
 
 func (d *driver) UnprepareResourceClaims(ctx context.Context, claimRefs []kubeletplugin.NamespacedObject) (map[types.UID]error, error) {
-	klog.V(6).Infof("UnprepareResourceClaims called with %d claim(s)", len(claimRefs))
-
+	klog.V(6).Infof("Unprepare called for: %v", ClaimRefsToStrings(claimRefs))
 	results := make(map[types.UID]error)
-
 	for _, claimRef := range claimRefs {
 		results[claimRef.UID] = d.nodeUnprepareResource(ctx, claimRef)
 	}
@@ -234,6 +228,7 @@ func (d *driver) HandleError(ctx context.Context, err error, msg string) {
 }
 
 func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
+	cs := ResourceClaimToString(claim)
 	// queue things a little longer than 10 seconds.
 	t0 := time.Now()
 	release, err := d.pulock.Acquire(ctx, flock.WithTimeout(300*time.Second))
@@ -243,37 +238,41 @@ func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.Res
 		}
 	}
 	defer release()
-	klog.Infof("Prepare lock acquisition took %.3f s", time.Since(t0).Seconds())
+	klog.V(6).Infof("t_prep_lock_acq %.3f s", time.Since(t0).Seconds())
 
-	t0 = time.Now()
+	tprep0 := time.Now()
 	devs, err := d.state.Prepare(ctx, claim)
-	klog.Infof("Prepare took %.3f s (claim %s)", time.Since(t0).Seconds(), ResourceClaimToString(claim))
-	//devs, err := d.state.Prepare(ctx, claim)
+	klog.V(6).Infof("t_prep %.3f s (claim %s)", time.Since(tprep0).Seconds(), cs)
+	klog.V(6).Infof("t_prep_total %.3f s (claim %s)", time.Since(t0).Seconds(), cs)
 
 	if err != nil {
 		return kubeletplugin.PrepareResult{
-			Err: fmt.Errorf("error preparing devices for claim %v: %w", claim.UID, err),
+			Err: fmt.Errorf("error preparing devices for claim %s: %w", cs, err),
 		}
 	}
 
-	klog.Infof("Returning newly prepared devices for claim '%v': %v", claim.UID, devs)
+	klog.Infof("Returning newly prepared devices for claim '%s': %v", cs, devs)
 	return kubeletplugin.PrepareResult{Devices: devs}
 }
 
 func (d *driver) nodeUnprepareResource(ctx context.Context, claimRef kubeletplugin.NamespacedObject) error {
+	cs := claimRef.String()
 	t0 := time.Now()
 	release, err := d.pulock.Acquire(ctx, flock.WithTimeout(300*time.Second))
 	if err != nil {
 		return fmt.Errorf("error acquiring prep/unprep lock: %w", err)
 	}
 	defer release()
-	klog.Infof("Unprepare lock acquisition took %.3f s", time.Since(t0).Seconds())
+	klog.V(6).Infof("t_unprep_lock_acq %.3f s", time.Since(t0).Seconds())
 
-	t0 = time.Now()
-	if err := d.state.Unprepare(ctx, string(claimRef.UID)); err != nil {
+	tunprep0 := time.Now()
+	err = d.state.Unprepare(ctx, string(claimRef.UID))
+	klog.V(6).Infof("t_unprep %.3f s (claim %s)", time.Since(tunprep0).Seconds(), cs)
+	klog.V(6).Infof("t_unprep_total %.3f s (claim %s)", time.Since(t0).Seconds(), cs)
+
+	if err != nil {
 		return fmt.Errorf("error unpreparing devices for claim %v: %w", claimRef.UID, err)
 	}
-	klog.Infof("Unprepare took %.3f s (claim %s)", time.Since(t0).Seconds(), claimRef.String())
 
 	return nil
 }
