@@ -272,16 +272,19 @@ func (cdi *CDIHandler) GetCommonEditsCached() (*cdiapi.ContainerEdits, error) {
 	}
 
 	// Initialize NVML in order to get the device edits.
-	if r := cdi.nvml.Init(); r != nvml.SUCCESS {
-		return nil, fmt.Errorf("failed to initialize NVML: %v", r)
-	}
-	defer func() {
-		if r := cdi.nvml.Shutdown(); r != nvml.SUCCESS {
-			klog.Warningf("failed to shutdown NVML: %v", r)
-		}
-	}()
+	// if r := cdi.nvml.Init(); r != nvml.SUCCESS {
+	// 	return nil, fmt.Errorf("failed to initialize NVML: %v", r)
+	// }
+	// defer func() {
+	// 	if r := cdi.nvml.Shutdown(); r != nvml.SUCCESS {
+	// 		klog.Warningf("failed to shutdown NVML: %v", r)
+	// 	}
+	// }()
 
+	t0 := time.Now()
 	v, err := cdi.nvcdiClaim.GetCommonEdits()
+	klog.V(6).Infof("t_cdi_get_common_edits %.3f s", time.Since(t0).Seconds())
+
 	if err != nil {
 		return nil, err
 	}
@@ -289,6 +292,15 @@ func (cdi *CDIHandler) GetCommonEditsCached() (*cdiapi.ContainerEdits, error) {
 	// Return a shallow copy, see above.
 	clone := *v
 	return &clone, nil
+}
+
+func (cdi *CDIHandler) WarmupDevSpecCache(uuids []string) {
+	for _, uuid := range uuids {
+		_, err := cdi.GetDeviceSpecsByUUIDCached(uuid)
+		if err != nil {
+			klog.Warningf("Ignore error during cache warmup: GetDeviceSpecsByUUIDCached() failed: %s", err)
+		}
+	}
 }
 
 func (cdi *CDIHandler) GetDeviceSpecsByUUIDCached(uuid string) ([]cdispec.Device, error) {
@@ -301,16 +313,20 @@ func (cdi *CDIHandler) GetDeviceSpecsByUUIDCached(uuid string) ([]cdispec.Device
 	}
 
 	// Initialize NVML in order to get the device edits.
-	if r := cdi.nvml.Init(); r != nvml.SUCCESS {
-		return nil, fmt.Errorf("failed to initialize NVML: %v", r)
-	}
-	defer func() {
-		if r := cdi.nvml.Shutdown(); r != nvml.SUCCESS {
-			klog.Warningf("failed to shutdown NVML: %v", r)
-		}
-	}()
+	// if r := cdi.nvml.Init(); r != nvml.SUCCESS {
+	// 	return nil, fmt.Errorf("failed to initialize NVML: %v", r)
+	// }
+	// defer func() {
+	// 	if r := cdi.nvml.Shutdown(); r != nvml.SUCCESS {
+	// 		klog.Warningf("failed to shutdown NVML: %v", r)
+	// 	}
+	// }()
 
+	t0 := time.Now()
+	// This has been called 28 times
 	devs, err := cdi.nvcdiClaim.GetDeviceSpecsByID(uuid)
+	klog.Infof("GetDeviceSpecsByID() called for %s", uuid)
+	klog.V(6).Infof("t_cdi_get_specs_for_uuid %.3f s", time.Since(t0).Seconds())
 	if err != nil {
 		return nil, err
 	}
@@ -456,6 +472,8 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 		}
 	}
 
+	tws0 := time.Now()
+
 	spec, err := spec.New(
 		spec.WithVendor(cdiVendor),
 		spec.WithClass(cdiClaimClass),
@@ -471,7 +489,9 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 	// of a container). Hence, Use the "transient spec" concept from CDI.
 	specName := cdiapi.GenerateTransientSpecName(cdiVendor, cdiClaimClass, claimUID)
 	klog.V(6).Infof("Writing CDI spec '%s' for claim '%s'", specName, claimUID)
-	return cdi.writeSpec(spec, specName)
+	result := cdi.writeSpec(spec, specName)
+	klog.V(6).Infof("t_gen_write_cdi_spec %.3f s", time.Since(tws0).Seconds())
+	return result
 }
 
 func (cdi *CDIHandler) DeleteClaimSpecFile(claimUID string) error {

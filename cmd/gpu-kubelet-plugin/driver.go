@@ -187,6 +187,8 @@ func (d *driver) Shutdown() error {
 		d.healthcheck.Stop()
 	}
 
+	d.state.nvdevlib.alwaysShutdown()
+
 	d.pluginhelper.Stop()
 	return nil
 }

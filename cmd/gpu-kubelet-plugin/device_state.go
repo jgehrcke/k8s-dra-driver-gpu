@@ -110,6 +110,15 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 		return nil, fmt.Errorf("unable to create CDI handler: %w", err)
 	}
 
+	var fullGPUuuids []string
+	for _, dev := range allocatable {
+		if dev.Gpu != nil {
+			fullGPUuuids = append(fullGPUuuids, dev.Gpu.UUID)
+		}
+	}
+	klog.V(2).Infof("Warming up CDI device spec cache for GPUs %v", fullGPUuuids)
+	cdi.WarmupDevSpecCache(fullGPUuuids)
+
 	var tsManager *TimeSlicingManager
 	if featuregates.Enabled(featuregates.TimeSlicingSettings) {
 		tsManager = NewTimeSlicingManager(nvdevlib)
@@ -242,6 +251,7 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 	}
 	klog.V(6).Infof("t_prep_ccsf %.3f s", time.Since(tccsf0).Seconds())
 
+	tucp20 := time.Now()
 	err = s.updateCheckpoint(ctx, func(cp *Checkpoint) {
 		cp.V2.PreparedClaims[claimUID] = PreparedClaim{
 			CheckpointState: ClaimCheckpointStatePrepareCompleted,
@@ -253,6 +263,7 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 		return nil, fmt.Errorf("unable to update checkpoint: %w", err)
 	}
 	klog.V(6).Infof("checkpoint updated for claim %v", claimUID)
+	klog.V(6).Infof("t_prep_ucp2 %.3f s", time.Since(tucp20).Seconds())
 
 	return preparedDevices.GetDevices(), nil
 }
