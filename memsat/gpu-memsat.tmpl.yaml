@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${POD_NAME}
+  labels:
+    env: batssuite
+    app: jp-mig-gen
+spec:
+  restartPolicy: OnFailure
+  containers:
+  - name: ctr0
+    # A Python image with cuda libraries and cupy
+    image: docker.io/jgehrcke/nickelpie #:v25.9.12-1
+    command: ["/bin/bash", "-c"]
+    args:
+      - |
+        nvidia-smi -L
+        # x=cupy.random.rand(int(GiB*(1024**3/8.0)),1); \
+        while : ; do
+            echo "$(date --iso-8601=seconds) -- nvidia-smi: $(nvidia-smi | grep python3 | grep -oE '[0-9]*MiB')"
+            sleep 7
+        done &
+        export PYTHONUNBUFFERED=true
+        export CUPY_ACCELERATORS="cutensor,cub"
+        python3 -c '
+        GiB=${MEM_GPU_REQUIRED_GIB}
+        import cupy
+        import time
+        import math
+        size = int(math.sqrt(GiB/5.7*(1024**3/4.0)))
+        t0 = time.monotonic()
+        deadline=time.monotonic()+45
+        for _ in range(1):
+            tr0 = time.monotonic()
+            # Allocate significant memory.
+            matrices = [cupy.random.rand(size, size, dtype=cupy.float32) for _ in range(4)]
+            print(f"rnd_duration: {time.monotonic() - tr0:7.3f} s")
+            ti0 = time.monotonic()
+            y = cupy.linalg.inv(matrices[0])
+            print(f"inv_duration: {time.monotonic() - ti0:7.3f} s")
+            # Singular Value Decomposition on a smaller matrix (compute load)
+            small = cupy.random.rand(2800, 2800, dtype=cupy.float32)
+            tsvd0 = time.monotonic()
+            y = cupy.linalg.svd(small)
+            print(f"svd_duration: {time.monotonic() - tsvd0:7.3f} s")
+        while time.monotonic() < deadline:
+            y = cupy.linalg.svd(small)
+            z = cupy.linalg.inv(small)
+        dur = time.monotonic() - t0
+        dur_per_gib = dur/(size*size*8.0/1024**3)
+        print(f"done, total_duration: {dur:7.3f} s  dur_per_gib: {dur_per_gib:6.3f}")
+        '
+        echo "quit"
+    resources:
+      claims:
+      - name: gpu
+  resourceClaims:
+  - name: gpu
+    resourceClaimTemplateName: ${RCT_NAME}
