@@ -25,6 +25,7 @@ bats::on_failure() {
   echo -e "\n\nFAILURE HOOK START"
   log_objects
   show_kubelet_plugin_error_logs
+  kubectl describe pods | grep -A20 "Events:"
   echo -e "FAILURE HOOK END\n\n"
 }
 
@@ -58,7 +59,7 @@ confirm_mod_mode_disabled_all_nodes() {
   confirm_mod_mode_disabled_all_nodes
 }
 
-@test "1 pod, 2 containers (1 MIG each, same parent)" {
+@test "1 pod, 2 containers (1 MIG each)" {
   confirm_mod_mode_disabled_all_nodes
 
   local _specpath="tests/bats/specs/gpu-multiple-mig.yaml"
