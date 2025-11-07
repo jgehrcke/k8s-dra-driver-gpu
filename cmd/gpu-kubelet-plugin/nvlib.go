@@ -763,33 +763,18 @@ func (l deviceLib) createMigDevice(migpp *MigInfo) (*MigDeviceInfo, error) {
 	}
 	klog.V(6).Infof("t_prep_create_mig_dev_cigi %.3f s", time.Since(tcgigi0).Seconds())
 
-	twalk0 := time.Now()
-	uuid := ""
-	err = walkMigDevices(device, func(i int, migDevice nvml.Device) error {
-		giID, ret := migDevice.GetGpuInstanceId()
-		if ret != nvml.SUCCESS {
-			return fmt.Errorf("error getting GPU instance ID for MIG device: %v", ret)
-		}
-		ciID, ret := migDevice.GetComputeInstanceId()
-		if ret != nvml.SUCCESS {
-			return fmt.Errorf("error getting Compute instance ID for MIG device: %v", ret)
-		}
-		if giID != int(giInfo.Id) || ciID != int(ciInfo.Id) {
-			return nil
-		}
-		uuid, ret = migDevice.GetUUID()
-		if ret != nvml.SUCCESS {
-			return fmt.Errorf("error getting UUID for MIG device: %v", ret)
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("error processing MIG device for GI and CI just created: %w", err)
+	// For obtaining the UUID, we initially walked through all MIG devices on
+	// the parent GPU to identify the one that matches the CIID and GIID of the
+	// MIG device that was just created; we then extracted the UUID from there.
+	// Under load, this 'walk all MIG devices' took up to ten seconds. This can
+	// be simplified by getting the MIG device handle from the CI and then
+	// calling the UUID API on that handle. A MIG device handle maps 1:1 to a CI
+	// in NVML, so once the CI is known, the MIG device handle and its UUID can
+	// be retrieved directly without scanning through indices.
+	uuid, ret := ciInfo.Device.GetUUID()
+	if ret != nvml.SUCCESS {
+		return nil, fmt.Errorf("error getting UUID from CI info/device for CI %d: %v", ciInfo.Id, ret)
 	}
-	if uuid == "" {
-		return nil, fmt.Errorf("unable to find MIG device for GI and CI just created")
-	}
-	klog.V(6).Infof("t_prep_create_mig_dev_walkdevs %.3f s", time.Since(twalk0).Seconds())
 
 	// Should use two types here, one just for the 3-tuple, and then the rest of
 	// the info. Things get confusing.
@@ -807,7 +792,7 @@ func (l deviceLib) createMigDevice(migpp *MigInfo) (*MigDeviceInfo, error) {
 		parent: gpu,
 	}
 
-	klog.V(6).Infof("%s: MIG device created on %s: %s", logpfx, gpu.String(), migDevInfo.UUID)
+	klog.V(6).Infof("%s: MIG device created on %s: %s (%s)", logpfx, gpu.String(), migDevInfo.CanonicalName(), migDevInfo.UUID)
 	return migDevInfo, nil
 }
 
