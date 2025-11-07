@@ -20,8 +20,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 	"slices"
 	"sync"
+	"time"
 
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -34,6 +36,7 @@ import (
 
 	configapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
 	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
+	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/flock"
 )
 
 type OpaqueDeviceConfig struct {
@@ -62,6 +65,9 @@ type DeviceState struct {
 
 	nvdevlib          *deviceLib
 	checkpointManager checkpointmanager.CheckpointManager
+	// Checkpoint read/write lock, file-based for multi-process synchronization.
+
+	cplock *flock.Flock
 }
 
 func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
@@ -135,6 +141,8 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 		return nil, fmt.Errorf("unable to create checkpoint manager: %v", err)
 	}
 
+	cpLockPath := filepath.Join(config.DriverPluginPath(), "cp.lock")
+
 	state := &DeviceState{
 		cdi:               cdi,
 		tsManager:         tsManager,
@@ -148,6 +156,7 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 		config:            config,
 		nvdevlib:          nvdevlib,
 		checkpointManager: checkpointManager,
+		cplock:            flock.NewFlock(cpLockPath),
 	}
 	state.allocatable = allocatable
 
@@ -162,30 +171,34 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 		}
 	}
 
-	if err := state.createCheckpoint(&Checkpoint{}); err != nil {
-		return nil, fmt.Errorf("unable to create checkpoint: %v", err)
+	if err := state.createCheckpoint(ctx, &Checkpoint{}); err != nil {
+		return nil, fmt.Errorf("unable to create fresh checkpoint: %v", err)
 	}
 
 	return state, nil
 }
 
 func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceClaim) ([]kubeletplugin.Device, error) {
+	tplock0 := time.Now()
 	s.Lock()
 	defer s.Unlock()
+	klog.V(6).Infof("t_prep_state_lock_acq %.3f s", time.Since(tplock0).Seconds())
 
 	claimUID := string(claim.UID)
 
-	checkpoint, err := s.getCheckpoint()
+	tgcp0 := time.Now()
+	cp, err := s.getCheckpoint(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get checkpoint: %v", err)
 	}
+	klog.V(6).Infof("t_prep_gcp %.3f s", time.Since(tgcp0).Seconds())
 
 	// Check for existing 'completed' claim preparation before updating the
 	// checkpoint with 'PrepareStarted'. Otherwise, we effectively mark a
 	// perfectly prepared claim as only partially prepared, which may have
 	// negative side effects during Unprepare() (currently a noop in this case:
 	// unprepare noop: claim preparation started but not completed).
-	preparedClaim, exists := checkpoint.V2.PreparedClaims[claimUID]
+	preparedClaim, exists := cp.V2.PreparedClaims[claimUID]
 	if exists && preparedClaim.CheckpointState == ClaimCheckpointStatePrepareCompleted {
 		// Make this a noop. Associated device(s) has/ave been prepared by us.
 		// Prepare() must be idempotent, as it may be invoked more than once per
@@ -194,8 +207,9 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 		return preparedClaim.PreparedDevices.GetDevices(), nil
 	}
 
-	err = s.updateCheckpoint(func(checkpoint *Checkpoint) {
-		checkpoint.V2.PreparedClaims[claimUID] = PreparedClaim{
+	tucp0 := time.Now()
+	err = s.updateCheckpoint(ctx, func(cp *Checkpoint) {
+		cp.V2.PreparedClaims[claimUID] = PreparedClaim{
 			CheckpointState: ClaimCheckpointStatePrepareStarted,
 			Status:          claim.Status,
 		}
@@ -204,8 +218,11 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 		return nil, fmt.Errorf("unable to update checkpoint: %w", err)
 	}
 	klog.V(6).Infof("checkpoint updated for claim %v", claimUID)
+	klog.V(6).Infof("t_prep_ucp %.3f s", time.Since(tucp0).Seconds())
 
+	tprep0 := time.Now()
 	preparedDevices, err := s.prepareDevices(ctx, claim)
+	klog.V(6).Infof("t_prep_core %.3f s (claim %s)", time.Since(tprep0).Seconds(), ResourceClaimToString(claim))
 	if err != nil {
 		return nil, fmt.Errorf("prepare devices failed: %w", err)
 	}
@@ -225,8 +242,8 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 		return nil, fmt.Errorf("unable to create CDI spec file for claim: %w", err)
 	}
 
-	err = s.updateCheckpoint(func(checkpoint *Checkpoint) {
-		checkpoint.V2.PreparedClaims[claimUID] = PreparedClaim{
+	err = s.updateCheckpoint(ctx, func(cp *Checkpoint) {
+		cp.V2.PreparedClaims[claimUID] = PreparedClaim{
 			CheckpointState: ClaimCheckpointStatePrepareCompleted,
 			Status:          claim.Status,
 			PreparedDevices: preparedDevices,
@@ -243,9 +260,9 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 // Quick&dirty; call me only once during startup for now -- before starting the
 // driver logic (before accepting requests from the kubelet). This needs to be
 // thought through properly.
-func (s *DeviceState) DestroyUnknownMIGDevices() {
+func (s *DeviceState) DestroyUnknownMIGDevices(ctx context.Context) {
 	logpfx := "Destroy unknown MIG devices"
-	cp, err := s.getCheckpoint()
+	cp, err := s.getCheckpoint(ctx)
 	if err != nil {
 		klog.Errorf("%s: unable to get checkpoint: %s", logpfx, err)
 		return
@@ -272,22 +289,24 @@ func (s *DeviceState) DestroyUnknownMIGDevices() {
 	klog.Infof("%s: done", logpfx)
 }
 
-func (s *DeviceState) Unprepare(ctx context.Context, claimUID string) error {
+func (s *DeviceState) Unprepare(ctx context.Context, claimRef kubeletplugin.NamespacedObject) error {
 	s.Lock()
 	defer s.Unlock()
+	klog.V(6).Infof("Unprepare() for claim '%s'", claimRef.String())
 
-	checkpoint, err := s.getCheckpoint()
+	checkpoint, err := s.getCheckpoint(ctx)
 	if err != nil {
 		return fmt.Errorf("unable to get checkpoint: %v", err)
 	}
 
+	claimUID := string(claimRef.UID)
 	pc, exists := checkpoint.V2.PreparedClaims[claimUID]
 	if !exists {
 		// Not an error: if this claim UID is not in the checkpoint then this
 		// device was never prepared or has already been unprepared (assume that
 		// Prepare+Checkpoint are done transactionally). Note that
 		// claimRef.String() contains namespace, name, UID.
-		klog.Infof("unprepare noop: claim not found in checkpoint data: %v", claimUID)
+		klog.V(2).Infof("Unprepare noop: claim not found in checkpoint data: %v", claimRef.String())
 		return nil
 	}
 
@@ -315,11 +334,11 @@ func (s *DeviceState) Unprepare(ctx context.Context, claimUID string) error {
 		//
 		// `gpu-0-mig-1g24gb-0` does uniquely identify a profile/placement that
 		// we could attempt to delete here -- but that doesn't seem safe.
-		klog.Infof("unprepare noop: claim preparation started but not completed for claim '%s' (devices: %v)", claimUID, pc.Status.Allocation.Devices.Results)
+		klog.Infof("unprepare noop: claim preparation started but not completed for claim '%s' (devices: %v)", claimRef.String(), pc.Status.Allocation.Devices.Results)
 		return nil
 	case ClaimCheckpointStatePrepareCompleted:
 		if err := s.unprepareDevices(ctx, claimUID, pc.PreparedDevices); err != nil {
-			return fmt.Errorf("unprepare devices failed: %w", err)
+			return fmt.Errorf("unprepare devices failed for claim %s: %w", claimRef.String(), err)
 		}
 	default:
 		return fmt.Errorf("unsupported ClaimCheckpointState: %v", pc.CheckpointState)
@@ -339,42 +358,89 @@ func (s *DeviceState) Unprepare(ctx context.Context, claimUID string) error {
 		}
 	}
 	if err := s.cdi.DeleteClaimSpecFile(claimUID); err != nil {
-		return fmt.Errorf("unable to delete CDI spec file for claim: %w", err)
+		return fmt.Errorf("unable to delete CDI spec file for claim %s: %w", claimRef.String(), err)
 	}
 
-	// Unprepare succeeded; reflect that in the node-local checkpoint data.
-	delete(checkpoint.V2.PreparedClaims, claimUID)
-	if err := s.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFileBasename, checkpoint); err != nil {
-		return fmt.Errorf("unable to sync to checkpoint: %v", err)
+	// Mutate checkpoint reflecting that all devices for this claim have been
+	// unprepared, by virtue of removing its UID from the PreparedClaims map.
+	err = s.deleteClaimFromCheckpoint(ctx, claimRef)
+	if err != nil {
+		return fmt.Errorf("error deleting claim from checkpoint: %w", err)
 	}
-
 	return nil
 }
 
-func (s *DeviceState) createCheckpoint(cp *Checkpoint) error {
-	return s.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFileBasename, cp)
+func (s *DeviceState) createCheckpoint(ctx context.Context, cp *Checkpoint) error {
+	klog.V(6).Info("acquire cplock (create cp)")
+	release, err := s.cplock.Acquire(ctx, flock.WithTimeout(10*time.Second))
+	if err != nil {
+		return fmt.Errorf("error acquiring cplock: %w", err)
+	}
+	defer release()
+	klog.V(6).Info("acquired cplock")
+	err = s.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFileBasename, cp)
+	klog.V(6).Info("create cp: done")
+	return err
 }
 
-func (s *DeviceState) getCheckpoint() (*Checkpoint, error) {
+func (s *DeviceState) getCheckpoint(ctx context.Context) (*Checkpoint, error) {
+	klog.V(6).Info("acquire cplock (get cp)")
+	release, err := s.cplock.Acquire(ctx, flock.WithTimeout(10*time.Second))
+	if err != nil {
+		return nil, fmt.Errorf("error acquiring cplock: %w", err)
+	}
+	defer release()
+	klog.V(6).Info("acquired cplock")
+
 	checkpoint := &Checkpoint{}
 	if err := s.checkpointManager.GetCheckpoint(DriverPluginCheckpointFileBasename, checkpoint); err != nil {
 		return nil, err
 	}
+	klog.V(6).Info("cp read")
 	return checkpoint.ToLatestVersion(), nil
 }
 
-func (s *DeviceState) updateCheckpoint(f func(*Checkpoint)) error {
-	checkpoint, err := s.getCheckpoint()
+// Read checkpoint from store, perform mutation, and write checkpoint back. Any
+// mutation of the checkpoint must go through this function. The
+// read-mutate-write sequence must be performed under a lock: we must be
+// conceptually certain that multiple read-mutate-write actions never overlap.
+func (s *DeviceState) updateCheckpoint(ctx context.Context, mutate func(*Checkpoint)) error {
+	klog.V(6).Info("acquire cplock (update cp)")
+	release, err := s.cplock.Acquire(ctx, flock.WithTimeout(10*time.Second))
+	if err != nil {
+		return fmt.Errorf("error acquiring cplock: %w", err)
+	}
+	defer release()
+	klog.V(6).Info("acquired cplock")
+
+	// get checkpoint w/o acquiring lock (we have it already)
+	checkpoint := &Checkpoint{}
+	if err := s.checkpointManager.GetCheckpoint(DriverPluginCheckpointFileBasename, checkpoint); err != nil {
+		return err
+	}
 	if err != nil {
 		return fmt.Errorf("unable to get checkpoint: %w", err)
 	}
 
-	f(checkpoint)
+	mutate(checkpoint)
 
-	if err := s.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFileBasename, checkpoint); err != nil {
+	// create w/o lock acqu, we already have the lock
+	err = s.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFileBasename, checkpoint)
+	if err != nil {
 		return fmt.Errorf("unable to create checkpoint: %w", err)
 	}
+	klog.V(6).Info("cp updated")
+	return nil
+}
 
+func (s *DeviceState) deleteClaimFromCheckpoint(ctx context.Context, claimRef kubeletplugin.NamespacedObject) error {
+	err := s.updateCheckpoint(ctx, func(cp *Checkpoint) {
+		delete(cp.V2.PreparedClaims, string(claimRef.UID))
+	})
+	if err != nil {
+		return fmt.Errorf("unable to update checkpoint: %w", err)
+	}
+	klog.V(6).Infof("Deleted claim from checkpoint: %s", claimRef.String())
 	return nil
 }
 
@@ -535,7 +601,9 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 				// However, deleting a MIG device requires parrent UUID, CI and
 				// GI ID. Those are 'hard' (not impossible) to reconstruct based
 				// on just that name.
+				tcmig0 := time.Now()
 				migdev, err := s.nvdevlib.createMigDevice(devinfo.Mig)
+				klog.V(6).Infof("t_prep_create_mig_dev %.3f s (claim %s)", time.Since(tcmig0).Seconds(), ResourceClaimToString(claim))
 				if err != nil {
 					return nil, fmt.Errorf("error creating MIG device: %w", err)
 				}
