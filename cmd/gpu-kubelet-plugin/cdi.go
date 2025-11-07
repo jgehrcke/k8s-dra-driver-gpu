@@ -264,33 +264,16 @@ func cdiCharDevNode(i *nvcapDeviceInfo) *cdispec.DeviceNode {
 func (cdi *CDIHandler) GetCommonEditsCached() (*cdiapi.ContainerEdits, error) {
 	key := "commonEdits"
 	if v, ok := cdi.specCache.Get(key); ok {
-		return v.(*cdiapi.ContainerEdits), nil
+		edits := v.(*cdiapi.ContainerEdits)
+		// Return a shallow copy so that cache entry consumer is less likely to
+		// mutate the cache entry.
+		clone := *edits
+		return &clone, nil
 	}
-	v, err := cdi.nvcdiClaim.GetCommonEdits()
-	if err != nil {
-		return nil, err
-	}
-	cdi.specCache.Set(key, v, time.Duration(5*time.Minute))
-	return v, nil
-}
 
-func (cdi *CDIHandler) GetDeviceSpecsByUUIDCached(uuid string) ([]cdispec.Device, error) {
-	key := uuid
-	if v, ok := cdi.specCache.Get(key); ok {
-		return v.([]cdispec.Device), nil
-	}
-	v, err := cdi.nvcdiClaim.GetDeviceSpecsByID(uuid)
-	if err != nil {
-		return nil, err
-	}
-	cdi.specCache.Set(key, v, time.Duration(5*time.Minute))
-	return v, nil
-}
-
-func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices PreparedDevices) error {
 	// Initialize NVML in order to get the device edits.
 	if r := cdi.nvml.Init(); r != nvml.SUCCESS {
-		return fmt.Errorf("failed to initialize NVML: %v", r)
+		return nil, fmt.Errorf("failed to initialize NVML: %v", r)
 	}
 	defer func() {
 		if r := cdi.nvml.Shutdown(); r != nvml.SUCCESS {
@@ -298,6 +281,46 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 		}
 	}()
 
+	v, err := cdi.nvcdiClaim.GetCommonEdits()
+	if err != nil {
+		return nil, err
+	}
+	cdi.specCache.Set(key, v, time.Duration(5*time.Minute))
+	// Return a shallow copy, see above.
+	clone := *v
+	return &clone, nil
+}
+
+func (cdi *CDIHandler) GetDeviceSpecsByUUIDCached(uuid string) ([]cdispec.Device, error) {
+	key := uuid
+	if v, ok := cdi.specCache.Get(key); ok {
+		devs := v.([]cdispec.Device)
+		clone := make([]cdispec.Device, len(devs))
+		copy(clone, devs)
+		return clone, nil
+	}
+
+	// Initialize NVML in order to get the device edits.
+	if r := cdi.nvml.Init(); r != nvml.SUCCESS {
+		return nil, fmt.Errorf("failed to initialize NVML: %v", r)
+	}
+	defer func() {
+		if r := cdi.nvml.Shutdown(); r != nvml.SUCCESS {
+			klog.Warningf("failed to shutdown NVML: %v", r)
+		}
+	}()
+
+	devs, err := cdi.nvcdiClaim.GetDeviceSpecsByID(uuid)
+	if err != nil {
+		return nil, err
+	}
+	cdi.specCache.Set(key, devs, time.Duration(5*time.Minute))
+	clone := make([]cdispec.Device, len(devs))
+	copy(clone, devs)
+	return clone, nil
+}
+
+func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices PreparedDevices) error {
 	// Generate those parts of the container spec that are note device-specific.
 	// To inject things like driver library mounts and meta devices.
 	// commonEdits, err := cdi.nvcdiDevice.GetCommonEdits() this may initialize
@@ -338,7 +361,10 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 
 			} else if dev.Mig != nil {
 				// Inject parent dev node
+				// Other dev nodes specific to this MIG device are injected 'manually' below.
 				duuid = dev.Mig.Created.parent.UUID
+				// Get (copy of) cached device spec (is safe to be mutated below,
+				// w/o compromising cache).
 				dspecsmig, err := cdi.GetDeviceSpecsByUUIDCached(duuid)
 				if err != nil {
 					return fmt.Errorf("unable to get device spec for %s: %w", dname, err)
@@ -347,6 +373,8 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 
 			} else {
 				duuid = dev.Gpu.Info.UUID
+				// Get (copy of) cached device spec (is safe to be mutated below,
+				// w/o compromising cache).
 				dspecsgpu, err := cdi.GetDeviceSpecsByUUIDCached(duuid)
 				if err != nil {
 					return fmt.Errorf("unable to get device spec for %s: %w", dname, err)
@@ -415,8 +443,7 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 
 			klog.V(7).Infof("Number of device nodes about to inject for device %s: %d", dname, len(dspec.ContainerEdits.DeviceNodes))
 
-			//spew.Printf("%s=%#v\n", "deviceSpecs", deviceSpecs)
-
+			// spew.Printf("%s=%#v\n", "deviceSpecs", deviceSpecs)
 			// If there edits passed as part of the device config state (set on
 			// the group), add them to the spec of each device in that group.
 			if group.ConfigState.containerEdits != nil {
