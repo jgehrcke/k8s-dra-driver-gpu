@@ -26,6 +26,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/klog/v2"
@@ -686,6 +687,7 @@ func (l deviceLib) createMigDevice(migpp *MigInfo) (*MigDeviceInfo, error) {
 	profile := migpp.Profile
 	placement := &migpp.MemorySlices
 
+	tcmigdev0 := time.Now()
 	if err := l.Init(); err != nil {
 		return nil, err
 	}
@@ -727,7 +729,9 @@ func (l deviceLib) createMigDevice(migpp *MigInfo) (*MigDeviceInfo, error) {
 	} else {
 		klog.V(6).Infof("%s: MIG mode already enabled for device %s", logpfx, gpu.String())
 	}
+	klog.V(6).Infof("t_prep_create_mig_dev_preamble %.3f s", time.Since(tcmigdev0).Seconds())
 
+	tcgigi0 := time.Now()
 	giProfileInfo, ret := device.GetGpuInstanceProfileInfo(profileInfo.GIProfileID)
 	if ret != nvml.SUCCESS {
 		return nil, fmt.Errorf("error getting GPU instance profile info for '%v': %v", profile, ret)
@@ -757,7 +761,9 @@ func (l deviceLib) createMigDevice(migpp *MigInfo) (*MigDeviceInfo, error) {
 	if ret != nvml.SUCCESS {
 		return nil, fmt.Errorf("error getting GPU instance info for '%v': %v", profile, ret)
 	}
+	klog.V(6).Infof("t_prep_create_mig_dev_cigi %.3f s", time.Since(tcgigi0).Seconds())
 
+	twalk0 := time.Now()
 	uuid := ""
 	err = walkMigDevices(device, func(i int, migDevice nvml.Device) error {
 		giID, ret := migDevice.GetGpuInstanceId()
@@ -783,6 +789,7 @@ func (l deviceLib) createMigDevice(migpp *MigInfo) (*MigDeviceInfo, error) {
 	if uuid == "" {
 		return nil, fmt.Errorf("unable to find MIG device for GI and CI just created")
 	}
+	klog.V(6).Infof("t_prep_create_mig_dev_walkdevs %.3f s", time.Since(twalk0).Seconds())
 
 	// Should use two types here, one just for the 3-tuple, and then the rest of
 	// the info. Things get confusing.
@@ -808,7 +815,7 @@ func (l deviceLib) createMigDevice(migpp *MigInfo) (*MigDeviceInfo, error) {
 // 3-tuple for precisely describing a concrete MIG device. Introduce a data type
 // for just that, and pass it into the function. Notably, the MIG device's UUID
 // does not need to be known here (I hope -- should the MIG device UUID from the
-// allocated claim be checked against the to-be-deleted MIG device? Is there
+// allocated claim be checked against the to-be-deleted MIG dqevice? Is there
 // _any_ chance that the "same" MIG device was re-created in the meantime? In
 // that case it might have the same 3-tuple, but a different UUID. Further
 // questions: are MIG UUIDs random? Can a MIG UUID be looked up given the

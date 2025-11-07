@@ -56,7 +56,7 @@ func NewDriver(ctx context.Context, config *Config) (*driver, error) {
 
 	// Could be done in NewDeviceState, but I want to make sure that the
 	// checkpoint logic is intact -- that's most obvious here.
-	state.DestroyUnknownMIGDevices()
+	state.DestroyUnknownMIGDevices(ctx)
 
 	puLockPath := filepath.Join(config.DriverPluginPath(), DriverPrepUprepFlockFileName)
 
@@ -231,13 +231,13 @@ func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.Res
 	cs := ResourceClaimToString(claim)
 	// queue things a little longer than 10 seconds.
 	t0 := time.Now()
-	release, err := d.pulock.Acquire(ctx, flock.WithTimeout(300*time.Second))
-	if err != nil {
-		return kubeletplugin.PrepareResult{
-			Err: fmt.Errorf("error acquiring prep/unprep lock: %w", err),
-		}
-	}
-	defer release()
+	// release, err := d.pulock.Acquire(ctx, flock.WithTimeout(300*time.Second))
+	// if err != nil {
+	// 	return kubeletplugin.PrepareResult{
+	// 		Err: fmt.Errorf("error acquiring prep/unprep lock: %w", err),
+	// 	}
+	// }
+	// defer release()
 	klog.V(6).Infof("t_prep_lock_acq %.3f s", time.Since(t0).Seconds())
 
 	tprep0 := time.Now()
@@ -266,12 +266,12 @@ func (d *driver) nodeUnprepareResource(ctx context.Context, claimRef kubeletplug
 	klog.V(6).Infof("t_unprep_lock_acq %.3f s", time.Since(t0).Seconds())
 
 	tunprep0 := time.Now()
-	err = d.state.Unprepare(ctx, string(claimRef.UID))
+	err = d.state.Unprepare(ctx, claimRef)
 	klog.V(6).Infof("t_unprep %.3f s (claim %s)", time.Since(tunprep0).Seconds(), cs)
 	klog.V(6).Infof("t_unprep_total %.3f s (claim %s)", time.Since(t0).Seconds(), cs)
 
 	if err != nil {
-		return fmt.Errorf("error unpreparing devices for claim %v: %w", claimRef.UID, err)
+		return fmt.Errorf("error unpreparing devices for claim %v: %w", claimRef.String(), err)
 	}
 
 	return nil
