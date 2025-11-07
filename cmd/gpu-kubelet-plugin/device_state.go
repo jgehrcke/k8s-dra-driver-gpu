@@ -147,12 +147,9 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 		cdi:               cdi,
 		tsManager:         tsManager,
 		mpsManager:        mpsManager,
-<<<<<<< HEAD
 		vfioPciManager:    vfioPciManager,
-=======
 		allocatable:       allocatable,
 		perGPUAllocatable: perGPUAllocatable,
->>>>>>> de1f95a4 (implement one resource slice per GPU, fix index/minor)
 		config:            config,
 		nvdevlib:          nvdevlib,
 		checkpointManager: checkpointManager,
@@ -179,10 +176,10 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 }
 
 func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceClaim) ([]kubeletplugin.Device, error) {
-	tplock0 := time.Now()
-	s.Lock()
-	defer s.Unlock()
-	klog.V(6).Infof("t_prep_state_lock_acq %.3f s", time.Since(tplock0).Seconds())
+	// tplock0 := time.Now()
+	// s.Lock()
+	// defer s.Unlock()
+	// klog.V(6).Infof("t_prep_state_lock_acq %.3f s", time.Since(tplock0).Seconds())
 
 	claimUID := string(claim.UID)
 
@@ -234,13 +231,16 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 				klog.Warningf("allocatable not found for device: %v", device.DeviceName)
 				continue
 			}
+			// Why do we do that -- what does that mean?
 			s.allocatable.RemoveSiblingDevices(allocatableDevice)
 		}
 	}
 
+	tccsf0 := time.Now()
 	if err := s.cdi.CreateClaimSpecFile(claimUID, preparedDevices); err != nil {
 		return nil, fmt.Errorf("unable to create CDI spec file for claim: %w", err)
 	}
+	klog.V(6).Infof("t_prep_ccsf %.3f s", time.Since(tccsf0).Seconds())
 
 	err = s.updateCheckpoint(ctx, func(cp *Checkpoint) {
 		cp.V2.PreparedClaims[claimUID] = PreparedClaim{
@@ -405,6 +405,7 @@ func (s *DeviceState) getCheckpoint(ctx context.Context) (*Checkpoint, error) {
 // read-mutate-write sequence must be performed under a lock: we must be
 // conceptually certain that multiple read-mutate-write actions never overlap.
 func (s *DeviceState) updateCheckpoint(ctx context.Context, mutate func(*Checkpoint)) error {
+	tucp0 := time.Now()
 	klog.V(6).Info("acquire cplock (update cp)")
 	release, err := s.cplock.Acquire(ctx, flock.WithTimeout(10*time.Second))
 	if err != nil {
@@ -430,6 +431,7 @@ func (s *DeviceState) updateCheckpoint(ctx context.Context, mutate func(*Checkpo
 		return fmt.Errorf("unable to create checkpoint: %w", err)
 	}
 	klog.V(6).Info("cp updated")
+	klog.V(6).Infof("t_checkpoint_update_total %.3f s", time.Since(tucp0).Seconds())
 	return nil
 }
 
