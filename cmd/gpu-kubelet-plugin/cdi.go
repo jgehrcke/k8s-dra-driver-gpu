@@ -19,6 +19,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/sirupsen/logrus"
@@ -30,6 +31,8 @@ import (
 	transformroot "github.com/NVIDIA/nvidia-container-toolkit/pkg/nvcdi/transform/root"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
+
+	utilcache "k8s.io/apimachinery/pkg/util/cache"
 	cdiapi "tags.cncf.io/container-device-interface/pkg/cdi"
 	cdiparser "tags.cncf.io/container-device-interface/pkg/parser"
 	cdispec "tags.cncf.io/container-device-interface/specs-go"
@@ -60,6 +63,8 @@ type CDIHandler struct {
 	devRoot           string
 	targetDriverRoot  string
 	nvidiaCDIHookPath string
+
+	specCache *utilcache.Expiring
 
 	cdiRoot string
 	vendor  string
@@ -141,6 +146,8 @@ func NewCDIHandler(opts ...cdiOption) (*CDIHandler, error) {
 		h.cache = cache
 	}
 
+	h.specCache = utilcache.NewExpiring()
+
 	return h, nil
 }
 
@@ -199,6 +206,32 @@ func cdiCharDevNode(i *nvcapDeviceInfo) *cdispec.DeviceNode {
 	}
 }
 
+func (cdi *CDIHandler) GetCommonEditsCached() (*cdiapi.ContainerEdits, error) {
+	key := "commonEdits"
+	if v, ok := cdi.specCache.Get(key); ok {
+		return v.(*cdiapi.ContainerEdits), nil
+	}
+	v, err := cdi.nvcdiClaim.GetCommonEdits()
+	if err != nil {
+		return nil, err
+	}
+	cdi.specCache.Set(key, v, time.Duration(5*time.Minute))
+	return v, nil
+}
+
+func (cdi *CDIHandler) GetDeviceSpecsByUUIDCached(uuid string) ([]cdispec.Device, error) {
+	key := uuid
+	if v, ok := cdi.specCache.Get(key); ok {
+		return v.([]cdispec.Device), nil
+	}
+	v, err := cdi.nvcdiClaim.GetDeviceSpecsByID(uuid)
+	if err != nil {
+		return nil, err
+	}
+	cdi.specCache.Set(key, v, time.Duration(5*time.Minute))
+	return v, nil
+}
+
 func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices PreparedDevices) error {
 	// Initialize NVML in order to get the device edits.
 	if r := cdi.nvml.Init(); r != nvml.SUCCESS {
@@ -211,11 +244,10 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 	}()
 
 	// Generate those parts of the container spec that are note device-specific.
-	// Inject things like driver library mounts and meta devices.
-	//commonEdits, err := cdi.nvcdiDevice.GetCommonEdits()
-
-	// this may initialize nvsandboxutilslib under the hood
-	commonEdits, err := cdi.nvcdiClaim.GetCommonEdits()
+	// To inject things like driver library mounts and meta devices.
+	// commonEdits, err := cdi.nvcdiDevice.GetCommonEdits() this may initialize
+	// nvsandboxutilslib under the hood cdi.nvcdiClaim.GetCommonEdits()
+	commonEdits, err := cdi.GetCommonEditsCached()
 	if err != nil {
 		return fmt.Errorf("failed to get common CDI spec edits: %w", err)
 	}
@@ -256,8 +288,8 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 			// in the driver ..." Probably triggered here:
 			// https://github.com/NVIDIA/nvidia-container-toolkit/blob/e03ac3644d63ec30849dffebd0170811e4903e78/internal/platform-support/dgpu/nvsandboxutils.go#L67
 			//
-			klog.V(7).Infof("Call nvcdiDevice.GetDeviceSpecsByID(%s)", duuid)
-			dspecs, err := cdi.nvcdiClaim.GetDeviceSpecsByID(duuid)
+			//klog.V(7).Infof("Call nvcdiDevice.GetDeviceSpecsByID(%s)", duuid)
+			dspecs, err := cdi.GetDeviceSpecsByUUIDCached(duuid)
 			if err != nil {
 				return fmt.Errorf("unable to get device spec for %s: %w", dname, err)
 			}
