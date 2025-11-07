@@ -1,5 +1,5 @@
 # Scenario: 1 pod, two containers. Each container asking for a dedicated MIG
-# device, spawned on the same parent GPU.
+# device
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaimTemplate
 metadata:
@@ -20,9 +20,10 @@ spec:
           selectors:
           - cel:
               expression: "device.attributes['gpu.nvidia.com'].profile == '3g.95gb'"
-      constraints:
-      - requests: []
-        matchAttribute: "gpu.nvidia.com/parentUUID"
+      # test elsewhere: spawned on the same parent GPU --
+      # constraints:
+      # - requests: []
+      #   matchAttribute: "gpu.nvidia.com/parentUUID"
 ---
 apiVersion: v1
 kind: Pod

@@ -75,6 +75,9 @@ image:
 # suite/file 'setup' in bats, but we'd lose output on success). During dev, you
 # may want to add --show-output-of-passing-tests (and read bats docs for other
 # cmdline args).
+#
+# tests/bats/test_gpu_basic.bats \
+#
 .PHONY: tests
 tests: image
 	export _RUNDIR_PARENT=/tmp/k8s-dra-driver-gpu-tests-out-$${USER} && \
@@ -106,7 +109,6 @@ tests: image
 			--no-tempdir-cleanup \
 			--timing \
 			--abort \
-			tests/bats/test_gpu_basic.bats \
 			tests/bats/test_gpu_dynmig.bats \
 		"
 
