@@ -7,8 +7,11 @@ choice() {
     #python3 -c \
     #    'import random; print(random.choice([14, 15, 16, 17, 18, 19, 20, 21, 22, 45, 48, 70, 80, 95, "full"]))'
 
+    #python3 -c \
+    #    'import random; print(random.choice([16, 17, 20, 20, 20, 21, 20, 21, 21, 21, 21, 40, 41]))'
+
     python3 -c \
-        'import random; print(random.choice([16, 17, 20, 20, 20, 21, 20, 21, 21, 21, 21, 40, 41]))'
+        'import random; print(random.choice([16, 17, 18, 18, 20, 21, 40, 42, 41, 40, 80, 70]))'
     }
 
 gen_and_submit() {
@@ -16,17 +19,10 @@ gen_and_submit() {
     #echo "prepare: $PODIDX"
     local CHOICE=$(choice)
     local MEM_GPU_REQUIRED_GB="$CHOICE"
-    local REQ_DEVICE="mig"
+    #local REQ_DEVICE="mig"
     #local REQ_DEVICE="gpu"
     local RCT_NAME="rct-mig-${MEM_GPU_REQUIRED_GB}gb"
     local REQ_NAME="req-mig-min-${MEM_GPU_REQUIRED_GB}gb"
-
-    if  [[ $CHOICE == "full" ]]; then
-        MEM_GPU_REQUIRED_GB="180"
-        REQ_DEVICE="gpu"
-        RCT_NAME="rct-full-gpu"
-        REQ_NAME="req-full-gpu"
-    fi
 
     # Device capacity is announced in 'proper units', i.e. translation to GiB is
     # required. Using `bc` without `-l`: scale=0, so all divisions truncate to
