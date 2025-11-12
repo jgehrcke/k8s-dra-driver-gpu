@@ -3,24 +3,17 @@ set -o nounset
 #set -o errexit
 
 choice() {
-    # Numbers in GB (not GiB), that's what's often used in MIG profile names.
-    #python3 -c \
-    #    'import random; print(random.choice([14, 15, 16, 17, 18, 19, 20, 21, 22, 45, 48, 70, 80, 95, "full"]))'
-
-    #python3 -c \
-    #    'import random; print(random.choice([16, 17, 20, 20, 20, 21, 20, 21, 21, 21, 21, 40, 41]))'
-
+    # Numbers in GB (not GiB); what's used in MIG profile names.
     python3 -c \
         'import random; print(random.choice([16, 17, 18, 18, 20, 21, 40, 42, 41, 40, 80, 70]))'
     }
 
 gen_and_submit() {
     local PODIDX=$(printf "%04d" "$1")
-    #echo "prepare: $PODIDX"
-    local CHOICE=$(choice)
-    local MEM_GPU_REQUIRED_GB="$CHOICE"
-    #local REQ_DEVICE="mig"
-    #local REQ_DEVICE="gpu"
+    local MEM_GPU_REQUIRED_GB=$(choice)
+
+    # local REQ_DEVICE="mig"
+    # local REQ_DEVICE="gpu"
     local RCT_NAME="rct-mig-${MEM_GPU_REQUIRED_GB}gb"
     local REQ_NAME="req-mig-min-${MEM_GPU_REQUIRED_GB}gb"
 
@@ -34,14 +27,14 @@ gen_and_submit() {
     local POD_NAME="pod-memsat-${PODIDX}-${REQ_DEVICE}-$(printf "%03d" "$MEM_GPU_REQUIRED_GB")gb-${RNDSFX}"
 
     # inject local variables into environment of just this `envsubst` child
-    # process.
-    # note that if shell option errexit is set then 'already exists' here terminates the function.
+    # process. note that if shell option errexit is set then 'already exists'
+    # here terminates the function.
     RCT_NAME="$RCT_NAME" REQ_NAME="$REQ_NAME" REQ_DEVICE="$REQ_DEVICE" MEM_GPU_REQUIRED_GIB="$MEM_GPU_REQUIRED_GIB" \
         envsubst < gpu-rc.tmpl.yaml | kubectl apply -f - 2>&1 | grep -v 'already exists'
 
     # when called at large-ish concurrency, this might silently fail (absence of
     # 'created' in output however is revealing that problem)
-    #output=$(envsubst < gpu-memsat.tmpl.yaml | kubectl apply -f -)
+    # output=$(envsubst < gpu-memsat.tmpl.yaml | kubectl apply -f -)
     local output=""
 
     while true; do
@@ -73,11 +66,7 @@ wait
 
 # Any out of error messages?
 # Did anything fail?
-
 # kubectl logs -l app=jp-mig-gen --prefix | grep OutOf
-
 # kubectl get pods --namespace=default --field-selector=status.phase=Failed
-
 # Some textual output reflecting the valuable compute work
-
 # kubectl logs -l app=jp-mig-gen --prefix | grep duration | sort
