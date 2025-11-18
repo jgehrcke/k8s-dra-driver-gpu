@@ -411,7 +411,8 @@ func (m *ComputeDomainManager) removeNodeFromComputeDomain(ctx context.Context) 
 	// Update status and (upon success) store the latest version of the object
 	// (as returned by the API server) in the mutation cache.
 	newCD.Status.Nodes = updatedNodes
-	if _, err := m.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomains(newCD.Namespace).UpdateStatus(ctx, newCD, metav1.UpdateOptions{}); err != nil {
+	newCD, err = m.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomains(newCD.Namespace).UpdateStatus(ctx, newCD, metav1.UpdateOptions{})
+	if err != nil {
 		return fmt.Errorf("error removing node from ComputeDomain status: %w", err)
 	}
 	m.mutationCache.Mutation(newCD)
