@@ -1,16 +1,16 @@
 #!/bin/bash
 set -o nounset
-#set -o errexit
 
-choice() {
-    # Numbers in GB (not GiB); what's used in MIG profile names.
+
+memchoice() {
+    # Numbers in GB (not GiB).
     python3 -c \
-        'import random; print(random.choice([16, 17, 18, 18, 20, 21, 40, 42, 41, 40, 80, 70]))'
+        'import random; print(random.choice([16, 17, 18, 18, 20, 21, 40, 42, 41, 40, 45, 70]))'
     }
 
 gen_and_submit() {
     local PODIDX=$(printf "%04d" "$1")
-    local MEM_GPU_REQUIRED_GB=$(choice)
+    local MEM_GPU_REQUIRED_GB=$(memchoice)
 
     # local REQ_DEVICE="mig"
     # local REQ_DEVICE="gpu"

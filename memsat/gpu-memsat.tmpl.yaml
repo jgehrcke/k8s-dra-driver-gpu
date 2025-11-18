@@ -22,7 +22,7 @@ spec:
         import math
         size = int(math.sqrt(GiB/40.0*(1024**3/4.0)))
         t0 = time.monotonic()
-        matrices = [cupy.random.rand(size, size, dtype=cupy.float32) for _ in range(17)]
+        matrices = [cupy.random.rand(size, size, dtype=cupy.float32) for _ in range(15)]
         for _ in range(16):
             time.sleep(0.4)
             tr0 = time.monotonic()

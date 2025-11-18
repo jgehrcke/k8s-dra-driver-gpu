@@ -19,5 +19,3 @@ spec:
                 &&
                 (has(device.attributes['gpu.nvidia.com'].profile) ?
                   device.attributes['gpu.nvidia.com'].profile != '3g.95gb' : true)
-
-# Maybe add criterion: profile name _not_ 1g47 and 3g95.
