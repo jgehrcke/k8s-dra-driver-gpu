@@ -20,7 +20,7 @@
 ARG TOOLKIT_CONTAINER_IMAGE=unknown
 
 # Run build with binaries native to the current build platform.
-FROM --platform=$BUILDPLATFORM nvcr.io/nvidia/base/ubuntu:jammy-20250619 AS build
+FROM --platform=$BUILDPLATFORM nvcr.io/nvidia/base/ubuntu:jammy-20251013 AS build
 
 # Require arg to be provided (set invalid default value).
 ARG GOLANG_VERSION=x.x.x
