@@ -215,18 +215,20 @@ func (m *ComputeDomainManager) onAddOrUpdate(ctx context.Context, obj any) error
 		return nil
 	}
 
-	// Update node info in ComputeDomain.
-	if err := m.UpdateComputeDomainNodeInfo(ctx, cd); err != nil {
-		return fmt.Errorf("error updating node info in ComputeDomain: %w", err)
+	// Update node info in ComputeDomain, if required.
+	if err := m.EnsureNodeInfoInCD(ctx, cd); err != nil {
+		return fmt.Errorf("CD update: failed to insert/update node info in CD: %w", err)
 	}
 
 	return nil
 }
 
-// UpdateComputeDomainNodeInfo updates the Nodes field in the ComputeDomain with
-// info about the ComputeDomain daemon running on this node. Upon success, it
-// reflects the mutation in `m.mutationCache`.
-func (m *ComputeDomainManager) UpdateComputeDomainNodeInfo(ctx context.Context, cd *nvapi.ComputeDomain) (rerr error) {
+// EnsureNodeInfoInCD makes sure that the current node (by node name) is
+// represented in the `Nodes` field in the ComputeDomain object, and that it
+// reports the IP address of this current pod running the CD daemon. If mutation
+// is needed (first insertion, or IP address update) and successful, it reflects
+// the mutation in `m.mutationCache`.
+func (m *ComputeDomainManager) EnsureNodeInfoInCD(ctx context.Context, cd *nvapi.ComputeDomain) (rerr error) {
 	var nodeInfo *nvapi.ComputeDomainNode
 
 	// Create a deep copy of the ComputeDomain to avoid modifying the original
@@ -248,6 +250,7 @@ func (m *ComputeDomainManager) UpdateComputeDomainNodeInfo(ctx context.Context, 
 
 	// If there is one and its IP is the same as this one, we are done
 	if nodeInfo != nil && nodeInfo.IPAddress == m.config.podIP {
+		klog.V(6).Infof("EnsureNodeInfoInCD noop: pod IP unchanged (%s)", m.config.podIP)
 		return nil
 	}
 
@@ -263,7 +266,8 @@ func (m *ComputeDomainManager) UpdateComputeDomainNodeInfo(ctx context.Context, 
 			Name:     m.config.nodeName,
 			CliqueID: m.config.cliqueID,
 			Index:    nextIndex,
-			Status:   nvapi.ComputeDomainStatusNotReady,
+			// This is going to be switched to Ready by podmanager.
+			Status: nvapi.ComputeDomainStatusNotReady,
 		}
 
 		klog.Infof("CD status does not contain node name '%s' yet, try to insert myself: %v", m.config.nodeName, nodeInfo)
@@ -288,7 +292,7 @@ func (m *ComputeDomainManager) UpdateComputeDomainNodeInfo(ctx context.Context, 
 	}
 	m.mutationCache.Mutation(newCD)
 
-	klog.V(2).Infof("Successfully updated CD")
+	klog.Infof("Successfully inserted/updated node in CD (nodeinfo: %v)", nodeInfo)
 	return nil
 }
 
