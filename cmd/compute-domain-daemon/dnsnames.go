@@ -33,7 +33,7 @@ import (
 const (
 	hostsFilePath = "/etc/hosts"
 	dnsNamePrefix = "compute-domain-daemon-"
-	dnsNameFormat = dnsNamePrefix + "%d"
+	dnsNameFormat = dnsNamePrefix + "%03d"
 )
 
 // IPToDNSNameMap holds a map of IP Addresses to DNS names.
