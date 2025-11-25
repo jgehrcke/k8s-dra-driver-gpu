@@ -33,7 +33,10 @@ import (
 )
 
 const (
-	informerResyncPeriod = 10 * time.Minute
+	// Detecting when a CD daemon transitions from NotReady to Ready (based on
+	// the startup probe) at the moment sometimes requires an informer resync,
+	// see https://github.com/NVIDIA/k8s-dra-driver-gpu/issues/742.
+	informerResyncPeriod = 4 * time.Minute
 	mutationCacheTTL     = time.Hour
 )
 
