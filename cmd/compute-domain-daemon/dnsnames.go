@@ -17,6 +17,7 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
 	"os"
@@ -33,7 +34,7 @@ import (
 const (
 	hostsFilePath = "/etc/hosts"
 	dnsNamePrefix = "compute-domain-daemon-"
-	dnsNameFormat = dnsNamePrefix + "%03d"
+	dnsNameFormat = dnsNamePrefix + "%04d"
 )
 
 // IPToDNSNameMap holds a map of IP Addresses to DNS names.
@@ -110,13 +111,20 @@ func (m *DNSNameManager) LogDNSNameMappings() {
 		return
 	}
 
-	klog.Infof("Current compute-domain-daemon mappings:")
+	// Sort alphabetically by DNS name (map value) -> sort ips (map keys) based
+	// on their corresponding values.
+	var ips []string
+	for ip := range m.ipToDNSName {
+		ips = append(ips, ip)
+	}
 
-	// Sort alphabetically by DNS name. Right-justify DNS names by adding
-	// whitespace to the left.
-	for _, ip := range slices.Sorted(maps.Keys(m.ipToDNSName)) {
+	slices.SortFunc(ips, func(a, b string) int {
+		return cmp.Compare(m.ipToDNSName[a], m.ipToDNSName[b])
+	})
+
+	for _, ip := range ips {
 		dnsname := m.ipToDNSName[ip]
-		klog.Infof("%26s -> %s", dnsname, ip)
+		klog.Infof("%s -> %s", dnsname, ip)
 	}
 }
 
