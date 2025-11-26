@@ -18,7 +18,7 @@ MODULE := github.com/NVIDIA/$(DRIVER_NAME)
 
 REGISTRY ?= nvcr.io/nvidia
 
-VERSION  ?= v25.8.0
+VERSION  ?= v25.8.1
 
 # vVERSION represents the version with a guaranteed v-prefix
 # Note: this is probably not consumed in our build chain.
