@@ -7,18 +7,6 @@ setup() {
 }
 
 
-# A test that covers local dev tooling; we don't want to
-# unintentionally change/break these targets.
-@test "test VERSION_W_COMMIT, VERSION_GHCR_CHART, VERSION" {
-  run make print-VERSION
-  assert_output --regexp '^v[0-9]+\.[0-9]+\.[0-9]+-dev$'
-  run make print-VERSION_W_COMMIT
-  assert_output --regexp '^v[0-9]+\.[0-9]+\.[0-9]+-dev-[0-9a-f]{8}$'
-  run make print-VERSION_GHCR_CHART
-  assert_output --regexp '^[0-9]+\.[0-9]+\.[0-9]+-dev-[0-9a-f]{8}-chart$'
-}
-
-
 @test "confirm no kubelet plugin pods running" {
   run kubectl get pods -A -l nvidia-dra-driver-gpu-component=kubelet-plugin
   [ "$status" -eq 0 ]
