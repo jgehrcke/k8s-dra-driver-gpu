@@ -62,8 +62,8 @@ build:
 		$(DOCKER_BUILD_OPTIONS) \
 		$(DOCKER_BUILD_PLATFORM_OPTIONS) \
 		--tag $(IMAGE) \
-		--cache-from type=gha \
-		--cache-to type=gha,mode=max \
+		--cache-to type=registry,ref=ghcr.io/nvidia/k8s-dra-driver-gpu:buildcache,mode=max \
+		--cache-from type=registry,ref=ghcr.io/nvidia/k8s-dra-driver-gpu:buildcache \
 		--build-arg GOLANG_VERSION="$(GOLANG_VERSION)" \
 		--build-arg BASH_STATIC_GIT_REF="$(BASH_STATIC_GIT_REF)" \
 		--build-arg TOOLKIT_CONTAINER_IMAGE="$(TOOLKIT_CONTAINER_IMAGE)" \

@@ -37,19 +37,8 @@ jobs:
         with:
           image: tonistiigi/binfmt:qemu-v7.0.0-28
 
-      - name: Expose GitHub Runtime
-        run: |
-          echo "ACTIONS_RUNTIME_TOKEN=$ACTIONS_ID_TOKEN_REQUEST_TOKEN" >> $GITHUB_ENV
-          echo "ACTIONS_CACHE_URL=$ACTIONS_CACHE_URL" >> $GITHUB_ENV
-          echo $ACTIONS_CACHE_URL
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-        with:
-          driver: docker-container
-          driver-opts: |
-            env.ACTIONS_CACHE_URL=${{ env.ACTIONS_CACHE_URL }}
-            env.ACTIONS_RUNTIME_TOKEN=${{ env.ACTIONS_RUNTIME_TOKEN }}
 
       # - name: Set up Docker Buildx
       #   uses: docker/setup-buildx-action@v3
@@ -64,17 +53,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-
       - name: Build image
         env:
           IMAGE_NAME: ghcr.io/nvidia/k8s-dra-driver-gpu
           PUSH_ON_BUILD: true
           BUILD_MULTI_ARCH_IMAGES: "true"
         run: |
-          # https://stackoverflow.com/a/74795460/145400
-          #export ACTIONS_CACHE_URL=$(echo "$ACTIONS_ID_TOKEN_REQUEST_URL" | grep -Po 'https://[^/]+/[^/]+/' | sed 's/pipelines/artifactcache/')
-          #export ACTIONS_RUNTIME_TOKEN=$ACTIONS_ID_TOKEN_REQUEST_TOKEN
-
           make print-VERSION
           # shape: ghcr.io/nvidia/k8s-dra-driver-gpu:v25.12.0-dev-CCCCCCCC
           export IMAGE_TAG="$(make print-VERSION)-$(echo $GITHUB_SHA | cut -c1-8)"
