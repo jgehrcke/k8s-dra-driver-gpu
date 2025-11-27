@@ -272,7 +272,7 @@ func (d *AllocatableDevice) PartGetDevice() resourceapi.Device {
 	case MigDeviceType:
 		return d.Mig.PartGetDevice()
 	case VfioDeviceType:
-		return d.Vfio.GetDevice()
+		panic("not yet implemented")
 	}
 	panic("unexpected type for AllocatableDevice")
 }
@@ -395,6 +395,7 @@ func (d AllocatableDevices) VfioDeviceUUIDs() []string {
 
 func (d AllocatableDevices) Names() []string {
 	names := append(d.GpuUUIDs(), d.PossibleMigDeviceNames()...)
+	names = append(names, d.VfioDeviceUUIDs()...)
 	slices.Sort(names)
 	return names
 }
@@ -450,13 +451,6 @@ func memsliceCounterName(i int) string {
 // Helper for creating an integer-based DeviceCapacity. Accept any integer type.
 func intcap[T constraints.Integer](i T) resourceapi.DeviceCapacity {
 	return resourceapi.DeviceCapacity{Value: *resource.NewQuantity(int64(i), resource.BinarySI)}
-}
-
-func (d AllocatableDevices) UUIDs() []string {
-	uuids := append(d.GpuUUIDs(), d.MigDeviceUUIDs()...)
-	uuids = append(uuids, d.VfioDeviceUUIDs()...)
-	slices.Sort(uuids)
-	return uuids
 }
 
 func (d AllocatableDevices) RemoveSiblingDevices(device *AllocatableDevice) {

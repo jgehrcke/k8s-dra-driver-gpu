@@ -252,12 +252,13 @@ func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.Res
 			Err: fmt.Errorf("error preparing devices for claim %s: %w", cs, err),
 		}
 	}
-	if err = d.publishResources(ctx, d.state.config); err != nil {
-		return kubeletplugin.PrepareResult{
-			Err: fmt.Errorf("error preparing devices for claim %v: %w", claim.UID, err),
-		}
 
-	}
+	// Note(JP): below was added for vfio -- TODO: review, clarify
+	// if err = d.publishResources(ctx, d.state.config); err != nil {
+	// 	return kubeletplugin.PrepareResult{
+	// 		Err: fmt.Errorf("error preparing devices for claim %v: %w", claim.UID, err),
+	// 	}
+	// }
 
 	klog.Infof("Returning newly prepared devices for claim '%s': %v", cs, devs)
 	return kubeletplugin.PrepareResult{Devices: devs}
@@ -282,28 +283,32 @@ func (d *driver) nodeUnprepareResource(ctx context.Context, claimRef kubeletplug
 		return fmt.Errorf("error unpreparing devices for claim %v: %w", claimRef.String(), err)
 	}
 
-	return d.publishResources(ctx, d.state.config)
-}
-
-func (d *driver) publishResources(ctx context.Context, config *Config) error {
-	// Enumerate the set of GPU, MIG and VFIO devices and publish them
-	var resourceSlice resourceslice.Slice
-	for _, device := range d.state.allocatable {
-		resourceSlice.Devices = append(resourceSlice.Devices, device.GetDevice())
-	}
-
-	resources := resourceslice.DriverResources{
-		Pools: map[string]resourceslice.Pool{
-			config.flags.nodeName: {Slices: []resourceslice.Slice{resourceSlice}},
-		},
-	}
-
-	if err := d.pluginhelper.PublishResources(ctx, resources); err != nil {
-		return err
-	}
-
 	return nil
+
+	// Note(JP): below was added for vfio -- TODO: review, clarify
+	// return d.publishResources(ctx, d.state.config)
 }
+
+// This is a non-partitionable devices way of announcing resources.
+// func (d *driver) publishResources(ctx context.Context, config *Config) error {
+// 	// Enumerate the set of GPU, MIG and VFIO devices and publish them
+// 	var resourceSlice resourceslice.Slice
+// 	for _, device := range d.state.allocatable {
+// 		resourceSlice.Devices = append(resourceSlice.Devices, device.GetDevice())
+// 	}
+
+// 	resources := resourceslice.DriverResources{
+// 		Pools: map[string]resourceslice.Pool{
+// 			config.flags.nodeName: {Slices: []resourceslice.Slice{resourceSlice}},
+// 		},
+// 	}
+
+// 	if err := d.pluginhelper.PublishResources(ctx, resources); err != nil {
+// 		return err
+// 	}
+
+// 	return nil
+// }
 
 // TODO: implement loop to remove CDI files from the CDI path for claimUIDs
 //       that have been removed from the AllocatedClaims map.

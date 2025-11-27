@@ -39,26 +39,16 @@ import (
 )
 
 const (
-	cdiVendor = "k8s." + DriverName
-
-	//cdiDeviceClass = "device"
-	//cdiDeviceKind  = cdiVendor + "/" + cdiDeviceClass
-	cdiClaimClass = "claim"
-	//cdiClaimKind  = cdiVendor + "/" + cdiClaimClass
-
-	cdiBaseSpecIdentifier = "base"
-	cdiVfioSpecIdentifier = "vfio"
-	//cdiBaseSpecIdentifier = "base"
-
+	cdiVendor      = "k8s." + DriverName
+	cdiClaimClass  = "claim"
 	defaultCDIRoot = "/var/run/cdi"
 	procNvCapsPath = "/proc/driver/nvidia/capabilities"
 )
 
 type CDIHandler struct {
-	logger   *logrus.Logger
-	nvml     nvml.Interface
-	nvdevice nvdevice.Interface
-	//nvcdiDevice       nvcdi.Interface
+	logger            *logrus.Logger
+	nvml              nvml.Interface
+	nvdevice          nvdevice.Interface
 	nvcdiClaim        nvcdi.Interface
 	cache             *cdiapi.Cache
 	driverRoot        string
@@ -68,9 +58,8 @@ type CDIHandler struct {
 
 	specCache *utilcache.Expiring
 
-	cdiRoot string
-	vendor  string
-	//deviceClass string
+	cdiRoot    string
+	vendor     string
 	claimClass string
 }
 
@@ -337,7 +326,7 @@ func (cdi *CDIHandler) GetDeviceSpecsByUUIDCached(uuid string) ([]cdispec.Device
 }
 
 func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices PreparedDevices) error {
-	// Generate those parts of the container spec that are note device-specific.
+	// Generate those parts of the container spec that are not device-specific.
 	// To inject things like driver library mounts and meta devices.
 	// commonEdits, err := cdi.nvcdiDevice.GetCommonEdits() this may initialize
 	// nvsandboxutilslib under the hood cdi.nvcdiClaim.GetCommonEdits()
@@ -360,18 +349,18 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 			duuid := ""
 
 			// Construct claim-specific CDI device name in accordance with the
-			// naming convention is encoded in GetClaimDeviceName() below.
+			// naming convention encoded in GetClaimDeviceName() below.
 			dname := fmt.Sprintf("%s-%s", claimUID, dev.CanonicalName())
 
 			var dspec cdispec.Device
 			if dev.Type() == VfioDeviceType {
-				// Note(JP): overwrite commonEdits -- this wasn't used in the
-				// original vfio dev PR, but shouldn't we also use
-				// `cdi.nvcdiDevice.GetCommonEdits()` here? Also: assume that
-				// all devices in `preparedDevices` are vfio devices.
+				// Note(JP): overwrite commonEdits (potentially multiple times
+				// with the same 'content'). Shouldn't we also use
+				// `cdi.nvcdiDevice.GetCommonEdits()` here (wasn't done in the
+				// original vfio PR)? Also: assume that all devices in
+				// `preparedDevices` are vfio devices; a mixture would
 				commonEdits = GetVfioCommonCDIContainerEdits()
 				dspec = cdispec.Device{
-					Name:           dname,
 					ContainerEdits: *GetVfioCDIContainerEdits(dev.Vfio.Info).ContainerEdits,
 				}
 
@@ -422,8 +411,6 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 			// dynamically generate spec during prepare(). That is an argument
 			// for always dynamically generating also full-GPU CDI spec during
 			// prepare().
-			dspec.Name = dname
-			deviceSpecs = append(deviceSpecs, dspec)
 
 			// I've found a situation where `GetDeviceSpecsByID(duuid)` returned
 			// just one instead of three dev nodes; just the dev node for the
@@ -446,6 +433,7 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 			// 	klog.Warningf("insufficent number of dev nodes returned for MIG device by GetDeviceSpecsByID(): %d", len(devnodes))
 			// 	//return fmt.Errorf("bad result from GetDeviceSpecsByID() for MIG device -- restart GPU Operator?")
 			// }
+			dspec.Name = dname
 			if dev.Mig != nil {
 				devnodesForMig, err := cdi.GetDevNodesForMigDevice(dev.Mig.Created)
 				if err != nil {

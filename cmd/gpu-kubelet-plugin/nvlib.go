@@ -342,21 +342,21 @@ func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (PerGPUMinorAlloc
 	return perGPUAllocatable, nil
 }
 
-func (l deviceLib) discoverMigDevicesByGPU(gpuInfo *GpuInfo) (AllocatableDeviceList, error) {
-	var devices AllocatableDeviceList
-	migs, err := l.getMigDevices(gpuInfo)
-	if err != nil {
-		return nil, fmt.Errorf("error getting MIG devices for GPU %q: %w", gpuInfo.CanonicalName(), err)
-	}
+// func (l deviceLib) discoverMigDevicesByGPU(gpuInfo *GpuInfo) (AllocatableDeviceList, error) {
+// 	var devices AllocatableDeviceList
+// 	migs, err := l.getMigDevices(gpuInfo)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("error getting MIG devices for GPU %q: %w", gpuInfo.CanonicalName(), err)
+// 	}
 
-	for _, migDeviceInfo := range migs {
-		mig := &AllocatableDevice{
-			Mig: migDeviceInfo,
-		}
-		devices = append(devices, mig)
-	}
-	return devices, nil
-}
+// 	for _, migDeviceInfo := range migs {
+// 		mig := &AllocatableDevice{
+// 			Mig: migDeviceInfo,
+// 		}
+// 		devices = append(devices, mig)
+// 	}
+// 	return devices, nil
+// }
 
 // TODO: Need go-nvlib util for this.
 func (l deviceLib) discoverGPUByPCIBusID(pcieBusID string) (*AllocatableDevice, AllocatableDeviceList, error) {
@@ -379,10 +379,10 @@ func (l deviceLib) discoverGPUByPCIBusID(pcieBusID string) (*AllocatableDevice, 
 		if err != nil {
 			return fmt.Errorf("error getting info for GPU %d: %w", i, err)
 		}
-		migs, err = l.discoverMigDevicesByGPU(gpuInfo)
-		if err != nil {
-			return fmt.Errorf("error discovering MIG devices for GPU %q: %w", gpuInfo.CanonicalName(), err)
-		}
+		// migs, err = l.discoverMigDevicesByGPU(gpuInfo)
+		// if err != nil {
+		// 	return fmt.Errorf("error discovering MIG devices for GPU %q: %w", gpuInfo.CanonicalName(), err)
+		// }
 		// If no MIG devices are found, allow VFIO devices.
 		gpuInfo.vfioEnabled = len(migs) == 0
 		gpu = &AllocatableDevice{
