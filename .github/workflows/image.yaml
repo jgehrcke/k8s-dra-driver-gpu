@@ -37,14 +37,12 @@ jobs:
         with:
           image: tonistiigi/binfmt:qemu-v7.0.0-28
 
-      # 1. Scrape the hidden variables
       - name: Expose GitHub Runtime
         run: |
           echo "ACTIONS_RUNTIME_TOKEN=$ACTIONS_ID_TOKEN_REQUEST_TOKEN" >> $GITHUB_ENV
           echo "ACTIONS_CACHE_URL=$ACTIONS_CACHE_URL" >> $GITHUB_ENV
-          # Note: If ACTIONS_CACHE_URL is empty, your runner might not support it.
+          echo $ACTIONS_CACHE_URL
 
-      # 2. Force them into the builder
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
