@@ -62,6 +62,8 @@ build:
 		$(DOCKER_BUILD_OPTIONS) \
 		$(DOCKER_BUILD_PLATFORM_OPTIONS) \
 		--tag $(IMAGE) \
+		--cache-from type=gha \
+		--cache-to type=gha,mode=max \
 		--build-arg GOLANG_VERSION="$(GOLANG_VERSION)" \
 		--build-arg BASH_STATIC_GIT_REF="$(BASH_STATIC_GIT_REF)" \
 		--build-arg TOOLKIT_CONTAINER_IMAGE="$(TOOLKIT_CONTAINER_IMAGE)" \
