@@ -27,10 +27,6 @@ on:
 
 jobs:
   build:
-    permissions:
-      id-token: write # Required to generate the runtime token
-      contents: read
-
     runs-on: linux-amd64-cpu4
     steps:
       - uses: actions/checkout@v6
