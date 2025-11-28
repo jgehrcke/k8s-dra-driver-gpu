@@ -66,8 +66,22 @@ ifeq ($(CACHE_FROM_GHCR), true)
 	--cache-from type=registry,ref=ghcr.io/nvidia/k8s-dra-driver-gpu:buildcache
 endif
 
+# Use mount cache (on host fs) for Go build&mod cache:
+# 1) Local dev: yes (store on host: get all benefits of the Go build cache).
+# 2) CI: no (cannot preserve it across builds; store it in container image layer
+#    instead for _only some_ of its benefits).
+#
+# Use the `CI` environment variable to distinguish both cases. Note that
+# `/mc/go/build-cache` `/mc/go/pkg/mod` are hard-coded locations in the
+# Dockerfile; backed by a mount cache (use those two locations in local dev,
+# don't use them in CI).
+GOCACHE = /mc/go/build-cache
+GOMODCACHE = /mc/go/pkg/mod
+ifeq ($(CI), true)
+	GOCACHE=/go/build-cache
+	GOMODCACHE=/go/pkg/mod
+endif
 
-# Build the container image
 build:
 	DOCKER_BUILDKIT=1 \
 		$(DOCKER) buildx build --pull \
@@ -80,6 +94,8 @@ build:
 		--build-arg TOOLKIT_CONTAINER_IMAGE="$(TOOLKIT_CONTAINER_IMAGE)" \
 		--build-arg VERSION="$(VERSION)" \
 		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
+		--build-arg GOCACHE="$(GOCACHE)" \
+		--build-arg GOMODCACHE="$(GOMODCACHE)" \
 		--progress=plain \
 		-f $(DOCKERFILE) \
 		$(CURDIR)

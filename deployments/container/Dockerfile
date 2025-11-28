@@ -25,6 +25,12 @@ FROM --platform=$BUILDPLATFORM nvcr.io/nvidia/base/ubuntu:jammy-20251013 AS buil
 ARG GOLANG_VERSION=x.x.x
 ARG BASH_STATIC_GIT_REF=unknown
 
+# Controlled by Makefile: location(s) of Go build/mod cache. CI: in image layer.
+# Local dev: mount cache (host filesystem). ARGs are available as environment
+# variables in RUN steps of the same stage (relied upon below).
+ARG GOCACHE
+ARG GOMODCACHE
+
 # BUILDARCH, TARGETARCH (and others) are defined in the global scope by
 # BuiltKit. BUILDARCH is the architecture of the build platform. TARGETARCH is
 # set via the --platform arg provided to the `docker buildx build ...` command.
@@ -34,66 +40,59 @@ ARG BASH_STATIC_GIT_REF=unknown
 ARG BUILDARCH
 ARG TARGETARCH
 
-# Install dependencies for Go build. Clear apt cache because we cache this build
-# layer on GHCR in CI, and we should make an effort to keep it small.
+# Dependencies for Go build. Clear apt cache: we cache this build layer on GHCR
+# in CI, and should make an effort to keep it small.
 RUN apt-get update && apt-get install -y \
         wget time make \
         gcc \
         gcc-aarch64-linux-gnu \
         gcc-x86-64-linux-gnu && \
-        rm -rf /var/cache/apt/archives /var/lib/apt/lists/*.
+        rm -rf /var/cache/apt/archives /var/lib/apt/lists/*
 
-RUN wget -nv -O - https://go.dev/dl/go${GOLANG_VERSION}.linux-${BUILDARCH}.tar.gz \
-    | tar -C /usr/local -xz
-
+RUN wget -nv -O - https://go.dev/dl/go${GOLANG_VERSION}.linux-${BUILDARCH}.tar.gz | tar -C /usr/local -xz
 ENV GOPATH=/go
-ENV GOCACHE=/go/build-cache
-ENV GOMODCACHE=/go/pkg/mod
 ENV PATH=$GOPATH/bin:/usr/local/go/bin:$PATH
-
 WORKDIR /build
 
-# Perform bulk of the build regardless of GIT_COMMIT, and only invalidate this
-# layer when `vendor` changes. Retain Go build cache across image builds. The
-# cache is backed by a dedicated persistent volume (automatically mounted into
-# the container at the target path when the below RUN instruction is executed).
-# Note that `type=cache` directories are also included when exporting/importing
-# the layer cache using `--cache-to/from`. Without this cache, on my machine,
-# the builds takes 1-2 minutes for a trivial code changes; with the cache the
-# same change compiles in less than 10 seconds. Generally, it makes sense to
-# take advantage here of both, an image layer cache and the GO caches because
-# Copy only what is required for the go vendor build (rarely invalidate layer).
-COPY vendor ./vendor
+# Create a layer that only invalidates when _rarely_ changing Go code changes
+# (`vendor`, `pkg`, ..). Goal: useful Go build&mod cache in an image layer (for
+# CI). The mount cache below is only used in local dev (ignored in CI because
+# GO[MOD]CACHE does not point to these paths).
+# https://github.com/moby/buildkit/blob/master/frontend/dockerfile/docs/reference.md#example-cache-go-packages
 COPY go.mod go.sum ./
-RUN --mount=type=cache,target=${GOCACHE},id=gocache \
-    --mount=type=cache,target=${GOMODCACHE},id=gomodcache \
+COPY --parents pkg api internal vendor ./
+RUN --mount=type=cache,target=/mc/go/build-cache,id=gocache \
+    --mount=type=cache,target=/mc/go/pkg/mod,id=gomodcache \
     case "$TARGETARCH" in "$BUILDARCH") cc=gcc;; arm64) cc=aarch64-linux-gnu-gcc;; amd64) cc=x86_64-linux-gnu-gcc;; esac && \
     CC=${cc} CGO_ENABLED=1 GOARCH=${TARGETARCH} time go build -mod=vendor ./...
 
-# Copy only what is required for the vedor build: only invalidate go build
-# artifact layer when absolutely required.
-RUN mkdir deployments && mkdir hack && mkdir /artifacts
+# Copy everything else (and only) what is required for the Go build ('Explicit
+# include' philosophy). Goal: invalidate layer only when absolutely required.
+RUN mkdir /build/deployments /build/hack
 COPY common.mk versions.mk Makefile ./
 COPY deployments/devel deployments/devel
 COPY hack/golang-version.sh hack/golang-version.sh
 COPY hack/toolkit-container-image.sh hack/toolkit-container-image.sh
-COPY --parents cmd api pkg internal ./
+COPY cmd ./cmd
 
-# The VERSION and GIT_COMMIT env vars are consumed by the `make` target below.
-# Changing input invalidates the cached image layer.
+# The vars VERSION & GIT_COMMIT are consumed (as environment variables) by the
+# `make` target below. That implies that the cached image layer is invalidated
+# for every commit. Hence, during local dev, there's great benefit from backing
+# the Go build/mod cache by a mount cache.
 ARG VERSION="N/A"
 ARG GIT_COMMIT="unknown"
-RUN --mount=type=cache,target=${GOCACHE},id=gocache \
-    --mount=type=cache,target=${GOMODCACHE},id=gomodcache \
+RUN mkdir /artifacts
+RUN --mount=type=cache,target=/mc/go/build-cache,id=gocache \
+    --mount=type=cache,target=/mc/go/pkg/mod,id=gomodcache \
     case "$TARGETARCH" in "$BUILDARCH") cc=gcc;; arm64) cc=aarch64-linux-gnu-gcc;; amd64) cc=x86_64-linux-gnu-gcc;; esac && \
     time make CC=${cc} GOARCH=${TARGETARCH} PREFIX=/artifacts cmds
 
-# Build static bash binary (against musl). Notes: cross-compilation isn't
-# robust (see non-deterministic segfaults tracked in issues/502; source code
-# download instabilities tracked in issues/743) and generally takes signifiant
-# time even on happy path (dominiates CI duration as of the time of writing). Do
-# not build this every time. Instead, consume it from a previous image on GHCR
-# -- also, leave machinery (out-commented) in place.
+# Build static bash binary (against musl). Notes: cross-compilation isn't robust
+# (see non-deterministic segfaults tracked in issues/502; source code download
+# instabilities tracked in issues/743) and generally takes signifiant time even
+# on happy path (dominiates CI duration as of the time of writing). Do not build
+# this every time. Instead, consume it from a previous image on GHCR -- also,
+# leave machinery (out-commented) in place.
 #
 # Choose: 1) fresh bash build or 2) use binary from previous image
 #
@@ -139,7 +138,7 @@ LABEL org.opencontainers.image.source="https://github.com/NVIDIA/k8s-dra-driver-
 COPY LICENSE /
 
 # option 1: fresh bash build
-#COPY --from=build   /bashbuild/bash                           /bin/bash
+# COPY --from=build   /bashbuild/bash                           /bin/bash
 
 # option 2: bash from previous image
 COPY --from=bash    /bin/bash                                 /bin/bash
