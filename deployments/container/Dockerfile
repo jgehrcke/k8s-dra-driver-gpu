@@ -43,13 +43,15 @@ ARG TARGETARCH
 # Dependencies for Go build. Clear apt cache: we cache this build layer on GHCR
 # in CI, and should make an effort to keep it small.
 RUN apt-get update && apt-get install -y \
-        wget time make \
+        curl time make \
         gcc \
         gcc-aarch64-linux-gnu \
         gcc-x86-64-linux-gnu && \
-        rm -rf /var/cache/apt/archives /var/lib/apt/lists/*
+        rm -rf /var/lib/apt/lists/* /var/cache/apt/archives
 
-RUN wget -nv -O - https://go.dev/dl/go${GOLANG_VERSION}.linux-${BUILDARCH}.tar.gz | tar -C /usr/local -xz
+RUN curl -sSfL --retry 8 --retry-all-errors --connect-timeout 10 --retry-delay 5 \
+        https://go.dev/dl/go${GOLANG_VERSION}.linux-${BUILDARCH}.tar.gz | tar -C /usr/local -xz
+
 ENV GOPATH=/go
 ENV PATH=$GOPATH/bin:/usr/local/go/bin:$PATH
 WORKDIR /build

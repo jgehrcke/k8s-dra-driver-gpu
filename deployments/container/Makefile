@@ -16,7 +16,6 @@ BUILD_MULTI_ARCH_IMAGES ?= no
 DOCKER ?= docker
 REGCTL ?= regctl
 PUSH_ON_BUILD ?= false
-ATTACH_ATTESTATIONS ?= false
 
 ##### Global variables #####
 include $(CURDIR)/versions.mk
@@ -39,7 +38,10 @@ IMAGE = $(IMAGE_NAME):$(IMAGE_TAG)
 
 ifeq ($(BUILD_MULTI_ARCH_IMAGES),true)
 BUILDX = buildx
-DOCKER_BUILD_OPTIONS = --output=type=image,push=$(PUSH_ON_BUILD) --provenance=$(ATTACH_ATTESTATIONS) --sbom=$(ATTACH_ATTESTATIONS)
+DOCKER_BUILD_OPTIONS = \
+	--output=type=image,push=$(PUSH_ON_BUILD),compression=zstd,compression-level=15 \
+	--provenance=false \
+	--sbom=false
 DOCKER_BUILD_PLATFORM_OPTIONS = --platform=linux/amd64,linux/arm64
 else
 # We also support building single-platform images.
