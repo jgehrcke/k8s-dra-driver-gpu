@@ -1,7 +1,6 @@
 # syntax=docker.io/docker/dockerfile:1.7-labs
-# The above enables the COPY --exclude flag, see:
-# https://github.com/moby/buildkit/pull/4561
-
+# The above enables the COPY --exclude + --parent flags
+#
 # Copyright (c) 2019-2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +25,12 @@ FROM --platform=$BUILDPLATFORM nvcr.io/nvidia/base/ubuntu:jammy-20251013 AS buil
 ARG GOLANG_VERSION=x.x.x
 ARG BASH_STATIC_GIT_REF=unknown
 
+# Controlled by Makefile: location(s) of Go build/mod cache. CI: in image layer.
+# Local dev: mount cache (host filesystem). ARGs are available as environment
+# variables in RUN steps of the same stage (relied upon below).
+ARG GOCACHE
+ARG GOMODCACHE
+
 # BUILDARCH, TARGETARCH (and others) are defined in the global scope by
 # BuiltKit. BUILDARCH is the architecture of the build platform. TARGETARCH is
 # set via the --platform arg provided to the `docker buildx build ...` command.
@@ -35,52 +40,61 @@ ARG BASH_STATIC_GIT_REF=unknown
 ARG BUILDARCH
 ARG TARGETARCH
 
-# Install dependencies for Go build. Do not clear apt cache (does not
-# leak into prod stage).
-RUN apt-get update && \
-    apt-get install -y \
-        wget \
-        make \
-        git \
+# Dependencies for Go build. Clear apt cache: we cache this build layer on GHCR
+# in CI, and should make an effort to keep it small.
+RUN apt-get update && apt-get install -y \
+        curl time make \
+        gcc \
         gcc-aarch64-linux-gnu \
-        gcc
+        gcc-x86-64-linux-gnu && \
+        rm -rf /var/lib/apt/lists/* /var/cache/apt/archives
 
-
-RUN wget -nv -O - https://go.dev/dl/go${GOLANG_VERSION}.linux-${BUILDARCH}.tar.gz \
-    | tar -C /usr/local -xz
+RUN curl -sSfL --retry 8 --retry-all-errors --connect-timeout 10 --retry-delay 5 \
+        https://go.dev/dl/go${GOLANG_VERSION}.linux-${BUILDARCH}.tar.gz | tar -C /usr/local -xz
 
 ENV GOPATH=/go
 ENV PATH=$GOPATH/bin:/usr/local/go/bin:$PATH
 WORKDIR /build
 
-# Copy everything that is needed for the go build, but do not invalidate go
-# build artifact layer unnecessarily often. Note that --exclude only affects the
-# cache.
-COPY    --exclude=./templates/** \
-        --exclude=./deployments/helm/** \
-        --exclude=./hack/kubelet-plugin-prestart.sh \
-        --exclude=./demo/** \
-        --exclude=./Dockerfile \
-        . .
+# Create a layer that only invalidates when _rarely_ changing Go code changes
+# (`vendor`, `pkg`, ..). Goal: useful Go build&mod cache in an image layer (for
+# CI). The mount cache below is only used in local dev (ignored in CI because
+# GO[MOD]CACHE does not point to these paths).
+# https://github.com/moby/buildkit/blob/master/frontend/dockerfile/docs/reference.md#example-cache-go-packages
+COPY go.mod go.sum ./
+COPY --parents pkg api internal vendor ./
+RUN --mount=type=cache,target=/mc/go/build-cache,id=gocache \
+    --mount=type=cache,target=/mc/go/pkg/mod,id=gomodcache \
+    case "$TARGETARCH" in "$BUILDARCH") cc=gcc;; arm64) cc=aarch64-linux-gnu-gcc;; amd64) cc=x86_64-linux-gnu-gcc;; esac && \
+    CC=${cc} CGO_ENABLED=1 GOARCH=${TARGETARCH} time go build -mod=vendor ./...
 
-RUN mkdir /artifacts
+# Copy everything else (and only) what is required for the Go build ('Explicit
+# include' philosophy). Goal: invalidate layer only when absolutely required.
+RUN mkdir /build/deployments /build/hack
+COPY common.mk versions.mk Makefile ./
+COPY deployments/devel deployments/devel
+COPY hack/golang-version.sh hack/golang-version.sh
+COPY hack/toolkit-container-image.sh hack/toolkit-container-image.sh
+COPY cmd ./cmd
 
-# The VERSION and GIT_COMMIT env vars are consumed by the `make` target below.
+# The vars VERSION & GIT_COMMIT are consumed (as environment variables) by the
+# `make` target below. That implies that the cached image layer is invalidated
+# for every commit. Hence, during local dev, there's great benefit from backing
+# the Go build/mod cache by a mount cache.
 ARG VERSION="N/A"
 ARG GIT_COMMIT="unknown"
-RUN if [ "$TARGETARCH" = "amd64" ]; then \
-        cc=gcc; \
-    elif [ "$TARGETARCH" = "arm64" ]; then \
-        cc=aarch64-linux-gnu-gcc; \
-    fi && \
-    make CC=${cc} GOARCH=${TARGETARCH} PREFIX=/artifacts cmds
+RUN mkdir /artifacts
+RUN --mount=type=cache,target=/mc/go/build-cache,id=gocache \
+    --mount=type=cache,target=/mc/go/pkg/mod,id=gomodcache \
+    case "$TARGETARCH" in "$BUILDARCH") cc=gcc;; arm64) cc=aarch64-linux-gnu-gcc;; amd64) cc=x86_64-linux-gnu-gcc;; esac && \
+    time make CC=${cc} GOARCH=${TARGETARCH} PREFIX=/artifacts cmds
 
-# Build static bash binary (against musl). Notes: cross-compilation isn't
-# robust (see non-deterministic segfaults tracked in issues/502; source code
-# download instabilities tracked in issues/743) and generally takes signifiant
-# time even on happy path (dominiates CI duration as of the time of writing). Do
-# not build this every time. Instead, consume it from a previous image on GHCR
-# -- also, leave machinery (out-commented) in place.
+# Build static bash binary (against musl). Notes: cross-compilation isn't robust
+# (see non-deterministic segfaults tracked in issues/502; source code download
+# instabilities tracked in issues/743) and generally takes signifiant time even
+# on happy path (dominiates CI duration as of the time of writing). Do not build
+# this every time. Instead, consume it from a previous image on GHCR -- also,
+# leave machinery (out-commented) in place.
 #
 # Choose: 1) fresh bash build or 2) use binary from previous image
 #
@@ -126,7 +140,7 @@ LABEL org.opencontainers.image.source="https://github.com/NVIDIA/k8s-dra-driver-
 COPY LICENSE /
 
 # option 1: fresh bash build
-#COPY --from=build   /bashbuild/bash                           /bin/bash
+# COPY --from=build   /bashbuild/bash                           /bin/bash
 
 # option 2: bash from previous image
 COPY --from=bash    /bin/bash                                 /bin/bash
@@ -137,9 +151,10 @@ COPY --from=build   /artifacts/compute-domain-kubelet-plugin  /usr/bin/compute-d
 COPY --from=build   /artifacts/compute-domain-daemon          /usr/bin/compute-domain-daemon
 COPY --from=build   /artifacts/gpu-kubelet-plugin             /usr/bin/gpu-kubelet-plugin
 COPY --from=build   /artifacts/webhook                        /usr/bin/webhook
-COPY --from=build   /build/scripts/bind_to_driver.sh          /usr/bin/bind_to_driver.sh
-COPY --from=build   /build/scripts/unbind_from_driver.sh      /usr/bin/unbind_from_driver.sh
-COPY /hack/kubelet-plugin-prestart.sh /usr/bin/kubelet-plugin-prestart.sh
+
+COPY /scripts/bind_to_driver.sh                               /usr/bin/bind_to_driver.sh
+COPY /scripts/unbind_from_driver.sh                           /usr/bin/unbind_from_driver.sh
+COPY /hack/kubelet-plugin-prestart.sh                         /usr/bin/kubelet-plugin-prestart.sh
 COPY /templates /templates
 
 # Use root by default (for example, the init container as of now needs
