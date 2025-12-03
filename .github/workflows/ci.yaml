@@ -32,8 +32,7 @@ jobs:
       golang_version: ${{ needs.basic.outputs.golang_version }}
 
   chart:
-    # For faster CI signal, do not wait for `image`.
     needs:
-    - basic
+    - image
     secrets: inherit
     uses: ./.github/workflows/chart.yaml
