@@ -6,6 +6,11 @@ setup() {
   _common_setup
 }
 
+bats::on_failure() {
+  echo -e "\n\nFAILURE HOOK START"
+  kubectl get pods -A | grep dra
+  echo -e "FAILURE HOOK END\n\n"
+}
 
 # bats file_tags=fastfeedback
 
