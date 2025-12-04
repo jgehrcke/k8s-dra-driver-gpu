@@ -213,3 +213,13 @@ func (d AllocatableDevices) RemoveSiblingDevices(device *AllocatableDevice) {
 		}
 	}
 }
+
+func (d *AllocatableDevice) IsHealthy() bool {
+	switch d.Type() {
+	case GpuDeviceType:
+		return d.Gpu.Health == Healthy
+	case MigDeviceType:
+		return d.Mig.Health == Healthy
+	}
+	panic("unexpected type for AllocatableDevice")
+}

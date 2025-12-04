@@ -40,6 +40,9 @@ const (
 
 	// PassthroughSupport allows gpus to be configured with the vfio-pci driver.
 	PassthroughSupport featuregate.Feature = "PassthroughSupport"
+
+	// NVMLDeviceHealthCheck allows Device Health Checking using NVML.
+	NVMLDeviceHealthCheck featuregate.Feature = "NVMLDeviceHealthCheck"
 )
 
 // defaultFeatureGates contains the default settings for all project-specific feature gates.
@@ -67,6 +70,14 @@ var defaultFeatureGates = map[featuregate.Feature]featuregate.VersionedSpecs{
 		},
 	},
 	PassthroughSupport: {
+		{
+			Default:    false,
+			PreRelease: featuregate.Alpha,
+			Version:    version.MajorMinor(25, 12),
+		},
+	},
+
+	NVMLDeviceHealthCheck: {
 		{
 			Default:    false,
 			PreRelease: featuregate.Alpha,
