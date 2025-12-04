@@ -36,10 +36,11 @@ IMAGE = $(IMAGE_NAME):$(IMAGE_TAG)
 ##### Public rules #####
 .PHONY: build
 
+# TODO: revisit compression=zstd,compression-level=15
 ifeq ($(BUILD_MULTI_ARCH_IMAGES),true)
 BUILDX = buildx
 DOCKER_BUILD_OPTIONS = \
-	--output=type=image,push=$(PUSH_ON_BUILD),compression=zstd,compression-level=15 \
+	--output=type=image,push=$(PUSH_ON_BUILD) \
 	--provenance=false \
 	--sbom=false
 DOCKER_BUILD_PLATFORM_OPTIONS = --platform=linux/amd64,linux/arm64

@@ -58,7 +58,6 @@ timeout -v 5 kubectl delete computedomain nickelpie-test-compute-domain 2> /dev/
 timeout -v 5 kubectl delete -f demo/specs/imex/nvbandwidth-test-job-1.yaml 2> /dev/null
 timeout -v 5 kubectl delete -f demo/specs/imex/nvbandwidth-test-job-2.yaml 2> /dev/null
 timeout -v 5 kubectl delete -f tests/bats/specs/nvb2.yaml 2> /dev/null
-timeout -v 5 kubectl delete pods -l env=batssuite 2> /dev/null
 timeout -v 2 kubectl delete resourceclaim batssuite-rc-bad-opaque-config --force 2> /dev/null
 timeout -v 2 kubectl delete -f demo/specs/imex/simple-mig-test 2> /dev/null
 
@@ -69,9 +68,8 @@ kubectl wait --for=delete pods -l 'env=batssuite,test=stress-shared' \
     --timeout=60s \
     || echo "wait-for-delete failed"
 
-# TODO: maybe more brute-forcing/best-effort: it might make sense to submit all
-# workload in this test suite into a special namespace (not `default`), and to
-# then use `kubectl delete pods -n <testnamespace]> --all`.
+# TODO: make more use of that (currently used for cleanup pods).
+timeout -v 5 kubectl delete --all pods --namespace=batssuite 2> /dev/null
 
 # Delete any previous remainder of `clean-state-dirs-all-nodes.sh` invocation.
 kubectl delete pods privpod-rm-plugindirs 2> /dev/null
