@@ -1,14 +1,18 @@
-name: tests
-
-# on:
-#   push:
-#   pull_request:
+name: test
 
 on:
-  workflow_run:
-    workflows: ["build-and-push-artifacts"]
-    types:
-      - completed
+  workflow_call:
+  workflow_dispatch:
+    inputs:
+      testfilter:
+        description: 'bats test filter string'
+        required: true
+        default: 'fastfeedback'
+        type: choice
+        options:
+        - fastfeedback
+        - all
+
 
 # Only one job at any time, and cancel in-progress
 concurrency:
@@ -17,10 +21,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  k8s:
+  k8s-bats:
     runs-on: compute-domain-runner
     steps:
-      - uses: actions/checkout@v5
-      - name: make-bats
+      - uses: actions/checkout@v6
+      - name: batssuite
+        env:
+          TESTFILTER: ${{ inputs.testfilter }}
         run: |
+          export TEST_FILTER_TAGS="${TESTFILTER:-fastfeedback}"
           make bats
