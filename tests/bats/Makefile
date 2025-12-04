@@ -57,8 +57,14 @@ BATS_ARGS ?= \
 	--print-output-on-failure \
 	--no-tempdir-cleanup \
 	--timing \
-	--abort \
-	--filter-tags fastfeedback
+	--abort
+
+# Evaluates to`true` only when TEST_FILTER_TAGS is non-empty after stripping
+# whitespace.
+ifneq ($(strip $(TEST_FILTER_TAGS)),)
+	BATS_ARGS += --filter-tags $(TEST_FILTER_TAGS)
+endif
+
 KUBECONFIG ?= $(HOME)/.kube/config
 
 TMPDIR ?= "/tmp"
@@ -96,6 +102,7 @@ DOCKER_MOUNTS = \
 # $(1) = whitespace-separated list of test files
 define RUN_BATS
 	@echo "KUBECONFIG: $(KUBECONFIG)" && \
+	echo "BATS_ARGS: $(BATS_ARGS) " && \
 	echo "TMPDIR: $(TMPDIR)" && \
 	export _RUNDIR=$(RUNDIR_PARENT)/bats-tests-$$(date +%s) && \
 	mkdir -p "$${_RUNDIR}" && \
