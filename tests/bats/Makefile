@@ -74,7 +74,7 @@ DOCKER_RUN_FLAGS :=
 ifeq ($(CI),)
   DOCKER_RUN_FLAGS += -it
 else
-  TMPDIR="."
+  TMPDIR=$(CURDIR)
 endif
 
 RUNDIR_PARENT ?= $(TMPDIR)/k8s-dra-driver-gpu-tests-out-$(USER)
