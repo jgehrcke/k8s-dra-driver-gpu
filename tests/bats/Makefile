@@ -138,7 +138,7 @@ tests-cd: runner-image
 		tests/bats/test_cd_updowngrade.bats)
 
 # Run complete tests
-tests: image
+tests: runner-image
 	$(call RUN_BATS, \
 		tests/bats/test_basics.bats \
 		tests/bats/test_gpu_basic.bats \
