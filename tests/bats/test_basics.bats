@@ -7,6 +7,8 @@ setup() {
 }
 
 
+# bats file_tags=fastfeedback
+
 # A test that covers local dev tooling; we don't want to
 # unintentionally change/break these targets.
 @test "test VERSION_W_COMMIT, VERSION_GHCR_CHART, VERSION" {

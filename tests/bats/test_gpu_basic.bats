@@ -27,6 +27,8 @@ bats::on_failure() {
   echo -e "FAILURE HOOK END\n\n"
 }
 
+
+# bats test_tags=fastfeedback
 @test "1 pod(s), 1 full GPU" {
   local _specpath="tests/bats/specs/gpu-simple-full.yaml"
   local _podname="pod-full-gpu"
@@ -43,6 +45,8 @@ bats::on_failure() {
   kubectl wait --for=delete pods "${_podname}" --timeout=10s
 }
 
+
+# bats test_tags=fastfeedback
 @test "2 pod(s), 1 full GPU each" {
   local _specpath="tests/bats/specs/gpu-2pods-2gpus.yaml"
 
@@ -67,6 +71,8 @@ bats::on_failure() {
   kubectl wait --for=delete pods pod2 --timeout=10s
 }
 
+
+# bats test_tags=fastfeedback
 @test "2 pod(s), 1 full GPU (shared, 1 RC)" {
   local _specpath="tests/bats/specs/gpu-2pods-1gpu.yaml"
 
@@ -91,6 +97,8 @@ bats::on_failure() {
   kubectl wait --for=delete pods pod2 --timeout=10s
 }
 
+
+# bats test_tags=fastfeedback
 @test "1 pod(s), 2 cntrs, 1 full GPU (shared, 1 RCT)" {
   local _specpath="tests/bats/specs/gpu-1pod-2cnt-1gpu.yaml"
 

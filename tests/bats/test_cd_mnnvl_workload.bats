@@ -30,6 +30,7 @@ setup () {
 }
 
 
+# bats test_tags=fastfeedback
 @test "nvbandwidth (2 nodes, 2 GPUs each)" {
   kubectl create -f https://github.com/kubeflow/mpi-operator/releases/download/v0.6.0/mpi-operator.yaml || echo "ignore"
   kubectl apply -f demo/specs/imex/nvbandwidth-test-job-1.yaml

@@ -53,7 +53,12 @@ TEST_CHART_VERSION = $(VERSION:v%=%)
 endif
 
 BATS_IMAGE ?= batstests:$(GIT_COMMIT_SHORT)
-BATS_ARGS ?= --print-output-on-failure --no-tempdir-cleanup --timing --abort
+BATS_ARGS ?= \
+	--print-output-on-failure \
+	--no-tempdir-cleanup \
+	--timing \
+	--abort \
+	--filter-tags fastfeedback
 KUBECONFIG ?= $(HOME)/.kube/config
 
 TMPDIR ?= "/tmp"
