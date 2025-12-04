@@ -136,6 +136,7 @@ tests-gpu: runner-image
 	$(call RUN_BATS, \
 		tests/bats/test_basics.bats \
 		tests/bats/test_gpu_basic.bats \
+		tests/bats/test_gpu_mig.bats \
 		tests/bats/test_gpu_stress.bats)
 
 # Run Compute Domain specific tests
@@ -154,6 +155,7 @@ tests: runner-image
 	$(call RUN_BATS, \
 		tests/bats/test_basics.bats \
 		tests/bats/test_gpu_basic.bats \
+		tests/bats/test_gpu_mig.bats \
 		tests/bats/test_cd_imex_chan_inject.bats \
 		tests/bats/test_cd_mnnvl_workload.bats \
 		tests/bats/test_cd_misc.bats \
