@@ -20,6 +20,11 @@
 export TEST_HELM_RELEASE_NAME="nvidia-dra-driver-gpu-batssuite"
 
 
+# Extend PATH, for example for the `nvmm` utility.
+SELF_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+export PATH="${SELF_DIR}/lib:${PATH}"
+
+
 _common_setup() {
   load '/bats-libraries/bats-support/load.bash'
   load '/bats-libraries/bats-assert/load.bash'
@@ -175,29 +180,30 @@ apply_check_delete_workload_imex_chan_inject() {
 }
 
 
-# Run cmd in nvidia-mig-manager pod because that one has highest privileges. I
-# use this for example to run `nvcnt gb-nvl-027-compute06 nvidia-smi`
-nvmm() {
-  if [ -z "$1" ]; then
-    echo "Usage: nvcnt <node-name> [command...]"
-    return 1
-  fi
-  local node="$1"
-  shift  # Remove first argument, leaving remaining args in $@
-
-  local pod
-  pod=$(kubectl get pod -n gpu-operator -l app=nvidia-mig-manager \
-    --field-selector spec.nodeName="$node" \
-    --no-headers -o custom-columns=":metadata.name")
-
-  if [ -z "$pod" ]; then
-    echo "get pod -n gpu-operator -l app=nvidia-mig-manager: no pod found on node $node"
-    return 1
-  fi
-
-  echo "Executing on pod $pod (node: $node)..."
-  kubectl -n gpu-operator exec -it "$pod" -- "$@"
+mig_confirm_disabled_on_all_nodes() {
+  # Confirm that MIG mode is disabled for all GPUs; in all nodes.
+  run nvmm all sh -c 'nvidia-smi --query-gpu=index,mig.mode.current --format=csv'
+  refute_output --partial "Enabled"
 }
+
+
+# On all nodes, attempt ot destroy all MIG devices and disable MIG mode for all
+# physical GPUs. Fail the consuming test if any GPU in any of the nodes still
+# has MIG mode enabled. This can serve as 1) an explicit assertion about current
+# state when entering a test, and 2) a convenient cleanup routine during test
+# development, and 3) a regular cleanup when leaving a test.
+mig_ensure_teardown_on_all_nodes() {
+  nvmm all sh -c 'nvidia-smi mig -dci && nvidia-smi mig -dgi && nvidia-smi -i 0 -mig 0'
+  mig_confirm_disabled_on_all_nodes
+}
+
+
+get_gpu_resource_slice_name_for_node() {
+  local NODE_NAME="$1"
+  local rsname=$(kubectl get resourceslices.resource.k8s.io | grep gb-nvl-027-compute08 | grep gpu | awk '{print $1}')
+  return "$rsname"
+}
+
 
 restart_kubelet_on_node() {
   local NODEIP="$1"
