@@ -225,8 +225,6 @@ PHONY: .shell
 bats:
 	make -f tests/bats/Makefile tests
 
-<<<<<<< HEAD
-=======
 # Run compute domain specific tests
 bats-cd:
 	make -f tests/bats/Makefile tests-cd
@@ -239,4 +237,4 @@ bats-gpu:
 image-build-and-copy-to-nodes:
 	make -f deployments/container/Makefile build
 	bash hack/copy-image-to-k8s-nodes.sh nvcr.io/nvidia/k8s-dra-driver-gpu:$(VERSION)
->>>>>>> d1eeedf8 (Makefile: image-build-and-copy-to-nodes)
+
