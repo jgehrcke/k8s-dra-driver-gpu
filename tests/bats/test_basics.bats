@@ -83,3 +83,16 @@ bats::on_failure() {
   # TEST_EXPECTED_IMAGE_SPEC_SUBSTRING
   echo "$ACTUAL_IMAGE_SPEC" | grep "${TEST_EXPECTED_IMAGE_SPEC_SUBSTRING}"
 }
+
+
+@test "SIGUSR2 handler: GPU plugin, CD plugin" {
+  local PNAME="$(get_one_kubelet_plugin_pod_name)"
+  # Assume that GPU plugin has PID 1.
+  kubectl exec -n nvidia-dra-driver-gpu "${PNAME}" -c gpus -- kill -s SIGUSR2 1
+  run kubectl exec -n nvidia-dra-driver-gpu "${PNAME}" -c gpus -- cat /tmp/goroutine-stacks.dump
+  assert_output --partial 'main.RunPlugin'
+
+  kubectl exec -n nvidia-dra-driver-gpu "${PNAME}" -c compute-domains -- kill -s SIGUSR2 1
+  run kubectl exec -n nvidia-dra-driver-gpu "${PNAME}" -c compute-domains -- cat /tmp/goroutine-stacks.dump
+  assert_output --partial 'main.RunPlugin'
+}
