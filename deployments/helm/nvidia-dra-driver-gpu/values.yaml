@@ -34,6 +34,20 @@ gpuResourcesEnabledOverride: false
 
 allowDefaultNamespace: false
 
+# resourceApiVersion sets the resource.k8s.io API version used for DRA resources (DeviceClass,
+# ResourceClaim, ResourceClaimTemplate).
+#
+# By default, the chart auto-detects the highest supported version from the
+# cluster via .Capabilities.APIVersions (v1 > v1beta2 > v1beta1). However, some
+# environments may incorrectly report supported versions, causing Helm to render
+# manifests with an API version that the API server does not actually serve.
+#
+# Set this field to explicitly override auto-detection:
+#   resourceApiVersion: "resource.k8s.io/v1beta1"
+#
+# Leave empty to use auto-detection.
+resourceApiVersion: ""
+
 imagePullSecrets: []
 image:
   repository: nvcr.io/nvidia/k8s-dra-driver-gpu

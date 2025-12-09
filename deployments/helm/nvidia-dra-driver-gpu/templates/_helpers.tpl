@@ -172,10 +172,15 @@ Get all namespaces (driver namespace + additional namespaces from environment va
 
 {{/*
 Get the latest available resource.k8s.io API version
-Returns the highest available version or empty string if none found
+
+Priority:
+  1. If .Values.resourceApiVersion is set, use that.
+  2. Otherwise, returns the highest available version or empty string if none found
 */}}
 {{- define "nvidia-dra-driver-gpu.resourceApiVersion" -}}
-{{- if .Capabilities.APIVersions.Has "resource.k8s.io/v1" -}}
+{{- if .Values.resourceApiVersion }}
+{{- .Values.resourceApiVersion }}
+{{- else if .Capabilities.APIVersions.Has "resource.k8s.io/v1" -}}
 resource.k8s.io/v1
 {{- else if .Capabilities.APIVersions.Has "resource.k8s.io/v1beta2" -}}
 resource.k8s.io/v1beta2
