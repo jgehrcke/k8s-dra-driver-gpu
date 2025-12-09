@@ -39,6 +39,7 @@ import (
 	_ "k8s.io/component-base/metrics/prometheus/version"    // for version metric registration
 	_ "k8s.io/component-base/metrics/prometheus/workqueue"  // register work queues in the default legacy registry
 
+	"github.com/NVIDIA/k8s-dra-driver-gpu/internal/common"
 	"github.com/NVIDIA/k8s-dra-driver-gpu/internal/info"
 	pkgflags "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/flags"
 )
@@ -174,6 +175,7 @@ func newApp() *cli.App {
 			return err
 		},
 		Action: func(c *cli.Context) error {
+			common.StartDebugSignalHandlers()
 			mux := http.NewServeMux()
 
 			clientsets, err := flags.kubeClientConfig.NewClientSets()
