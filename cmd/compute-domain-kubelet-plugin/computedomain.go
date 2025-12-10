@@ -141,7 +141,7 @@ func (m *ComputeDomainManager) NewSettings(domainID string) *ComputeDomainDaemon
 func (m *ComputeDomainManager) GetComputeDomainChannelContainerEdits(devRoot string, info *common.NVcapDeviceInfo) *cdiapi.ContainerEdits {
 	return &cdiapi.ContainerEdits{
 		ContainerEdits: &cdispec.ContainerEdits{
-			DeviceNodes: []*cdispec.DeviceNode{common.CDICharDevNode(info)},
+			DeviceNodes: []*cdispec.DeviceNode{info.CDICharDevNode()},
 		},
 	}
 }
@@ -188,7 +188,7 @@ func (s *ComputeDomainDaemonSettings) GetDomainID() string {
 func (s *ComputeDomainDaemonSettings) GetCDIContainerEditsForImex(ctx context.Context, devRoot string, info *common.NVcapDeviceInfo) *cdiapi.ContainerEdits {
 	edits := &cdiapi.ContainerEdits{
 		ContainerEdits: &cdispec.ContainerEdits{
-			DeviceNodes: []*cdispec.DeviceNode{common.CDICharDevNode(info)},
+			DeviceNodes: []*cdispec.DeviceNode{info.CDICharDevNode()},
 		},
 	}
 	return edits

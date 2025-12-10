@@ -32,6 +32,7 @@ import (
 
 const (
 	procDevicesPath      = "/proc/devices"
+	devNvidiaCapsPath    = "/dev/nvidia-caps"
 	nvidiaCapsDeviceName = "nvidia-caps"
 )
 
@@ -41,6 +42,26 @@ type NVcapDeviceInfo struct {
 	Mode   int
 	Modify int
 	Path   string
+}
+
+// Construct and return a CDI `deviceNodes` entry. Adding this to a CDI
+// container specification at the high level has the purpose of granting cgroup
+// access to the containerized application for being able to access (open) a
+// certain character device node as identified by `i.path`. The special device
+// type "c" below specifically instructs the container runtime to create (mknod)
+// the character device (for the container, accessible from within the
+// container, not visible on the host), and to grant the cgroup privilege to the
+// container to open that device. References:
+// https://github.com/opencontainers/runtime-spec/blob/main/config-linux.md#allowed-device-list
+// https://www.kernel.org/doc/Documentation/cgroup-v1/devices.txt
+func (i *NVcapDeviceInfo) CDICharDevNode() *cdispec.DeviceNode {
+	return &cdispec.DeviceNode{
+		Path:     i.Path,
+		Type:     "c",
+		FileMode: ptr.To(os.FileMode(i.Mode)),
+		Major:    int64(i.Major),
+		Minor:    int64(i.Minor),
+	}
 }
 
 // Parse a capabilities file under /proc/driver/nvidia/capabilities and return
@@ -86,7 +107,7 @@ func ParseNVCapDeviceInfo(nvcapsFilePath string) (*NVcapDeviceInfo, error) {
 			_, _ = fmt.Sscanf(value, "%d", &info.Modify)
 		}
 	}
-	info.Path = fmt.Sprintf("/dev/nvidia-caps/nvidia-cap%d", info.Minor)
+	info.Path = fmt.Sprintf("%s/nvidia-cap%d", devNvidiaCapsPath, info.Minor)
 
 	if err := scanner.Err(); err != nil {
 		return nil, err
@@ -95,7 +116,7 @@ func ParseNVCapDeviceInfo(nvcapsFilePath string) (*NVcapDeviceInfo, error) {
 	return info, nil
 }
 
-// getDeviceMajor searches for one "<integer> <name>" occurrence in the
+// GetDeviceMajor searches for one "<integer> <name>" occurrence in the
 // "Character devices" section of the /proc/devices file, and returns the
 // integer.
 func GetDeviceMajor(name string) (int, error) {
@@ -138,24 +159,4 @@ func GetDeviceMajor(name string) (int, error) {
 	// (which is documented as "int is a signed integer type that is at least 32
 	// bits in size", so in theory it could be smaller than int64).
 	return int(major), nil
-}
-
-// Construct and return a CDI `deviceNodes` entry. Adding this to a CDI
-// container specification at the high level has the purpose of granting cgroup
-// access to the containerized application for being able to access (open) a
-// certain character device node as identified by `i.path`. The special device
-// type "c" below specifically instructs the container runtime to create (mknod)
-// the character device (for the container, accessible from within the
-// container, not visible on the host), and to grant the cgroup privilege to the
-// container to open that device. References:
-// https://github.com/opencontainers/runtime-spec/blob/main/config-linux.md#allowed-device-list
-// https://www.kernel.org/doc/Documentation/cgroup-v1/devices.txt
-func CDICharDevNode(i *NVcapDeviceInfo) *cdispec.DeviceNode {
-	return &cdispec.DeviceNode{
-		Path:     i.Path,
-		Type:     "c",
-		FileMode: ptr.To(os.FileMode(i.Mode)),
-		Major:    int64(i.Major),
-		Minor:    int64(i.Minor),
-	}
 }
