@@ -167,6 +167,18 @@ get_current_controller_pod_name() {
 }
 
 
+
+get_one_kubelet_plugin_pod_name() {
+  kubectl get pod \
+    -l nvidia-dra-driver-gpu-component=kubelet-plugin \
+    -n nvidia-dra-driver-gpu \
+      | grep -iv "NAME" \
+      | grep -i 'running' \
+      | head -n1 \
+      | awk '{print $1}'
+}
+
+
 apply_check_delete_workload_imex_chan_inject() {
   kubectl apply -f demo/specs/imex/channel-injection.yaml
   kubectl wait --for=condition=READY pods imex-channel-injection --timeout=100s
