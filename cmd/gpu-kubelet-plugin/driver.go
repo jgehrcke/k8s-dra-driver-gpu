@@ -179,11 +179,14 @@ func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.Res
 			Err: fmt.Errorf("error preparing devices for claim %v: %w", claim.UID, err),
 		}
 	}
-	if err = d.publishResources(ctx, d.state.config); err != nil {
-		return kubeletplugin.PrepareResult{
-			Err: fmt.Errorf("error preparing devices for claim %v: %w", claim.UID, err),
-		}
 
+	if featuregates.Enabled(featuregates.PassthroughSupport) {
+		// Re-advertise updated resourceslice after preparing devices.
+		if err = d.publishResources(ctx, d.state.config); err != nil {
+			return kubeletplugin.PrepareResult{
+				Err: fmt.Errorf("error preparing devices for claim %v: %w", claim.UID, err),
+			}
+		}
 	}
 
 	klog.Infof("Returning newly prepared devices for claim '%v': %v", claim.UID, devs)
@@ -201,7 +204,14 @@ func (d *driver) nodeUnprepareResource(ctx context.Context, claimNs kubeletplugi
 		return fmt.Errorf("error unpreparing devices for claim %v: %w", claimNs.UID, err)
 	}
 
-	return d.publishResources(ctx, d.state.config)
+	if featuregates.Enabled(featuregates.PassthroughSupport) {
+		// Re-advertise updated resourceslice after unpreparing devices.
+		if err = d.publishResources(ctx, d.state.config); err != nil {
+			return fmt.Errorf("error publishing resources: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func (d *driver) publishResources(ctx context.Context, config *Config) error {
