@@ -109,6 +109,8 @@ func (d *VfioDeviceInfo) CanonicalName() string {
 }
 
 func (d *GpuInfo) GetDevice() resourceapi.Device {
+	// TODO: Consume GetPCIBusIDAttribute from https://github.com/kubernetes/kubernetes/blob/4c5746c0bc529439f78af458f8131b5def4dbe5d/staging/src/k8s.io/dynamic-resource-allocation/deviceattribute/attribute.go#L39
+	pciBusIDAttrName := resourceapi.QualifiedName(deviceattribute.StandardDeviceAttributePrefix + "pciBusID")
 	device := resourceapi.Device{
 		Name: d.CanonicalName(),
 		Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
@@ -136,7 +138,7 @@ func (d *GpuInfo) GetDevice() resourceapi.Device {
 			"cudaDriverVersion": {
 				VersionValue: ptr.To(semver.MustParse(d.cudaDriverVersion).String()),
 			},
-			"pcieBusID": {
+			pciBusIDAttrName: {
 				StringValue: &d.pcieBusID,
 			},
 		},
@@ -153,6 +155,8 @@ func (d *GpuInfo) GetDevice() resourceapi.Device {
 }
 
 func (d *MigDeviceInfo) GetDevice() resourceapi.Device {
+	// TODO: Consume GetPCIBusIDAttribute from https://github.com/kubernetes/kubernetes/blob/4c5746c0bc529439f78af458f8131b5def4dbe5d/staging/src/k8s.io/dynamic-resource-allocation/deviceattribute/attribute.go#L39
+	pciBusIDAttrName := resourceapi.QualifiedName(deviceattribute.StandardDeviceAttributePrefix + "pciBusID")
 	device := resourceapi.Device{
 		Name: d.CanonicalName(),
 		Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
@@ -186,7 +190,7 @@ func (d *MigDeviceInfo) GetDevice() resourceapi.Device {
 			"cudaDriverVersion": {
 				VersionValue: ptr.To(semver.MustParse(d.parent.cudaDriverVersion).String()),
 			},
-			"pcieBusID": {
+			pciBusIDAttrName: {
 				StringValue: &d.pcieBusID,
 			},
 		},
@@ -215,6 +219,8 @@ func (d *MigDeviceInfo) GetDevice() resourceapi.Device {
 }
 
 func (d *VfioDeviceInfo) GetDevice() resourceapi.Device {
+	// TODO: Consume GetPCIBusIDAttribute from https://github.com/kubernetes/kubernetes/blob/4c5746c0bc529439f78af458f8131b5def4dbe5d/staging/src/k8s.io/dynamic-resource-allocation/deviceattribute/attribute.go#L39
+	pciBusIDAttrName := resourceapi.QualifiedName(deviceattribute.StandardDeviceAttributePrefix + "pciBusID")
 	device := resourceapi.Device{
 		Name: d.CanonicalName(),
 		Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
@@ -233,7 +239,7 @@ func (d *VfioDeviceInfo) GetDevice() resourceapi.Device {
 			"numa": {
 				IntValue: ptr.To(int64(d.numaNode)),
 			},
-			"pcieBusID": {
+			pciBusIDAttrName: {
 				StringValue: &d.pcieBusID,
 			},
 			"productName": {
