@@ -98,11 +98,13 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 
 	var vfioPciManager *VfioPciManager
 	if featuregates.Enabled(featuregates.PassthroughSupport) {
-		manager := NewVfioPciManager(string(containerDriverRoot), string(hostDriverRoot), nvdevlib, true /* nvidiaEnabled */)
-		if err := manager.Prechecks(); err == nil {
-			vfioPciManager = manager
-		} else {
-			klog.Warningf("vfio-pci manager failed prechecks, will not be initialize: %v", err)
+		vfioPciManager = NewVfioPciManager(string(containerDriverRoot), string(hostDriverRoot), nvdevlib, true /* nvidiaEnabled */)
+	}
+
+	// Validate passthrough support if feature gate is enabled.
+	if featuregates.Enabled(featuregates.PassthroughSupport) {
+		if err := vfioPciManager.ValidatePassthroughSupport(); err != nil {
+			klog.Fatalf("Failed to validate passthrough support: %v", err)
 		}
 	}
 
