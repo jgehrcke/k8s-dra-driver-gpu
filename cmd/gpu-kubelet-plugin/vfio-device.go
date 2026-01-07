@@ -72,8 +72,8 @@ func NewVfioPciManager(containerDriverRoot string, hostDriverRoot string, nvlib 
 	return vm
 }
 
-// PreChecks tests if vfio-pci device allocations can be used.
-func (vm *VfioPciManager) Prechecks() error {
+// ValidatePassthroughSupport tests if vfio-pci device allocations can be used.
+func (vm *VfioPciManager) ValidatePassthroughSupport() error {
 	if !vm.isVfioPCIModuleLoaded() {
 		return fmt.Errorf("vfio_pci module is not loaded")
 	}
@@ -110,7 +110,10 @@ func (vm *VfioPciManager) isIommuEnabled() (bool, error) {
 func (vm *VfioPciManager) isVfioPCIModuleLoaded() bool {
 	f, err := os.Stat(filepath.Join(sysModulesRoot, vfioPciModule))
 	if err != nil {
-		klog.Fatalf("failed to check if vfio_pci module is loaded: %v", err)
+		if os.IsNotExist(err) {
+			return false
+		}
+		klog.Fatalf("Failed to check if vfio_pci module is loaded: %v", err)
 	}
 
 	if !f.IsDir() {
