@@ -304,6 +304,19 @@ func (l deviceLib) getGpuInfo(index int, device nvdev.Device) (*GpuInfo, error) 
 		return nil, fmt.Errorf("error getting PCIe bus ID for device %d: %w", index, err)
 	}
 
+	// Get the memory-addressing mode supported by the device.
+	// On coherent-memory systems, the possible modes are:
+	//   - HMM  (Hardware Memory Management)
+	//   - ATS  (Address Translation Service)
+	//   - None (Supported by the platform but currently inactive)
+	//   - ""   (Not supported by the platform)
+	var addressingMode *string
+	if mode, err := device.GetAddressingModeAsString(); err != nil {
+		return nil, fmt.Errorf("error getting addressing mode for device %d: %w", index, err)
+	} else if mode != "" {
+		addressingMode = &mode
+	}
+
 	var pcieRootAttr *deviceattribute.DeviceAttribute
 	if attr, err := deviceattribute.GetPCIeRootAttributeByPCIBusID(pcieBusID); err == nil {
 		pcieRootAttr = &attr
@@ -379,6 +392,7 @@ func (l deviceLib) getGpuInfo(index int, device nvdev.Device) (*GpuInfo, error) 
 		pcieRootAttr:          pcieRootAttr,
 		migProfiles:           migProfiles,
 		Health:                Healthy,
+		addressingMode:        addressingMode,
 	}
 
 	return gpuInfo, nil
