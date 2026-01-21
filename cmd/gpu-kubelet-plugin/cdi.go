@@ -18,10 +18,8 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"time"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/sirupsen/logrus"
 
 	nvdevice "github.com/NVIDIA/go-nvlib/pkg/nvlib/device"
@@ -30,12 +28,13 @@ import (
 	"github.com/NVIDIA/nvidia-container-toolkit/pkg/nvcdi/spec"
 	transformroot "github.com/NVIDIA/nvidia-container-toolkit/pkg/nvcdi/transform/root"
 	"k8s.io/klog/v2"
-	"k8s.io/utils/ptr"
 
 	utilcache "k8s.io/apimachinery/pkg/util/cache"
 	cdiapi "tags.cncf.io/container-device-interface/pkg/cdi"
 	cdiparser "tags.cncf.io/container-device-interface/pkg/parser"
 	cdispec "tags.cncf.io/container-device-interface/specs-go"
+
+	"github.com/NVIDIA/k8s-dra-driver-gpu/internal/common"
 )
 
 const (
@@ -85,29 +84,10 @@ func NewCDIHandler(opts ...cdiOption) (*CDIHandler, error) {
 	if h.vendor == "" {
 		h.vendor = cdiVendor
 	}
-	// if h.deviceClass == "" {
-	// 	h.deviceClass = cdiDeviceClass
-	// }
 	if h.claimClass == "" {
 		h.claimClass = cdiClaimClass
 	}
-	// if h.nvcdiDevice == nil {
-	// 	nvcdilib, err := nvcdi.New(
-	// 		nvcdi.WithDeviceLib(h.nvdevice),
-	// 		nvcdi.WithDriverRoot(h.driverRoot),
-	// 		nvcdi.WithDevRoot(h.devRoot),
-	// 		nvcdi.WithLogger(h.logger),
-	// 		nvcdi.WithNvmlLib(h.nvml),
-	// 		nvcdi.WithMode("nvml"),
-	// 		nvcdi.WithVendor(h.vendor),
-	// 		nvcdi.WithClass(h.deviceClass),
-	// 		nvcdi.WithNVIDIACDIHookPath(h.nvidiaCDIHookPath),
-	// 	)
-	// 	if err != nil {
-	// 		return nil, fmt.Errorf("unable to create CDI library for devices: %w", err)
-	// 	}
-	// 	h.nvcdiDevice = nvcdilib
-	// }
+
 	if h.nvcdiClaim == nil {
 		nvcdilib, err := nvcdi.New(
 			nvcdi.WithDeviceLib(h.nvdevice),
@@ -120,7 +100,6 @@ func NewCDIHandler(opts ...cdiOption) (*CDIHandler, error) {
 			nvcdi.WithClass(h.claimClass),
 			nvcdi.WithNVIDIACDIHookPath(h.nvidiaCDIHookPath),
 			nvcdi.WithFeatureFlags(nvcdi.FeatureDisableNvsandboxUtils),
-			//vcdi.WithNvsandboxuitilsLib(nil),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("unable to create CDI library for claims: %w", err)
@@ -162,92 +141,6 @@ func (cdi *CDIHandler) writeSpec(spec spec.Interface, specName string) error {
 
 	// Write the spec out to disk.
 	return cdi.cache.WriteSpec(spec.Raw(), specName)
-}
-
-// func (cdi *CDIHandler) CreateStandardDeviceSpecFile(allocatable AllocatableDevices) error {
-// 	if err := cdi.createStandardNvidiaDeviceSpecFile(allocatable); err != nil {
-// 		klog.Errorf("failed to create standard nvidia device spec file: %v", err)
-// 		return err
-// 	}
-
-// 	if featuregates.Enabled(featuregates.PassthroughSupport) {
-// 		if err := cdi.createStandardVfioDeviceSpecFile(allocatable); err != nil {
-// 			klog.Errorf("failed to create standard vfio device spec file: %v", err)
-// 			return err
-// 		}
-// 	}
-// 	return nil
-// }
-
-// giCapsDevNode := cdispec.DeviceNode{
-// 	Path:     giCapsInfo.path,
-// 	Type:     "c",
-// 	FileMode: ptr.To(os.FileMode(giCapsInfo.mode)),
-// 	Major:    int64(giCapsInfo.major),
-// 	Minor:    int64(giCapsInfo.minor),
-// }
-
-//	ciCapsDevNode := cdispec.DeviceNode{
-//		Path:     ciCapsInfo.path,
-//		Type:     "c",
-//		FileMode: ptr.To(os.FileMode(ciCapsInfo.mode)),
-//		Major:    int64(ciCapsInfo.major),
-//		Minor:    int64(ciCapsInfo.minor),
-//	}
-
-// Construct and return the CDI `deviceNodes` specification for the two
-// character devices `/dev/nvidia-caps/nvidia-cap<CIm>` and
-// `/dev/nvidia-caps/nvidia-cap<GIm>` for a specific MIG device.
-//
-// Context: for containerized workload to see and use a specific MIG device, it
-// needs to be able to open three character device nodes:
-//
-// 1) `/dev/nvidia<Pm>`, with <Pm> referring to the parent's minor. This exists
-// on the host.
-//
-// 2) /dev/nvidia-caps/nvidia-cap<CIm> and /dev/nvidia-caps/nvidia-cap<GIm>,
-// with <GIm> and <CIm> referring to the MIG GPU instance's and Compute
-// instance's minor, respectively. For the the latter two device nodes it is
-// sufficient to create them in the container (with proper cgroups permissions),
-// without actually requiring the same device nodes to be explicitly created on
-// the host. That is what is achieved below with the structure created in
-// cdiDevNodeFromNVCapDevInfo().
-func (cdi *CDIHandler) GetDevNodesForMigDevice(mig *MigDeviceInfo) ([]*cdispec.DeviceNode, error) {
-	gpath := fmt.Sprintf("%s/gpu%d/mig/gi%d/access", procNvCapsPath, mig.parent.minor, mig.GIID)
-	giCapsInfo, err := parseNVCapDeviceInfo(gpath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse GI capabilities file %s: %w", gpath, err)
-	}
-
-	cpath := fmt.Sprintf("%s/gpu%d/mig/gi%d/ci%d/access", procNvCapsPath, mig.parent.minor, mig.GIID, mig.CIID)
-	ciCapsInfo, err := parseNVCapDeviceInfo(cpath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse CI capabilities file %s: %w", cpath, err)
-	}
-
-	devnodes := []*cdispec.DeviceNode{cdiCharDevNode(giCapsInfo), cdiCharDevNode(ciCapsInfo)}
-	spew.Printf("%s=%#v\n", "devnodes", devnodes)
-	return devnodes, nil
-}
-
-// Construct and return a CDI `deviceNodes` entry. Adding this to a CDI
-// container specification at the high level has the purpose of granting cgroup
-// access to the containerized application for being able to access (open) a
-// certain character device node as identified by `i.path`. The special device
-// type "c" below specifically instructs the container runtime to create (mknod)
-// the character device (for the container, accessible from within the
-// container, not visible on the host), and to grant the cgroup privilege to the
-// container to open that device. References:
-// https://github.com/opencontainers/runtime-spec/blob/main/config-linux.md#allowed-device-list
-// https://www.kernel.org/doc/Documentation/cgroup-v1/devices.txt
-func cdiCharDevNode(i *nvcapDeviceInfo) *cdispec.DeviceNode {
-	return &cdispec.DeviceNode{
-		Path:     i.path,
-		Type:     "c",
-		FileMode: ptr.To(os.FileMode(i.mode)),
-		Major:    int64(i.major),
-		Minor:    int64(i.minor),
-	}
 }
 
 func (cdi *CDIHandler) GetCommonEditsCached() (*cdiapi.ContainerEdits, error) {
@@ -325,11 +218,22 @@ func (cdi *CDIHandler) GetDeviceSpecsByUUIDCached(uuid string) ([]cdispec.Device
 	return clone, nil
 }
 
+// Note(JP): for a regular GPU, this canonical name is for example `gpu-0`, with
+// the numerical suffix as of the time of writing reflecting the device minor.
+// NVMLs' DeviceSetMigMode() is documented with 'This API may unbind or reset
+// the device to activate the requested mode. Thus, the attributes associated
+// with the device, such as minor number, might change. The caller of this API
+// is expected to query such attributes again.' -- if the minor is indeed not
+// necessarily stable, there may be problems associating this spec _long-term_
+// with that name. Maye always dynamically generate spec during prepare(). That
+// is an argument for always dynamically generating also full-GPU CDI spec
+// during prepare().
 func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices PreparedDevices) error {
-	// Generate those parts of the container spec that are not device-specific.
-	// To inject things like driver library mounts and meta devices.
-	// commonEdits, err := cdi.nvcdiDevice.GetCommonEdits() this may initialize
-	// nvsandboxutilslib under the hood cdi.nvcdiClaim.GetCommonEdits()
+	// Generate those parts of the container spec that are not device-specific
+	// (to inject e.g. driver library mounts and meta devices).
+	// `nvcdiDevice.GetCommonEdits()` may usually initialize nvsandboxutilslib
+	// under the hood -- to prevent that, we now use
+	// `nvcdi.FeatureDisableNvsandboxUtils` above.
 	commonEdits, err := cdi.GetCommonEditsCached()
 	if err != nil {
 		return fmt.Errorf("failed to get common CDI spec edits: %w", err)
@@ -343,99 +247,60 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 		"NVIDIA_VISIBLE_DEVICES=void")
 
 	var deviceSpecs []cdispec.Device
-
 	for _, group := range preparedDevices {
 		for _, dev := range group.Devices {
-			duuid := ""
+			uuid := ""
 
 			// Construct claim-specific CDI device name in accordance with the
 			// naming convention encoded in GetClaimDeviceName() below.
 			dname := fmt.Sprintf("%s-%s", claimUID, dev.CanonicalName())
 
 			var dspec cdispec.Device
-			if dev.Type() == VfioDeviceType {
-				// Note(JP): overwrite commonEdits (potentially multiple times
-				// with the same 'content'). Shouldn't we also use
-				// `cdi.nvcdiDevice.GetCommonEdits()` here (wasn't done in the
-				// original vfio PR)? Also: assume that all devices in
-				// `preparedDevices` are vfio devices; a mixture would
-				commonEdits = GetVfioCommonCDIContainerEdits()
-				dspec = cdispec.Device{
-					ContainerEdits: *GetVfioCDIContainerEdits(dev.Vfio.Info).ContainerEdits,
-				}
 
-			} else if dev.Mig != nil {
-				// Inject parent dev node
-				// Other dev nodes specific to this MIG device are injected 'manually' below.
-				duuid = dev.Mig.Created.parent.UUID
+			if dev.Type() == GpuDeviceType {
+				uuid = dev.Gpu.Info.UUID
 				// Get (copy of) cached device spec (is safe to be mutated below,
 				// w/o compromising cache).
-				dspecsmig, err := cdi.GetDeviceSpecsByUUIDCached(duuid)
-				if err != nil {
-					return fmt.Errorf("unable to get device spec for %s: %w", dname, err)
-				}
-				dspec = dspecsmig[0]
-
-			} else {
-				duuid = dev.Gpu.Info.UUID
-				// Get (copy of) cached device spec (is safe to be mutated below,
-				// w/o compromising cache).
-				dspecsgpu, err := cdi.GetDeviceSpecsByUUIDCached(duuid)
+				dspecsgpu, err := cdi.GetDeviceSpecsByUUIDCached(uuid)
 				if err != nil {
 					return fmt.Errorf("unable to get device spec for %s: %w", dname, err)
 				}
 				dspec = dspecsgpu[0]
 			}
 
-			// For a just-created MIG device I see this emit a msg on stderr:
-			//
-			// ERROR: migGetDevFileInfo 212 result=11ERROR: init 310
-			// result=11ERROR: migGetDevFileInfo 212 result=11ERROR: init 310
-			// result=11
-			//
-			// Evan said that "Seems like nvsandboxutils " "There is a feature
-			// flag in the CDI API to disable it, but you may need a code change
-			// in the driver ..." Probably triggered here:
-			// https://github.com/NVIDIA/nvidia-container-toolkit/blob/e03ac3644d63ec30849dffebd0170811e4903e78/internal/platform-support/dgpu/nvsandboxutils.go#L67
-			//
+			if dev.Type() == VfioDeviceType {
+				// uuid = dev.Vfio.Info.UUID
+				// Note(JP): overwrite commonEdits (potentially multiple times
+				// with the same data). Shouldn't we also use
+				// `cdi.nvcdiDevice.GetCommonEdits()` here (wasn't done in the
+				// original vfio PR)? Also: assume that all devices in
+				// `preparedDevices` are vfio devices; a mixture would wreak
+				// havoc.
+				commonEdits = GetVfioCommonCDIContainerEdits()
+				dspec = cdispec.Device{
+					ContainerEdits: *GetVfioCDIContainerEdits(dev.Vfio.Info).ContainerEdits,
+				}
+			}
 
-			// Note(JP): for a regular GPU, this canonical name is for example
-			// `gpu-0`, with the numerical suffix as of the time of writing
-			// reflecting the device minor. NVMLs' DeviceSetMigMode() is
-			// documented with 'This API may unbind or reset the device to
-			// activate the requested mode. Thus, the attributes associated with
-			// the device, such as minor number, might change. The caller of
-			// this API is expected to query such attributes again.' -- if the
-			// minor is indeed not necessarily stable, there may be problems
-			// associating this spec _long-term_ with that name. Maye always
-			// dynamically generate spec during prepare(). That is an argument
-			// for always dynamically generating also full-GPU CDI spec during
-			// prepare().
+			if dev.Type() == MigDeviceType {
+				// Goal: inject parent dev node. Other dev nodes specific to this
+				// MIG device are injected 'manually' further below. That is because
+				// currently `nvcdiDevice.GetDeviceSpecsByID()` may yield an
+				// incomplete spec for MIG devices, see
+				// https://github.com/NVIDIA/k8s-dra-driver-gpu/issues/787. Instead,
+				// manually create the required dev node spec for the consuming
+				// container via GetDevNodesForMigDevice() below.
+				uuid = dev.Mig.Created.parent.UUID
+				// Get (copy of) cached device spec (is safe to be mutated below,
+				// w/o compromising cache).
+				dspecsmig, err := cdi.GetDeviceSpecsByUUIDCached(uuid)
+				if err != nil {
+					return fmt.Errorf("unable to get device spec for %s: %w", dname, err)
+				}
+				dspec = dspecsmig[0]
 
-			// I've found a situation where `GetDeviceSpecsByID(duuid)` returned
-			// just one instead of three dev nodes; just the dev node for the
-			// full device. That was because the mig device-specific nodes e.g.
-			// `nvidia-cap66  nvidia-cap67` were not in /dev/nvidia-caps. Then,
-			// we would proceed with just the full GPU gets injected (which
-			// hopefully cannot actually be used to launch workload on). It's
-			// yet unclear to me what the exact conditions were for that to
-			// happen, but we should error out in that case. The dev nodes were
-			// present in the container nvidia-mig-manager-zz5h8 at
-			// /dev/nvidia-caps but not at /driver-root/dev/nvidia-caps
-			//
-			// Later I saw, with CDI library logging enabled:
-			// time="2025-11-02T21:38:00Z" level=info msg="Selecting /driver-root/dev/nvidia0 as /dev/nvidia0"
-			// time="2025-11-02T21:38:00Z" level=warning msg="Could not locate /dev/nvidia-caps/nvidia-cap66: pattern /dev/nvidia-caps/nvidia-cap66 not found"
-			// time="2025-11-02T21:38:00Z" level=warning msg="Could not locate /dev/nvidia-caps/nvidia-cap67: pattern /dev/nvidia-caps/nvidia-cap67 not found"
-			// editsForDevice, err := edits.FromDiscoverer(deviceNodes)
-			//
-			// if dev.Mig != nil && len(devnodes) < 3 {
-			// 	klog.Warningf("insufficent number of dev nodes returned for MIG device by GetDeviceSpecsByID(): %d", len(devnodes))
-			// 	//return fmt.Errorf("bad result from GetDeviceSpecsByID() for MIG device -- restart GPU Operator?")
-			// }
-			dspec.Name = dname
-			if dev.Mig != nil {
-				devnodesForMig, err := cdi.GetDevNodesForMigDevice(dev.Mig.Created)
+				// Mutate `dspec` in case a MIG device was asked for.
+				devnodesForMig, err := cdi.GetDevNodesForMigDevice(dev.Mig.Created.parent.minor, int(dev.Mig.Created.GIID), int(dev.Mig.Created.CIID))
 				if err != nil {
 					return fmt.Errorf("failed to construct MIG device DeviceNode edits: %w", err)
 				}
@@ -443,11 +308,13 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 				dspec.ContainerEdits.DeviceNodes = append(dspec.ContainerEdits.DeviceNodes, devnodesForMig...)
 			}
 
+			// The previous calls guarantee that at this point, `dspec` is a
+			// list with precisely one item. Now, associate spec with
+			// claim-specific device name generated above.
+			dspec.Name = dname
+			klog.V(7).Infof("Number of device nodes about to inject for device %s: %d", dname, len(dspec.ContainerEdits.DeviceNodes))
 			deviceSpecs = append(deviceSpecs, dspec)
 
-			klog.V(7).Infof("Number of device nodes about to inject for device %s: %d", dname, len(dspec.ContainerEdits.DeviceNodes))
-
-			// spew.Printf("%s=%#v\n", "deviceSpecs", deviceSpecs)
 			// If there edits passed as part of the device config state (set on
 			// the group), add them to the spec of each device in that group.
 			if group.ConfigState.containerEdits != nil {
@@ -495,4 +362,39 @@ func (cdi *CDIHandler) DeleteClaimSpecFile(claimUID string) error {
 // That identifier can be used elsewhere, and _points to the spec_.
 func (cdi *CDIHandler) GetClaimDeviceName(claimUID string, device *AllocatableDevice, containerEdits *cdiapi.ContainerEdits) string {
 	return cdiparser.QualifiedName(cdiVendor, cdiClaimClass, fmt.Sprintf("%s-%s", claimUID, device.CanonicalName()))
+}
+
+// Construct and return the CDI `deviceNodes` specification for the two
+// character devices `/dev/nvidia-caps/nvidia-cap<CIm>` and
+// `/dev/nvidia-caps/nvidia-cap<GIm>` for a specific MIG device.
+//
+// Context: for containerized workload to see and use a specific MIG device, it
+// needs to be able to open three character device nodes:
+//
+// 1) `/dev/nvidia<Pm>`, with <Pm> referring to the parent's minor. This exists
+// on the host.
+//
+// 2) /dev/nvidia-caps/nvidia-cap<CIm> and /dev/nvidia-caps/nvidia-cap<GIm>,
+// with <GIm> and <CIm> referring to the MIG GPU instance's and Compute
+// instance's minor, respectively. For the the latter two device nodes it is
+// sufficient to create them in the container (with proper cgroups permissions),
+// without actually requiring the same device nodes to be explicitly created on
+// the host. That is what is achieved below with the structure created in
+// cdiDevNodeFromNVCapDevInfo().
+func (cdi *CDIHandler) GetDevNodesForMigDevice(parentMinor int, giId int, ciId int) ([]*cdispec.DeviceNode, error) {
+	gipath := fmt.Sprintf("%s/gpu%d/mig/gi%d/access", procNvCapsPath, parentMinor, giId)
+	cipath := fmt.Sprintf("%s/gpu%d/mig/gi%d/ci%d/access", procNvCapsPath, parentMinor, giId, ciId)
+
+	giCapsInfo, err := common.ParseNVCapDeviceInfo(gipath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse GI capabilities file %s: %w", gipath, err)
+	}
+
+	ciCapsInfo, err := common.ParseNVCapDeviceInfo(cipath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse CI capabilities file %s: %w", cipath, err)
+	}
+
+	devnodes := []*cdispec.DeviceNode{giCapsInfo.CDICharDevNode(), ciCapsInfo.CDICharDevNode()}
+	return devnodes, nil
 }

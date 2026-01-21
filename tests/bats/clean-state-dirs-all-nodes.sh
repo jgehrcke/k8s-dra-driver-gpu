@@ -19,11 +19,11 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-# for now leave rm -rfv /host/run/cdi/* alone
+# TODO: clean up /run/cdi/* (not everything in there, more selectively).
 
 rm_kubelet_plugin_dirs_from_node () {
     local NODE_NAME="$1"
-    echo "Run privileged pod to remove /run/cdi/* and kubelet plugin directories on node ${NODE_NAME}"
+    echo "Run privileged pod to remove kubelet plugin directories on node ${NODE_NAME}"
     kubectl run "privpod-rm-plugindirs-${NODE_NAME}" \
         --rm \
         --image=busybox \
@@ -33,6 +33,7 @@ rm_kubelet_plugin_dirs_from_node () {
         --overrides='{
         "spec": {
             "nodeName": "'"${NODE_NAME}"'",
+            "namespace": "batssuite",
             "containers": [{
             "name": "privpod-rm-plugindirs-'"${NODE_NAME}"'",
             "metadata": {"labels": {"env": "batssuite"}},
@@ -51,6 +52,11 @@ rm_kubelet_plugin_dirs_from_node () {
         }
         }'
 }
+
+# `kubectl run` does not apply the env/batssuite label. For reliable cleanup,
+# run in new namespace (can make more use of that in the test suite over time).
+# Create namespace if it does not exist.
+kubectl create namespace batssuite --dry-run=client -o yaml | kubectl apply -f -
 
 # Would be faster when using a daemonset. However, the output is more readable
 # when running sequentially.

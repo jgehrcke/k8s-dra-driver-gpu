@@ -40,6 +40,12 @@ const (
 
 	// PassthroughSupport allows gpus to be configured with the vfio-pci driver.
 	PassthroughSupport featuregate.Feature = "PassthroughSupport"
+
+	// NVMLDeviceHealthCheck allows Device Health Checking using NVML.
+	NVMLDeviceHealthCheck featuregate.Feature = "NVMLDeviceHealthCheck"
+
+	// Enable dynamic MIG device management.
+	DynamicMIG featuregate.Feature = "DynamicMIG"
 )
 
 // defaultFeatureGates contains the default settings for all project-specific feature gates.
@@ -66,7 +72,23 @@ var defaultFeatureGates = map[featuregate.Feature]featuregate.VersionedSpecs{
 			Version:    version.MajorMinor(25, 8),
 		},
 	},
+	// Should `PassthroughSupport` be mutually exclusive with `DynamicMIG`?
+	// If yes: howw to express that?
 	PassthroughSupport: {
+		{
+			Default:    false,
+			PreRelease: featuregate.Alpha,
+			Version:    version.MajorMinor(25, 12),
+		},
+	},
+	DynamicMIG: {
+		{
+			Default:    false,
+			PreRelease: featuregate.Alpha,
+			Version:    version.MajorMinor(25, 12),
+		},
+	},
+	NVMLDeviceHealthCheck: {
 		{
 			Default:    false,
 			PreRelease: featuregate.Alpha,

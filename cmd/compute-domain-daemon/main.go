@@ -33,6 +33,7 @@ import (
 	"github.com/urfave/cli/v2"
 
 	nvapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
+	"github.com/NVIDIA/k8s-dra-driver-gpu/internal/common"
 	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
 	pkgflags "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/flags"
 )
@@ -193,6 +194,7 @@ func newApp() *cli.App {
 
 // Run invokes the IMEX daemon and manages its lifecycle.
 func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
+	common.StartDebugSignalHandlers()
 
 	config := &ControllerConfig{
 		cliqueID:               flags.cliqueID,

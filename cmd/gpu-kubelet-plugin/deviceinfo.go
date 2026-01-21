@@ -29,6 +29,15 @@ import (
 )
 
 // Represents a specific, full, physical GPU device.
+// Defined similarly as https://pkg.go.dev/k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1#Healthy.
+type HealthStatus string
+
+const (
+	Healthy HealthStatus = "Healthy"
+	// With NVMLDeviceHealthCheck, Unhealthy means that there are critcal xid errors on the device.
+	Unhealthy HealthStatus = "Unhealthy"
+)
+
 type GpuInfo struct {
 	UUID string `json:"uuid"`
 	//index                 int
@@ -46,6 +55,7 @@ type GpuInfo struct {
 	pcieRootAttr          *deviceattribute.DeviceAttribute
 	migProfiles           []*MigProfileInfo
 	MigCapable            bool
+	Health                HealthStatus
 
 	// Properties that can only be known after inspecting MIG profiles
 	maxCapacities PartCapacityMap
@@ -80,6 +90,7 @@ type MigDeviceInfo struct {
 	ciProfileInfo *nvml.ComputeInstanceProfileInfo
 	pcieBusID     string
 	pcieRootAttr  *deviceattribute.DeviceAttribute
+	Health        HealthStatus
 }
 
 type VfioDeviceInfo struct {
@@ -128,6 +139,7 @@ func (d *VfioDeviceInfo) CanonicalName() string {
 }
 
 func (d *GpuInfo) PartDevAttributes() map[resourceapi.QualifiedName]resourceapi.DeviceAttribute {
+	pciBusIDAttrName := resourceapi.QualifiedName(deviceattribute.StandardDeviceAttributePrefix + "pciBusID")
 	return map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 		"type": {
 			StringValue: ptr.To(GpuDeviceType),
@@ -154,6 +166,9 @@ func (d *GpuInfo) PartDevAttributes() map[resourceapi.QualifiedName]resourceapi.
 			VersionValue: ptr.To(semver.MustParse(d.cudaDriverVersion).String()),
 		},
 		"pcieBusID": {
+			StringValue: &d.pcieBusID,
+		},
+		pciBusIDAttrName: {
 			StringValue: &d.pcieBusID,
 		},
 	}
@@ -215,6 +230,8 @@ func (d *GpuInfo) AddDetailAfterWalkingMigProfiles(maxcap PartCapacityMap, memSl
 }
 
 func (d *GpuInfo) GetDevice() resourceapi.Device {
+	// TODO: Consume GetPCIBusIDAttribute from https://github.com/kubernetes/kubernetes/blob/4c5746c0bc529439f78af458f8131b5def4dbe5d/staging/src/k8s.io/dynamic-resource-allocation/deviceattribute/attribute.go#L39
+
 	device := resourceapi.Device{
 		Name:       d.CanonicalName(),
 		Attributes: d.PartDevAttributes(),
@@ -231,6 +248,8 @@ func (d *GpuInfo) GetDevice() resourceapi.Device {
 }
 
 func (d *MigDeviceInfo) GetDevice() resourceapi.Device {
+	// TODO: Consume GetPCIBusIDAttribute from https://github.com/kubernetes/kubernetes/blob/4c5746c0bc529439f78af458f8131b5def4dbe5d/staging/src/k8s.io/dynamic-resource-allocation/deviceattribute/attribute.go#L39
+	pciBusIDAttrName := resourceapi.QualifiedName(deviceattribute.StandardDeviceAttributePrefix + "pciBusID")
 	device := resourceapi.Device{
 		Name: d.CanonicalName(),
 		Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
@@ -264,7 +283,7 @@ func (d *MigDeviceInfo) GetDevice() resourceapi.Device {
 			"cudaDriverVersion": {
 				VersionValue: ptr.To(semver.MustParse(d.parent.cudaDriverVersion).String()),
 			},
-			"pcieBusID": {
+			pciBusIDAttrName: {
 				StringValue: &d.pcieBusID,
 			},
 		},
@@ -304,6 +323,8 @@ func (d *MigDeviceInfo) GetDevice() resourceapi.Device {
 }
 
 func (d *VfioDeviceInfo) GetDevice() resourceapi.Device {
+	// TODO: Consume GetPCIBusIDAttribute from https://github.com/kubernetes/kubernetes/blob/4c5746c0bc529439f78af458f8131b5def4dbe5d/staging/src/k8s.io/dynamic-resource-allocation/deviceattribute/attribute.go#L39
+	pciBusIDAttrName := resourceapi.QualifiedName(deviceattribute.StandardDeviceAttributePrefix + "pciBusID")
 	device := resourceapi.Device{
 		Name: d.CanonicalName(),
 		Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
@@ -322,7 +343,7 @@ func (d *VfioDeviceInfo) GetDevice() resourceapi.Device {
 			"numa": {
 				IntValue: ptr.To(int64(d.numaNode)),
 			},
-			"pcieBusID": {
+			pciBusIDAttrName: {
 				StringValue: &d.pcieBusID,
 			},
 			"productName": {

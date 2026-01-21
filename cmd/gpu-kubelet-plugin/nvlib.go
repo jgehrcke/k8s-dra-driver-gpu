@@ -36,6 +36,8 @@ import (
 	"github.com/NVIDIA/go-nvlib/pkg/nvpci"
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 	"k8s.io/dynamic-resource-allocation/deviceattribute"
+
+	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
 )
 
 type deviceLib struct {
@@ -272,14 +274,6 @@ type PerGPUMinorAllocatableDevices map[GPUMinor]AllocatableDevices
 // part of this call.
 func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (PerGPUMinorAllocatableDevices, error) {
 	klog.Infof("Traverse GPU devices")
-
-	// if err := l.Init(); err != nil {
-	// 	return nil, err
-	// }
-	// defer l.alwaysShutdown()
-
-	// Flat representation of all allocatable devices
-	// allAllocatable := make(AllocatableDevices)
 	perGPUAllocatable := make(PerGPUMinorAllocatableDevices)
 
 	err := l.VisitDevices(func(i int, d nvdev.Device) error {
@@ -287,12 +281,17 @@ func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (PerGPUMinorAlloc
 			return nil
 		}
 
-		// Just those allocatable devices for this physical GPU
+		// Prepare data structure for conceptually allocatable devices for this
+		// one physical GPU.
 		thisGPUAllocatable := make(AllocatableDevices)
 
 		gpuInfo, err := l.getGpuInfo(i, d)
 		if err != nil {
 			return fmt.Errorf("error getting info for GPU %v: %w", i, err)
+		}
+
+		parentdev := &AllocatableDevice{
+			Gpu: gpuInfo,
 		}
 
 		// Store gpuInfo object for later re-use (lookup by UUID).
@@ -304,29 +303,61 @@ func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (PerGPUMinorAlloc
 			klog.Warningf("DeviceGetHandleByUUIDCached failed: %s", ret)
 		}
 
-		// For this full device, inspect all MIG profiles and their possible
-		// placements. This enriches `gpuInfo` with additional properties (such
-		// as the memory slice count, and the maximum capacities as reported by
-		// individual MIG profiles).
-		migpps, err := l.inspectMigProfilesAndPlacements(gpuInfo, d)
-		if err != nil {
-			return fmt.Errorf("error getting MIG info for GPU %v: %w", i, err)
-		}
-
-		dev := &AllocatableDevice{
-			Gpu: gpuInfo,
-		}
-
-		// TODO: re-add featuregates.PassthroughSupport)  If no MIG devices are found, allow VFIO devices.
-		// allocatable.DevicesPerGPU[gpuInfo.index] = append(allocatable.DevicesPerGPU[gpuInfo.index], gpuDevice)
-		thisGPUAllocatable[gpuInfo.CanonicalName()] = dev
-
-		for _, migpp := range migpps {
-			dev := &AllocatableDevice{
-				Mig: migpp,
+		if featuregates.Enabled(featuregates.DynamicMIG) {
+			// For this full device, inspect all MIG profiles and their possible
+			// placements. This enriches `gpuInfo` with additional properties (such
+			// as the memory slice count, and the maximum capacities as reported by
+			// individual MIG profiles).
+			migpps, err := l.inspectMigProfilesAndPlacements(gpuInfo, d)
+			if err != nil {
+				return fmt.Errorf("error getting MIG info for GPU %v: %w", i, err)
 			}
-			//allAllocatable[migpp.CanonicalName()] = dev
-			thisGPUAllocatable[migpp.CanonicalName()] = dev
+
+			// Announce the full physical GPU.
+			thisGPUAllocatable[gpuInfo.CanonicalName()] = parentdev
+
+			for _, migpp := range migpps {
+				dev := &AllocatableDevice{
+					Mig: migpp,
+				}
+				thisGPUAllocatable[migpp.CanonicalName()] = dev
+			}
+
+			perGPUAllocatable[gpuInfo.minor] = thisGPUAllocatable
+
+			// Terminate this function -- this is mutually exclusive with static MIG and vfio/passthrough.
+			return nil
+		}
+
+		migdevs, err := l.discoverMigDevicesByGPU(gpuInfo)
+		if err != nil {
+			return fmt.Errorf("error discovering MIG devices for GPU %q: %w", gpuInfo.CanonicalName(), err)
+		}
+
+		if featuregates.Enabled(featuregates.PassthroughSupport) {
+			// Only if no MIG devices are found, allow VFIO devices.
+			klog.Infof("PassthroughSupport enabled, and %d MIG devices found", len(migdevs))
+			gpuInfo.vfioEnabled = len(migdevs) == 0
+		}
+
+		if !gpuInfo.migEnabled {
+			klog.Infof("Adding device %s to allocatable devices", gpuInfo.CanonicalName())
+			// No static MIG devices prepared for this physical GPU. Announce
+			// physical GPU to be allocatable, and terminate discovery for this
+			// phyical GPU.
+			thisGPUAllocatable[gpuInfo.CanonicalName()] = parentdev
+			return nil
+		}
+
+		// Process statically pre-configured MIG devices.
+		for _, mdev := range migdevs {
+			klog.Infof("Adding MIG device %s to allocatable devices (parent: %s)", mdev.CanonicalName(), gpuInfo.CanonicalName())
+			thisGPUAllocatable[mdev.CanonicalName()] = mdev
+		}
+
+		// Likely unintentionally stranded capacity (misconfiguration).
+		if len(migdevs) == 0 {
+			klog.Warningf("Physical GPU %s has MIG mode enabled but no configured MIG devices", gpuInfo.CanonicalName())
 		}
 
 		perGPUAllocatable[gpuInfo.minor] = thisGPUAllocatable
@@ -342,21 +373,23 @@ func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (PerGPUMinorAlloc
 	return perGPUAllocatable, nil
 }
 
-// func (l deviceLib) discoverMigDevicesByGPU(gpuInfo *GpuInfo) (AllocatableDeviceList, error) {
-// 	var devices AllocatableDeviceList
-// 	migs, err := l.getMigDevices(gpuInfo)
-// 	if err != nil {
-// 		return nil, fmt.Errorf("error getting MIG devices for GPU %q: %w", gpuInfo.CanonicalName(), err)
-// 	}
+func (l deviceLib) discoverMigDevicesByGPU(gpuInfo *GpuInfo) (AllocatableDeviceList, error) {
+	var devices AllocatableDeviceList
+	migs, err := l.getMigDevices(gpuInfo)
+	if err != nil {
+		return nil, fmt.Errorf("error getting MIG devices for GPU %q: %w", gpuInfo.CanonicalName(), err)
+	}
 
-// 	for _, migDeviceInfo := range migs {
-// 		mig := &AllocatableDevice{
-// 			Mig: migDeviceInfo,
-// 		}
-// 		devices = append(devices, mig)
-// 	}
-// 	return devices, nil
-// }
+	for _, migDeviceInfo := range migs {
+		mig := &AllocatableDevice{
+			// TODO: distinguish abstract and specific MIG device.
+			//Mig: migDeviceInfo,
+			MigConcrete: migDeviceInfo,
+		}
+		devices = append(devices, mig)
+	}
+	return devices, nil
+}
 
 // TODO: Need go-nvlib util for this.
 func (l deviceLib) discoverGPUByPCIBusID(pcieBusID string) (*AllocatableDevice, AllocatableDeviceList, error) {
@@ -620,6 +653,7 @@ func (l deviceLib) getGpuInfo(index int, device nvdev.Device) (*GpuInfo, error) 
 		pcieBusID:             pcieBusID,
 		pcieRootAttr:          pcieRootAttr,
 		migProfiles:           migProfiles,
+		Health:                Healthy,
 	}
 
 	return gpuInfo, nil
@@ -767,6 +801,7 @@ func (l deviceLib) getMigDevices(gpuInfo *GpuInfo) (map[string]*MigDeviceInfo, e
 			cIInfo:        &ciInfo,
 			pcieBusID:     gpuInfo.pcieBusID,
 			pcieRootAttr:  gpuInfo.pcieRootAttr,
+			Health:        Healthy,
 		}
 		return nil
 	})

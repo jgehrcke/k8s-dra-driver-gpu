@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-name: CI Pipeline
+name: "ci"
 
 on:
   push:
@@ -21,21 +21,31 @@ on:
       - release-*
 
 jobs:
+  image:
+    uses: ./.github/workflows/image.yaml
+    secrets: inherit
+
+  # Separate, concurrent job to populate the image layer cache
+  cache:
+    uses: ./.github/workflows/imgcache.yaml
+    secrets: inherit
+
+  # TODO: rename, to make this more explicit
   basic:
     uses: ./.github/workflows/basic-checks.yaml
 
-  image:
-    uses: ./.github/workflows/image.yaml
-    needs:
-    - basic
-    secrets: inherit
-    with:
-      version: ${{ needs.basic.outputs.version }}
-      golang_version: ${{ needs.basic.outputs.golang_version }}
-
   chart:
-    # For faster CI signal, do not wait for `image`.
-    needs:
-    - basic
+    # Push chart early regardless of image build success: at the time of
+    # writing, we lose precious time if we start this job only after image build
+    # success. We push this to a CI-oriented container registry, and pushing
+    # faulty artifacts is generally tolerable. Dev build artifacts should
+    # generally be only consumed for commits on `main`.
     secrets: inherit
     uses: ./.github/workflows/chart.yaml
+
+  test:
+    # The test suite consumes image and chart artifacts pushed to GHCR.
+    needs:
+    - chart
+    - image
+    uses: ./.github/workflows/tests.yaml

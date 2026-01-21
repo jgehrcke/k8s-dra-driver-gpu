@@ -22,6 +22,7 @@ import (
 	"maps"
 	"path/filepath"
 	"slices"
+	"sync"
 	"time"
 
 	resourceapi "k8s.io/api/resource/v1"
@@ -32,6 +33,7 @@ import (
 	"k8s.io/dynamic-resource-allocation/resourceslice"
 	"k8s.io/klog/v2"
 
+	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
 	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/flock"
 )
 
@@ -40,12 +42,20 @@ import (
 // interleave, node-globally.
 const DriverPrepUprepFlockFileName = "pu.lock"
 
+type deviceHealthMonitor interface {
+	Start(context.Context) error
+	Stop()
+	Unhealthy() <-chan *AllocatableDevice
+}
+
 type driver struct {
-	client       coreclientset.Interface
-	pluginhelper *kubeletplugin.Helper
-	state        *DeviceState
-	pulock       *flock.Flock
-	healthcheck  *healthcheck
+	client              coreclientset.Interface
+	pluginhelper        *kubeletplugin.Helper
+	state               *DeviceState
+	pulock              *flock.Flock
+	healthcheck         *healthcheck
+	deviceHealthMonitor deviceHealthMonitor
+	wg                  sync.WaitGroup
 }
 
 func NewDriver(ctx context.Context, config *Config) (*driver, error) {
@@ -56,7 +66,9 @@ func NewDriver(ctx context.Context, config *Config) (*driver, error) {
 
 	// Could be done in NewDeviceState, but I want to make sure that the
 	// checkpoint logic is intact -- that's most obvious here.
-	state.DestroyUnknownMIGDevices(ctx)
+	if featuregates.Enabled(featuregates.DynamicMIG) {
+		state.DestroyUnknownMIGDevices(ctx)
+	}
 
 	puLockPath := filepath.Join(config.DriverPluginPath(), DriverPrepUprepFlockFileName)
 
@@ -81,22 +93,30 @@ func NewDriver(ctx context.Context, config *Config) (*driver, error) {
 	}
 	driver.pluginhelper = helper
 
-	resources := driver.GenerateDriverResources(config.flags.nodeName)
-
 	healthcheck, err := startHealthcheck(ctx, config, helper)
 	if err != nil {
 		return nil, fmt.Errorf("start healthcheck: %w", err)
 	}
 	driver.healthcheck = healthcheck
 
-	// Note(JP): from KEP 4815: "we will add client-side validation in the
-	// ResourceSlice controller helper, so that any errors in the ResourceSlices
-	// will be caught before they even are applied to the APIServer" -- the
-	// helper below is being referred to.
-	//
-	// This will be a TODO soon:
-	// https://github.com/kubernetes/kubernetes/commit/a171795e313ee9f407fef4897c1a1e2052120991
-	if err := driver.pluginhelper.PublishResources(ctx, resources); err != nil {
+	if featuregates.Enabled(featuregates.NVMLDeviceHealthCheck) {
+		deviceHealthMonitor, err := newNvmlDeviceHealthMonitor(config, state.allocatable, state.nvdevlib)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create NVML device health monitor: %w", err)
+		}
+		if err := deviceHealthMonitor.Start(ctx); err != nil {
+			return nil, fmt.Errorf("failed to start device health monitor: %w", err)
+		}
+		driver.deviceHealthMonitor = deviceHealthMonitor
+
+		driver.wg.Add(1)
+		go func() {
+			defer driver.wg.Done()
+			driver.deviceHealthEvents(ctx, config.flags.nodeName)
+		}()
+	}
+
+	if err := driver.publishResources(ctx, config); err != nil {
 		return nil, err
 	}
 
@@ -188,6 +208,11 @@ func (d *driver) Shutdown() error {
 	}
 
 	d.state.nvdevlib.alwaysShutdown()
+	if d.deviceHealthMonitor != nil {
+		d.deviceHealthMonitor.Stop()
+	}
+
+	d.wg.Wait()
 
 	d.pluginhelper.Stop()
 	return nil
@@ -259,6 +284,14 @@ func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.Res
 	// 		Err: fmt.Errorf("error preparing devices for claim %v: %w", claim.UID, err),
 	// 	}
 	// }
+	if featuregates.Enabled(featuregates.PassthroughSupport) {
+		// Re-advertise updated resourceslice after preparing devices.
+		if err = d.publishResources(ctx, d.state.config); err != nil {
+			return kubeletplugin.PrepareResult{
+				Err: fmt.Errorf("error preparing devices for claim %v: %w", claim.UID, err),
+			}
+		}
+	}
 
 	klog.Infof("Returning newly prepared devices for claim '%s': %v", cs, devs)
 	return kubeletplugin.PrepareResult{Devices: devs}
@@ -281,6 +314,49 @@ func (d *driver) nodeUnprepareResource(ctx context.Context, claimRef kubeletplug
 
 	if err != nil {
 		return fmt.Errorf("error unpreparing devices for claim %v: %w", claimRef.String(), err)
+	}
+
+	if featuregates.Enabled(featuregates.PassthroughSupport) {
+		// Re-advertise updated resourceslice after unpreparing devices.
+		if err = d.publishResources(ctx, d.state.config); err != nil {
+			return fmt.Errorf("error publishing resources: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (d *driver) publishResources(ctx context.Context, config *Config) error {
+
+	if featuregates.Enabled(featuregates.DynamicMIG) {
+		// Note(JP): from KEP 4815: "we will add client-side validation in the
+		// ResourceSlice controller helper, so that any errors in the ResourceSlices
+		// will be caught before they even are applied to the APIServer" -- the
+		// helper below is being referred to.
+		//
+		// This will be a TODO soon:
+		// https://github.com/kubernetes/kubernetes/commit/a171795e313ee9f407fef4897c1a1e2052120991
+		resources := d.GenerateDriverResources(config.flags.nodeName)
+		if err := d.pluginhelper.PublishResources(ctx, resources); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	// Enumerate the set of GPU, MIG and VFIO devices and publish them
+	var resourceSlice resourceslice.Slice
+	for _, device := range d.state.allocatable {
+		resourceSlice.Devices = append(resourceSlice.Devices, device.GetDevice())
+	}
+
+	resources := resourceslice.DriverResources{
+		Pools: map[string]resourceslice.Pool{
+			config.flags.nodeName: {Slices: []resourceslice.Slice{resourceSlice}},
+		},
+	}
+
+	if err := d.pluginhelper.PublishResources(ctx, resources); err != nil {
+		return err
 	}
 
 	return nil
@@ -307,8 +383,73 @@ func (d *driver) nodeUnprepareResource(ctx context.Context, claimRef kubeletplug
 // 		return err
 // 	}
 
-// 	return nil
-// }
+//		return nil
+//	}
+func (d *driver) deviceHealthEvents(ctx context.Context, nodeName string) {
+	klog.V(4).Info("Starting to watch for device health notifications")
+	for {
+		select {
+		case <-ctx.Done():
+			klog.V(6).Info("Stop processing device health notifications")
+			return
+		case device, ok := <-d.deviceHealthMonitor.Unhealthy():
+			if !ok {
+				// NVML based deviceHealthMonitor is expected to close only during driver Shutdown.
+				klog.V(6).Info("Health monitor channel closed")
+				return
+			}
+			uuid := device.UUID()
+
+			klog.Warningf("Received unhealthy notification for device: %s", uuid)
+
+			if !device.IsHealthy() {
+				klog.V(6).Infof("Device: %s is aleady marked unhealthy. Skip republishing ResourceSlice", uuid)
+				continue
+			}
+
+			// Mark device as unhealthy.
+			d.state.UpdateDeviceHealthStatus(device, Unhealthy)
+
+			// Republish resource slice with only healthy devices
+			// There is no remediation loop right now meaning if the unhealthy device is fixed,
+			// driver needs to be restarted to publish the ResourceSlice with all devices
+			var resourceSlice resourceslice.Slice
+			for _, dev := range d.state.allocatable {
+				uuid := dev.UUID()
+				if dev.IsHealthy() {
+					klog.V(6).Infof("Device: %s is healthy, added to ResoureSlice", uuid)
+					resourceSlice.Devices = append(resourceSlice.Devices, dev.GetDevice())
+				} else {
+					klog.Warningf("Device: %s is unhealthy, will be removed from ResoureSlice", uuid)
+				}
+			}
+
+			klog.V(4).Info("Rebulishing resourceslice with healthy devices")
+			resources := resourceslice.DriverResources{
+				Pools: map[string]resourceslice.Pool{
+					nodeName: {Slices: []resourceslice.Slice{resourceSlice}},
+				},
+			}
+
+			// NOTE: We only log an error on publish failure and do not retry.
+			// If this publish fails, our in-memory health update succeeds but the
+			// ResourceSlice in the API server remains stale and still advertises the
+			// now-unhealthy device as allocatable. Until a later publish succeeds,
+			// the scheduler and other consumers will continue to see the unhealthy
+			// device as available, and new pods may be placed onto hardware we know
+			// is unusable. If publishes continue to fail (e.g., API server issues),
+			// the cluster can remain in this inconsistent state indefinitely.
+			// This is a temporary compromise while device taints/tolerations (KEP-5055)
+			// are available as a Beta feature. An interim improvement could be adding
+			// a retry/backoff or switch to patch updates instead of full republish.
+			if err := d.pluginhelper.PublishResources(ctx, resources); err != nil {
+				klog.Errorf("Failed to publish resources after device health status update: %v", err)
+			} else {
+				klog.V(4).Info("Successfully republished resources without unhealthy device")
+			}
+		}
+	}
+}
 
 // TODO: implement loop to remove CDI files from the CDI path for claimUIDs
 //       that have been removed from the AllocatedClaims map.

@@ -132,11 +132,9 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 	var vfioPciManager *VfioPciManager
 
 	if featuregates.Enabled(featuregates.PassthroughSupport) {
-		manager := NewVfioPciManager(string(containerDriverRoot), string(hostDriverRoot), nvdevlib, true /* nvidiaEnabled */)
-		if err := manager.Prechecks(); err == nil {
-			vfioPciManager = manager
-		} else {
-			klog.Warningf("vfio-pci manager failed prechecks, will not be initialized: %v", err)
+		vfioPciManager = NewVfioPciManager(string(containerDriverRoot), string(hostDriverRoot), nvdevlib, true /* nvidiaEnabled */)
+		if err := vfioPciManager.ValidatePassthroughSupport(); err != nil {
+			klog.Fatalf("Failed to validate passthrough support: %v", err)
 		}
 	}
 
@@ -225,8 +223,8 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 	}
 	klog.V(6).Infof("checkpoint updated for claim %v", claimUID)
 	klog.V(6).Infof("t_prep_ucp %.3f s", time.Since(tucp0).Seconds())
-
 	tprep0 := time.Now()
+
 	preparedDevices, err := s.prepareDevices(ctx, claim)
 	klog.V(6).Infof("t_prep_core %.3f s (claim %s)", time.Since(tprep0).Seconds(), ResourceClaimToString(claim))
 	if err != nil {
@@ -502,6 +500,12 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 		device, exists := s.allocatable[result.Device]
 		if !exists {
 			return nil, fmt.Errorf("requested device is not allocatable: %v", result.Device)
+		}
+		// only proceed with config mapping if device is healthy.
+		if featuregates.Enabled(featuregates.NVMLDeviceHealthCheck) {
+			if !device.IsHealthy() {
+				return nil, fmt.Errorf("requested device is not healthy: %v", result.Device)
+			}
 		}
 		for _, c := range slices.Backward(configs) {
 			if slices.Contains(c.Requests, result.Request) {
@@ -909,6 +913,24 @@ func GetOpaqueDeviceConfigs(
 	}
 
 	return resultConfigs, nil
+}
+
+func (s *DeviceState) UpdateDeviceHealthStatus(d *AllocatableDevice, hs HealthStatus) {
+	s.Lock()
+	defer s.Unlock()
+
+	switch d.Type() {
+	case GpuDeviceType:
+		d.Gpu.Health = hs
+	case MigDeviceType:
+		//TODO-mig: fix
+		//d.Mig.Health = hs
+		klog.Warningf("fixme")
+	default:
+		klog.V(6).Infof("Cannot update health status for unknown device type: %s", d.Type())
+		return
+	}
+	klog.V(4).Infof("Updated device: %s health status to %s", d.UUID(), hs)
 }
 
 // TODO: Dynamic MIG is not yet supported with structured parameters.

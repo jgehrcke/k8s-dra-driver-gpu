@@ -31,6 +31,7 @@ import (
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/klog/v2"
 
+	"github.com/NVIDIA/k8s-dra-driver-gpu/internal/common"
 	"github.com/NVIDIA/k8s-dra-driver-gpu/internal/info"
 	pkgflags "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/flags"
 )
@@ -53,7 +54,11 @@ type Flags struct {
 	kubeletRegistrarDirectoryPath string
 	kubeletPluginsDirectoryPath   string
 	healthcheckPort               int
+<<<<<<< HEAD
 	klogVerbosity                 int
+=======
+	additionalXidsToIgnore        string
+>>>>>>> upstream/main
 }
 
 type Config struct {
@@ -148,6 +153,14 @@ func newApp() *cli.App {
 			Destination: &flags.healthcheckPort,
 			EnvVars:     []string{"HEALTHCHECK_PORT"},
 		},
+		// TODO: change to StringSliceFlag.
+		&cli.StringFlag{
+			Name:        "additional-xids-to-ignore",
+			Usage:       "A comma-separated list of additional XIDs to ignore.",
+			Value:       "",
+			Destination: &flags.additionalXidsToIgnore,
+			EnvVars:     []string{"ADDITIONAL_XIDS_TO_IGNORE"},
+		},
 	}
 	cliFlags = append(cliFlags, flags.kubeClientConfig.Flags()...)
 	cliFlags = append(cliFlags, featureGateConfig.Flags()...)
@@ -208,6 +221,8 @@ func newApp() *cli.App {
 
 // RunPlugin initializes and runs the GPU kubelet plugin.
 func RunPlugin(ctx context.Context, config *Config) error {
+	common.StartDebugSignalHandlers()
+
 	// Create the plugin directory
 	err := os.MkdirAll(config.DriverPluginPath(), 0750)
 	if err != nil {

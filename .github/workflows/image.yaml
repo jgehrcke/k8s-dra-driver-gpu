@@ -13,37 +13,28 @@
 # limitations under the License.
 
 # Run this workflow on pull requests or merge to main/release branches
-name: Image
+name: image
 
 on:
   workflow_call:
-    inputs:
-      version:
-        required: true
-        type: string
-      golang_version:
-        required: true
-        type: string
 
 jobs:
-  build:
-    runs-on: linux-amd64-cpu4
+  build-push:
+    runs-on: linux-arm64-cpu32
     steps:
       - uses: actions/checkout@v6
         name: Check out code
 
-      - name: Install Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: ${{ inputs.golang_version }}
-
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
-          image: tonistiigi/binfmt:qemu-v7.0.0-28
+          image: tonistiigi/binfmt:qemu-v10.0.4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          # Use pull-through cache for container registry. See NV runner docs.
+          buildkitd-config: /etc/buildkit/buildkitd.toml
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
@@ -52,18 +43,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build image
+      - name: build-push
         env:
           IMAGE_NAME: ghcr.io/nvidia/k8s-dra-driver-gpu
-          VERSION: ${{ inputs.version }}
           PUSH_ON_BUILD: true
           BUILD_MULTI_ARCH_IMAGES: "true"
+          # Consume image layer cache (populated by a separate job)
+          CACHE_FROM_GHCR: "true"
         run: |
-          echo "${VERSION}"
+          make print-VERSION
+          # shape: ghcr.io/nvidia/k8s-dra-driver-gpu:v25.12.0-dev-CCCCCCCC
+          export IMAGE_TAG="$(make print-VERSION)-$(echo $GITHUB_SHA | cut -c1-8)"
           make -f deployments/container/Makefile build
+
           # Push the image again, using a shorter tag (only the 8 character
           # commit hash). That's for consumption in downstream CI (for copying
           # the image from GHCR to elsewhere). See
           # https://github.com/NVIDIA/k8s-dra-driver-gpu/issues/688
+          # shape: ghcr.io/nvidia/k8s-dra-driver-gpu:CCCCCCCC
           export IMAGE_TAG="$(echo $GITHUB_SHA | cut -c1-8)"
           make -f deployments/container/Makefile build

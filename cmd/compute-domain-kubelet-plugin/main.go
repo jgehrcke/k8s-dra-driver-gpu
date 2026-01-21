@@ -32,6 +32,7 @@ import (
 
 	"k8s.io/component-base/logs"
 
+	"github.com/NVIDIA/k8s-dra-driver-gpu/internal/common"
 	"github.com/NVIDIA/k8s-dra-driver-gpu/internal/info"
 	pkgflags "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/flags"
 )
@@ -202,6 +203,8 @@ func newApp() *cli.App {
 
 // RunPlugin initializes and runs the compute domain kubelet plugin.
 func RunPlugin(ctx context.Context, config *Config) error {
+	common.StartDebugSignalHandlers()
+
 	// Create the plugin directory
 	err := os.MkdirAll(config.DriverPluginPath(), 0750)
 	if err != nil {

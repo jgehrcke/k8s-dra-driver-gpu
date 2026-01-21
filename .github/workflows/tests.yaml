@@ -1,0 +1,33 @@
+name: test
+
+on:
+  workflow_call:
+  workflow_dispatch:
+    inputs:
+      testfilter:
+        description: 'bats test filter string'
+        required: true
+        default: 'fastfeedback'
+        type: choice
+        options:
+        - fastfeedback
+        - all
+
+
+# Only one job at any time, and cancel in-progress
+concurrency:
+  # Cancel when push to the same branch
+  group: ${{ github.workflow }}-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  k8s-bats:
+    runs-on: compute-domain-runner
+    steps:
+      - uses: actions/checkout@v6
+      - name: batssuite
+        env:
+          TESTFILTER: ${{ inputs.testfilter }}
+        run: |
+          export TEST_FILTER_TAGS="${TESTFILTER:-fastfeedback}"
+          make bats

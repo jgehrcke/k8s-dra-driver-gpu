@@ -22,7 +22,7 @@ TEST_CHART_VERSION ?= "$(VERSION_GHCR_CHART)"
 
 # The baseline Helm chart to test upgrades from and downgrades to.
 TEST_CHART_LASTSTABLE_REPO ?= "oci://ghcr.io/nvidia/k8s-dra-driver-gpu"
-TEST_CHART_LASTSTABLE_VERSION ?= "25.3.2-2c250af3-chart"
+TEST_CHART_LASTSTABLE_VERSION ?= "25.8.0-2ef1f2ad-chart"
 
 # If not "false": the to-be-tested Helm chart is installed from the local
 # filesystem (from `deployments/helm/nvidia-dra-driver-gpu`). Make sure
@@ -52,20 +52,38 @@ TEST_CHART_REPO = "deployments/helm/nvidia-dra-driver-gpu"
 TEST_CHART_VERSION = $(VERSION:v%=%)
 endif
 
+# Note: at times, it may be valuable to use
+# 	--show-output-of-passing-tests
+# in the argument list below.
 BATS_IMAGE ?= batstests:$(GIT_COMMIT_SHORT)
-BATS_ARGS ?= --print-output-on-failure --no-tempdir-cleanup --timing --abort
-KUBECONFIG ?= $(HOME)/.kube/config
-RUNDIR_PARENT ?= /tmp/k8s-dra-driver-gpu-tests-out-$(USER)
+BATS_ARGS ?= \
+	--print-output-on-failure \
+	--no-tempdir-cleanup \
+	--timing \
+	--abort
 
-# Add `docker run` arguments when not running
-# in Github Actions / GitLab CI.
+# Evaluates to`true` only when TEST_FILTER_TAGS is non-empty after stripping
+# whitespace.
+ifneq ($(strip $(TEST_FILTER_TAGS)),)
+	BATS_ARGS += --filter-tags $(TEST_FILTER_TAGS)
+endif
+
+KUBECONFIG ?= $(HOME)/.kube/config
+
+TMPDIR ?= "/tmp"
+# Add `docker run` arguments when not running in Github Actions / GitLab CI. Set
+# TMPDIR to checkout directory (easier for runner setup).
 DOCKER_RUN_FLAGS :=
 ifeq ($(CI),)
   DOCKER_RUN_FLAGS += -it
+else
+  TMPDIR=$(CURDIR)
 endif
 
+RUNDIR_PARENT ?= $(TMPDIR)/k8s-dra-driver-gpu-tests-out-$(USER)
+
 DOCKER_ENVS = \
-	--env KUBECONFIG=$(KUBECONFIG) \
+	--env KUBECONFIG=/kubeconfig \
 	--env TEST_CHART_REPO=$(TEST_CHART_REPO) \
 	--env TEST_CHART_VERSION=$(TEST_CHART_VERSION) \
 	--env TEST_CHART_LASTSTABLE_REPO=$(TEST_CHART_LASTSTABLE_REPO) \
@@ -81,18 +99,20 @@ DOCKER_USER := $(DOCKER_UID):$(DOCKER_GID)
 DOCKER_MOUNTS = \
 	-v /tmp:/tmp \
 	-v $(CURDIR):/cwd \
-	-v $(dir $(abspath $(KUBECONFIG))):$(dir $(abspath $(KUBECONFIG)))
+	-v $(KUBECONFIG):/kubeconfig
 
 # Helper to run bats inside container
 # $(1) = whitespace-separated list of test files
 define RUN_BATS
-	@export _RUNDIR_PARENT="$(RUNDIR_PARENT)"; \
-	mkdir -p "$${_RUNDIR_PARENT}"; \
-	export _RUNDIR="$$(mktemp -p "$${_RUNDIR_PARENT}" -d -t bats-tests-$$(date +%s)-XXXXX)"; \
-	echo "Run dir: $${_RUNDIR}"; \
+	@echo "KUBECONFIG: $(KUBECONFIG)" && \
+	echo "BATS_ARGS: $(BATS_ARGS) " && \
+	echo "TMPDIR: $(TMPDIR)" && \
+	export _RUNDIR=$(RUNDIR_PARENT)/bats-tests-$$(date +%s) && \
+	mkdir -p "$${_RUNDIR}" && \
+	echo "RUNDIR: $${_RUNDIR}" &&  \
 	docker run --rm $(DOCKER_RUN_FLAGS) $(DOCKER_MOUNTS) $(DOCKER_ENVS) \
 	  -u $(DOCKER_USER) --entrypoint /bin/bash $(BATS_IMAGE) \
-	  -c "set -ex; cd /cwd; \
+	  -c "set -ex; cd /cwd; stat $${_RUNDIR}; cat /kubeconfig | head -n2; kubectl get nodes; \
 	      echo 'Running k8s cluster cleanup (invasive)...'; \
 	      bash tests/bats/cleanup-from-previous-run.sh 2>&1 | tee -a $${_RUNDIR}/cleanup.outerr; \
 	      set +x; echo '--- STARTING TEST SUITE ---'; set -x; \
@@ -102,8 +122,8 @@ endef
 
 default: tests
 
-.PHONY: image
-image:
+.PHONY: runner-image
+runner-image:
 	docker buildx build . -t $(BATS_IMAGE) -f tests/bats/Dockerfile
 
 # Warning: destructive against currently configured k8s cluster.
@@ -115,15 +135,16 @@ image:
 .PHONY: tests-gpu tests-cd
 
 # Run GPU plugin specific tests
-tests-gpu: image
+tests-gpu: runner-image
 	$(call RUN_BATS, \
 		tests/bats/test_basics.bats \
 		tests/bats/test_gpu_basic.bats \
 		tests/bats/test_gpu_dynmig.bats \
+		tests/bats/test_gpu_mig.bats \
 		tests/bats/test_gpu_stress.bats)
 
 # Run Compute Domain specific tests
-tests-cd: image
+tests-cd: runner-image
 	$(call RUN_BATS, \
 		tests/bats/test_basics.bats \
 		tests/bats/test_cd_imex_chan_inject.bats \
@@ -134,11 +155,12 @@ tests-cd: image
 		tests/bats/test_cd_updowngrade.bats)
 
 # Run complete tests
-tests: image
+tests: runner-image
 	$(call RUN_BATS, \
 		tests/bats/test_basics.bats \
 		tests/bats/test_gpu_basic.bats \
 		tests/bats/test_gpu_dynmig.bats \
+		tests/bats/test_gpu_mig.bats \
 		tests/bats/test_cd_imex_chan_inject.bats \
 		tests/bats/test_cd_mnnvl_workload.bats \
 		tests/bats/test_cd_misc.bats \

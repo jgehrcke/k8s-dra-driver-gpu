@@ -45,9 +45,10 @@ type AllocatableDevices map[DeviceName]*AllocatableDevice
 // AllocatableDevice represents an individual device that can be allocated.
 // This can either be a full GPU or MIG device, but not both.
 type AllocatableDevice struct {
-	Gpu  *GpuInfo
-	Mig  *MigInfo
-	Vfio *VfioDeviceInfo
+	Gpu         *GpuInfo
+	Mig         *MigInfo
+	MigConcrete *MigDeviceInfo
+	Vfio        *VfioDeviceInfo
 }
 
 // MigInfo describes an abstract MIG device with precise specification of parent
@@ -265,6 +266,19 @@ func (d *AllocatableDevice) CanonicalName() string {
 	panic("unexpected type for AllocatableDevice")
 }
 
+func (d *AllocatableDevice) GetDevice() resourceapi.Device {
+	switch d.Type() {
+	case GpuDeviceType:
+		return d.Gpu.GetDevice()
+	// TODO: use new type for _concrete_ MIG device.
+	case MigDeviceType:
+		return d.MigConcrete.GetDevice()
+	case VfioDeviceType:
+		return d.Vfio.GetDevice()
+	}
+	panic("unexpected type for AllocatableDevice")
+}
+
 func (d *AllocatableDevice) PartGetDevice() resourceapi.Device {
 	switch d.Type() {
 	case GpuDeviceType:
@@ -278,8 +292,9 @@ func (d *AllocatableDevice) PartGetDevice() resourceapi.Device {
 }
 
 // Used for announcing / describing a device, possibly pre-allocation. That is,
-// for dynamic MIG devices, we may not want to describe such devices with a
-// UUID.
+// for dynamic MIG devices, we may not want to describe such devices with a UUID
+// (This concept will have to change for abstract allocatable devices that do
+// not have a UUID before actualization).
 func (d AllocatableDevice) UUID() string {
 	if d.Gpu != nil {
 		return d.Gpu.UUID
@@ -480,4 +495,16 @@ func (d AllocatableDevices) RemoveSiblingDevices(device *AllocatableDevice) {
 			continue
 		}
 	}
+}
+
+func (d *AllocatableDevice) IsHealthy() bool {
+	switch d.Type() {
+	case GpuDeviceType:
+		return d.Gpu.Health == Healthy
+	// TODO: distinguish concrete vs. abstract MIG device
+	case MigDeviceType:
+		//return d.Mig.Health == Healthy
+		return true
+	}
+	panic("unexpected type for AllocatableDevice")
 }
