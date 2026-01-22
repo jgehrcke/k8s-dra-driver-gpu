@@ -192,11 +192,16 @@ func (m *ComputeDomainManager) Get(uid string) (*nvapi.ComputeDomain, error) {
 
 // UpdateStatus updates a ComputeDomain's status and caches the result in the mutation cache.
 func (m *ComputeDomainManager) UpdateStatus(ctx context.Context, cd *nvapi.ComputeDomain) (*nvapi.ComputeDomain, error) {
+	if cd.Status.Status == nvapi.ComputeDomainStatusNone {
+		cd.Status.Status = nvapi.ComputeDomainStatusNotReady
+	}
+
 	updatedCD, err := m.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomains(cd.Namespace).UpdateStatus(ctx, cd, metav1.UpdateOptions{})
 	if err != nil {
 		return nil, err
 	}
 	m.mutationCache.Mutation(updatedCD)
+
 	return updatedCD, nil
 }
 
@@ -229,6 +234,42 @@ func (m *ComputeDomainManager) RemoveFinalizer(ctx context.Context, uid string) 
 		return fmt.Errorf("error updating ComputeDomain: %w", err)
 	}
 
+	return nil
+}
+
+func (m *ComputeDomainManager) calculateGlobalStatus(cd *nvapi.ComputeDomain) string {
+	// Mark the ComputeDomain as not ready if not enough nodes are present in the nodes list.
+	if len(cd.Status.Nodes) < cd.Spec.NumNodes {
+		return nvapi.ComputeDomainStatusNotReady
+	}
+
+	// Otherwise, check if all the nodes present in the nodes list are themselves ready.
+	allNodesReady := true
+	for _, n := range cd.Status.Nodes {
+		if n.Status != nvapi.ComputeDomainStatusReady {
+			allNodesReady = false
+			break
+		}
+	}
+
+	// If they are, mark the ComputeDomain as ready.
+	if allNodesReady {
+		return nvapi.ComputeDomainStatusReady
+	}
+
+	// Otherwise mark it as not ready.
+	return nvapi.ComputeDomainStatusNotReady
+}
+
+func (m *ComputeDomainManager) updateGlobalStatus(ctx context.Context, cd *nvapi.ComputeDomain) error {
+	newCD := cd.DeepCopy()
+	newStatus := m.calculateGlobalStatus(newCD)
+	if newCD.Status.Status == newStatus {
+		newCD.Status.Status = newStatus
+	}
+	if _, err := m.UpdateStatus(ctx, newCD); err != nil {
+		return fmt.Errorf("error updating ComputeDomain status: %w", err)
+	}
 	return nil
 }
 
@@ -300,6 +341,7 @@ func (m *ComputeDomainManager) onAddOrUpdate(ctx context.Context, obj any) error
 		return nil
 	}
 
+	// Add the finalizer.
 	if err := m.addFinalizer(ctx, cd); err != nil {
 		return fmt.Errorf("error adding finalizer: %w", err)
 	}
@@ -307,12 +349,19 @@ func (m *ComputeDomainManager) onAddOrUpdate(ctx context.Context, obj any) error
 	// Do not wait for the next periodic label cleanup to happen.
 	m.nodeManager.RemoveStaleComputeDomainLabelsAsync(ctx)
 
+	// Create the DaemonsetManager.
 	if _, err := m.daemonSetManager.Create(ctx, cd); err != nil {
 		return fmt.Errorf("error creating DaemonSet: %w", err)
 	}
 
+	// Create the ResourceClaimTemplateManager.
 	if _, err := m.resourceClaimTemplateManager.Create(ctx, cd.Namespace, cd.Spec.Channel.ResourceClaimTemplate.Name, cd); err != nil {
 		return fmt.Errorf("error creating ResourceClaimTemplate '%s/%s': %w", cd.Namespace, cd.Spec.Channel.ResourceClaimTemplate.Name, err)
+	}
+
+	// Change the global Status to reflect the number of ComputeDomain daemons connected.
+	if err := m.updateGlobalStatus(ctx, cd); err != nil {
+		return fmt.Errorf("error updating global status on ComputeDoimain'%s/%s': %w", cd.Namespace, cd.Name, err)
 	}
 
 	return nil
