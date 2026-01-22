@@ -234,6 +234,14 @@ func (m *ComputeDomainManager) onAddOrUpdate(ctx context.Context, obj any) error
 
 	klog.V(2).Infof("Processing added or updated ComputeDomain: %s/%s/%s", cd.Namespace, cd.Name, cd.UID)
 
+	cd, err := m.Get(string(cd.UID))
+	if err != nil {
+		return fmt.Errorf("error getting ComputeDomain: %w", err)
+	}
+	if cd == nil {
+		return nil
+	}
+
 	if cd.GetDeletionTimestamp() != nil {
 		if err := m.resourceClaimTemplateManager.Delete(ctx, string(cd.UID)); err != nil {
 			return fmt.Errorf("error deleting ResourceClaimTemplate: %w", err)
