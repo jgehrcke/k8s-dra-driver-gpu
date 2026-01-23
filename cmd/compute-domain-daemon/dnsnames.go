@@ -171,6 +171,7 @@ func (m *DNSNameManager) updateHostsFile() error {
 	}
 
 	// Add a separator comment
+	// TODO: do not write this more than once :-).
 	newHostsContent.WriteString("# Compute Domain Daemon mappings\n")
 
 	// Add new DNS name mappings
