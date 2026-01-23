@@ -243,30 +243,25 @@ func (m *ComputeDomainManager) calculateGlobalStatus(cd *nvapi.ComputeDomain) st
 		return nvapi.ComputeDomainStatusNotReady
 	}
 
-	// Otherwise, check if all the nodes present in the nodes list are themselves ready.
-	allNodesReady := true
+	// If any of the individual nodes is not ready, return NotReady.
 	for _, n := range cd.Status.Nodes {
-		if n.Status != nvapi.ComputeDomainStatusReady {
-			allNodesReady = false
-			break
+		if n.Status == nvapi.ComputeDomainStatusNotReady {
+			return nvapi.ComputeDomainStatusNotReady
 		}
 	}
 
-	// If they are, mark the ComputeDomain as ready.
-	if allNodesReady {
-		return nvapi.ComputeDomainStatusReady
-	}
-
-	// Otherwise mark it as not ready.
-	return nvapi.ComputeDomainStatusNotReady
+	return nvapi.ComputeDomainStatusReady
 }
 
 func (m *ComputeDomainManager) updateGlobalStatus(ctx context.Context, cd *nvapi.ComputeDomain) error {
 	newCD := cd.DeepCopy()
 	newStatus := m.calculateGlobalStatus(newCD)
+
 	if newCD.Status.Status == newStatus {
-		newCD.Status.Status = newStatus
+		return nil
 	}
+
+	newCD.Status.Status = newStatus
 	if _, err := m.UpdateStatus(ctx, newCD); err != nil {
 		return fmt.Errorf("error updating ComputeDomain status: %w", err)
 	}
@@ -361,7 +356,7 @@ func (m *ComputeDomainManager) onAddOrUpdate(ctx context.Context, obj any) error
 
 	// Change the global Status to reflect the number of ComputeDomain daemons connected.
 	if err := m.updateGlobalStatus(ctx, cd); err != nil {
-		return fmt.Errorf("error updating global status on ComputeDoimain'%s/%s': %w", cd.Namespace, cd.Name, err)
+		return fmt.Errorf("error updating global status on ComputeDoimain '%s/%s': %w", cd.Namespace, cd.Name, err)
 	}
 
 	return nil
