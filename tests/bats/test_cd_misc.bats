@@ -19,6 +19,13 @@
 # it however does emit output upon failure.
 
 
+setup_file() {
+  load 'helpers.sh'
+  local _iargs=("--set" "logVerbosity=6")
+  iupgrade_wait "${TEST_CHART_REPO}" "${TEST_CHART_VERSION}" _iargs
+}
+
+
 # Executed before entering each test in this file.
 setup() {
    load 'helpers.sh'
@@ -190,4 +197,28 @@ bats::on_failure() {
     -n nvidia-dra-driver-gpu \
     --prefix --tail=-1
   assert_output --partial "Unprepare noop: claim not found in checkpoint data"
+}
+
+# bats test_tags=fastfeedback
+@test "global CD status" {
+  kubectl apply -f demo/specs/imex/channel-injection.yaml
+  kubectl wait --for=condition=READY pods imex-channel-injection --timeout=100s
+
+  # Expect global CD status to be `Ready`.
+  run bats_pipe kubectl get computedomain imex-channel-injection -o json \| jq '.status.status'
+  assert_output --partial 'Ready'
+  refute_output --partial 'NotReady'
+
+  # Delete worker pod, and hence expect CD daemon pod to be torn down.
+  kubectl delete pods imex-channel-injection
+  kubectl wait --for=delete pods imex-channel-injection --timeout=10s
+
+  # Expect CD controller to handle the .status.nodes list to become empty.
+  # As of now, because of `numNodes=1` in the workload, this is expected to
+  # result in the global CD status transitioning to NotReady.
+  sleep 0.5
+  run bats_pipe kubectl get computedomain imex-channel-injection -o json \| jq '.status.status'
+  assert_output --partial 'NotReady'
+
+  kubectl delete -f demo/specs/imex/channel-injection.yaml --ignore-not-found=true
 }

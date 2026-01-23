@@ -331,6 +331,7 @@ func IMEXDaemonUpdateLoopWithIPs(ctx context.Context, controller *Controller, cl
 func IMEXDaemonUpdateLoopWithDNSNames(ctx context.Context, controller *Controller, processManager *ProcessManager, dnsNameManager *DNSNameManager) error {
 	for {
 		klog.V(1).Infof("wait for nodes update")
+
 		select {
 		case <-ctx.Done():
 			klog.Infof("shutdown: stop IMEXDaemonUpdateLoopWithDNSNames")
@@ -354,7 +355,7 @@ func IMEXDaemonUpdateLoopWithDNSNames(ctx context.Context, controller *Controlle
 			dnsNameManager.LogDNSNameMappings()
 
 			// Skip sending SIGUSR1 when the process is fresh (has newly been
-			// created) or when thiss was a noop update. TODO: review skipping
+			// created) or when this was a noop update. TODO: review skipping
 			// this also if the new set of IP addresses only strictly removes
 			// addresses compared to the old set (then we don't need to force
 			// the daemon to re-resolve & re-connect).

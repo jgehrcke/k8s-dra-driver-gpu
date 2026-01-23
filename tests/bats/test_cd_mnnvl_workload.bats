@@ -31,12 +31,13 @@ setup () {
 
 # The MPI operator dependency is slightly heavy for CI, pulling the image was
 # seen to take long. Maybe make this a prerequisite (to be pre-installed).
+# bats test_tags=fastfeedback
 @test "nvbandwidth (2 nodes, 2 GPUs each)" {
   kubectl create -f https://github.com/kubeflow/mpi-operator/releases/download/v0.6.0/mpi-operator.yaml || echo "ignore"
   kubectl apply -f demo/specs/imex/nvbandwidth-test-job-1.yaml
   # The canonical k8s job interface works even for MPIJob (the MPIJob has an
   # underlying k8s job).
-  kubectl wait --for=create job/nvbandwidth-test-1-launcher --timeout=20s
+  kubectl wait --for=create job/nvbandwidth-test-1-launcher --timeout=60s
   kubectl wait --for=condition=complete job/nvbandwidth-test-1-launcher --timeout=60s
   run kubectl logs --tail=-1 --prefix -l job-name=nvbandwidth-test-1-launcher
   kubectl delete -f demo/specs/imex/nvbandwidth-test-job-1.yaml
