@@ -55,7 +55,7 @@ const (
 	// big-N-simulation: nodes self-assign a clique based on node name hashing
 	// and the target clique size of 18 is only an approximate target. do not
 	// error out for slightly larger cliques.
-	defaultMaxNodesPerIMEXDomain = 25
+	defaultMaxNodesPerIMEXDomain = 30
 )
 
 type Flags struct {
