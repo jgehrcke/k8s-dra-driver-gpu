@@ -53,10 +53,12 @@ type DaemonSetTemplateData struct {
 	MaxNodesPerIMEXDomain     int
 	FeatureGates              map[string]bool
 	LogVerbosity              int
-	CDUUID                    string
-	CDName                    string
-	CDNamespace               string
-	CliqueID                  string
+	// hack for big-N-simulation
+	CDUUID      string
+	CDName      string
+	CDNamespace string
+	CliqueID    string
+	NumNodes    int
 }
 
 type DaemonSetManager struct {
@@ -203,21 +205,22 @@ func (m *DaemonSetManager) Create(ctx context.Context, cd *nvapi.ComputeDomain) 
 	// }
 
 	templateData := DaemonSetTemplateData{
-		Namespace:                 m.config.driverNamespace,
-		GenerateName:              fmt.Sprintf("%s-", cd.Name),
-		Finalizer:                 computeDomainFinalizer,
-		ComputeDomainLabelKey:     computeDomainLabelKey,
-		ComputeDomainLabelValue:   cd.UID,
+		Namespace:               m.config.driverNamespace,
+		GenerateName:            fmt.Sprintf("%s-", cd.Name),
+		Finalizer:               computeDomainFinalizer,
+		ComputeDomainLabelKey:   computeDomainLabelKey,
+		ComputeDomainLabelValue: cd.UID,
 		//ResourceClaimTemplateName: rct.Name,
-		ImageName:                 m.config.imageName,
-		MaxNodesPerIMEXDomain:     m.config.maxNodesPerIMEXDomain,
-		FeatureGates:              featuregates.ToMap(),
-		LogVerbosity:              m.config.logVerbosityCDDaemon,
+		ImageName:             m.config.imageName,
+		MaxNodesPerIMEXDomain: m.config.maxNodesPerIMEXDomain,
+		FeatureGates:          featuregates.ToMap(),
+		LogVerbosity:          m.config.logVerbosityCDDaemon,
 		// hack details into the deployment which would otherwise be injected via CDI during claim alloc
 		CDUUID:      string(cd.UID),
 		CDName:      cd.Name,
 		CDNamespace: cd.Namespace,
-		CliqueID:    "1337",
+		CliqueID:    "none",
+		NumNodes:    cd.Spec.NumNodes,
 	}
 
 	tmpl, err := template.ParseFiles(DaemonSetTemplatePath)
