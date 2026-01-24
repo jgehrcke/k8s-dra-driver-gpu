@@ -3,7 +3,11 @@
 set -o nounset
 set -o errexit
 
-SPECPATH="$1"
+# Requires MPI Operator, use
+# kubectl create -f https://github.com/kubeflow/mpi-operator/releases/download/v0.7.0/mpi-operator.yaml
+# or newer.
+
+SPECTMPLPATH="$1"
 FAULT_TYPE="$2"
 
 BASE_NAME="test-failover-job"
@@ -29,6 +33,18 @@ KLOGS_ARGS="--tail=-1 --prefix --all-containers --timestamps"
 # to succeed); otherwise fail the test TIMEOUT seconds after startup.
 TIMEOUT=300
 
+#  Translates into "slots per worker".
+export NVB_GPUS_PER_NODE="${NVB_GPUS_PER_NODE:-4}"
+export NVB_NUM_NODES="${NVB_NUM_NODES:-2}"
+# Total number of gpus ('ranks').
+export NVB_NUM_RANKS="${NVB_NUM_RANKS:-8}"
+export NVB_REPS_PER_BENCHMARK="${NVB_REPS_PER_BENCHMARK:-5}"
+export NVB_BUFSIZE_PER_BENCHMARK_REP="${NVB_BUFSIZE_PER_BENCHMARK_REP:-1024}"
+
+# Render spec template
+SPECPATH="nvb_rendered_"$(date -u +'%Y%m%dT%H%M%SZ')".yaml"
+envsubst < "$SPECTMPLPATH" > "$SPECPATH"
+
 log_ts_no_newline() {
     echo -n "$(date -u +'%Y-%m-%dT%H:%M:%S.%3NZ ')"
 }
@@ -41,6 +57,7 @@ log() {
 }
 
 log "RUNID $RUNID | fault type $FAULT_TYPE | $SPECPATH | $BASE_NAME | $JOB_NAME | $CD_NAME"
+
 log "do: delete -f ${SPECPATH} (and wait)"
 kubectl delete -f "${SPECPATH}" --ignore-not-found > /dev/null
 kubectl wait --for=delete job/"${JOB_NAME}" --timeout=20s > /dev/null
@@ -50,7 +67,7 @@ log "do: apply -f ${SPECPATH}"
 kubectl apply -f "${SPECPATH}" > /dev/null
 log "done"
 log "do: wait --for=create"
-kubectl wait --for=create job/"${JOB_NAME}" --timeout=40s > /dev/null
+kubectl wait --for=create job/"${JOB_NAME}" --timeout=70s > /dev/null
 log "done"
 CDUID=$(kubectl describe computedomains.resource.nvidia.com "${CD_NAME}" | grep UID | awk '{print $2}')
 
@@ -179,6 +196,8 @@ while true; do
                 set -x
                 kubectl delete pod "${BASE_NAME}-worker-1"
                 set +x
+            elif (( FAULT_TYPE == 4 )); then
+                log "inject fault type 4: no failure! :-) for testing"
             else
                 log "unknown fault type $FAULT_TYPE"
                 exit 1

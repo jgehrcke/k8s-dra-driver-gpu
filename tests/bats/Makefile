@@ -68,6 +68,10 @@ ifneq ($(strip $(TEST_FILTER_TAGS)),)
 	BATS_ARGS += --filter-tags $(TEST_FILTER_TAGS)
 endif
 
+ifneq ($(strip $(TEST_ALWAYS_SHOW_OUTPUT)),)
+	BATS_ARGS += --show-output-of-passing-tests
+endif
+
 KUBECONFIG ?= $(HOME)/.kube/config
 
 TMPDIR ?= "/tmp"

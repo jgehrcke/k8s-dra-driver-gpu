@@ -4,7 +4,7 @@ kind: ComputeDomain
 metadata:
   name: test-failover-cd
 spec:
-  numNodes: 2
+  numNodes: ${NVB_NUM_NODES}
   channel:
     resourceClaimTemplate:
       name: test-failover-rct-channel
@@ -14,7 +14,7 @@ kind: MPIJob
 metadata:
   name: test-failover-job
 spec:
-  slotsPerWorker: 2
+  slotsPerWorker: ${NVB_GPUS_PER_NODE}
   launcherCreationPolicy: WaitForWorkersReady
   runPolicy:
     cleanPodPolicy: Running
@@ -40,13 +40,13 @@ spec:
               exec mpirun \
                 --show-progress \
                 --bind-to core \
-                --map-by ppr:2:node \
-                -np 4 \
+                --map-by ppr:${NVB_GPUS_PER_NODE}:node \
+                -np ${NVB_NUM_RANKS} \
                 --report-bindings \
                   nvbandwidth \
                   --verbose \
-                  --testSamples 20 \
-                  --bufferSize 2048 \
+                  --testSamples ${NVB_REPS_PER_BENCHMARK} \
+                  --bufferSize ${NVB_BUFSIZE_PER_BENCHMARK_REP} \
                   -t multinode_device_to_device_memcpy_read_ce
           affinity:
             nodeAffinity:
@@ -56,7 +56,7 @@ spec:
                   - key: node-role.kubernetes.io/control-plane
                     operator: Exists
     Worker:
-      replicas: 2
+      replicas: ${NVB_NUM_NODES}
       template:
         metadata:
           labels:
@@ -76,7 +76,7 @@ spec:
             - /home/mpiuser/.sshd_config
             resources:
               limits:
-                nvidia.com/gpu: 2
+                nvidia.com/gpu: ${NVB_GPUS_PER_NODE}
               claims:
               - name: test-failover-rc-channel
           resourceClaims:
