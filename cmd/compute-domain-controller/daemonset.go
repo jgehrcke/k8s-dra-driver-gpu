@@ -276,9 +276,9 @@ func (m *DaemonSetManager) Delete(ctx context.Context, cdUID string) error {
 	if err != nil {
 		return fmt.Errorf("error retrieving DaemonSet: %w", err)
 	}
-	if len(ds) > 1 {
-		return fmt.Errorf("more than one DaemonSet found with same ComputeDomain UID")
-	}
+	// if len(ds) > 1 {
+	// 	return fmt.Errorf("more than one DaemonSet found with same ComputeDomain UID")
+	// }
 	if len(ds) == 0 {
 		return nil
 	}
@@ -328,9 +328,9 @@ func (m *DaemonSetManager) removeFinalizer(ctx context.Context, cdUID string) er
 	if err != nil {
 		return fmt.Errorf("error retrieving DaemonSet: %w", err)
 	}
-	if len(ds) > 1 {
-		return fmt.Errorf("more than one DaemonSet found with same ComputeDomain UID")
-	}
+	// if len(ds) > 1 {
+	// 	return fmt.Errorf("more than one DaemonSet found with same ComputeDomain UID")
+	// }
 	if len(ds) == 0 {
 		return nil
 	}
@@ -374,30 +374,30 @@ func (m *DaemonSetManager) assertRemoved(ctx context.Context, cdUID string) erro
 }
 
 func (m *DaemonSetManager) onAddOrUpdate(ctx context.Context, obj any) error {
-	d, ok := obj.(*appsv1.DaemonSet)
-	if !ok {
-		return fmt.Errorf("failed to cast to DaemonSet")
-	}
+	// d, ok := obj.(*appsv1.DaemonSet)
+	// if !ok {
+	// 	return fmt.Errorf("failed to cast to DaemonSet")
+	// }
 
-	klog.V(2).Infof("Processing added or updated DaemonSet: %s/%s", d.Namespace, d.Name)
+	// klog.V(2).Infof("Processing added or updated DaemonSet: %s/%s", d.Namespace, d.Name)
 
-	cd, err := m.getComputeDomain(d.Labels[computeDomainLabelKey])
-	if err != nil {
-		return fmt.Errorf("error getting ComputeDomain: %w", err)
-	}
-	if cd == nil {
-		return nil
-	}
+	// cd, err := m.getComputeDomain(d.Labels[computeDomainLabelKey])
+	// if err != nil {
+	// 	return fmt.Errorf("error getting ComputeDomain: %w", err)
+	// }
+	// if cd == nil {
+	// 	return nil
+	// }
 
-	if int(d.Status.NumberReady) != cd.Spec.NumNodes {
-		return nil
-	}
+	// if int(d.Status.NumberReady) != cd.Spec.NumNodes {
+	// 	return nil
+	// }
 
-	newCD := cd.DeepCopy()
-	newCD.Status.Status = nvapi.ComputeDomainStatusReady
-	if _, err = m.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomains(newCD.Namespace).UpdateStatus(ctx, newCD, metav1.UpdateOptions{}); err != nil {
-		return fmt.Errorf("error updating nodes in ComputeDomain status: %w", err)
-	}
+	// newCD := cd.DeepCopy()
+	// newCD.Status.Status = nvapi.ComputeDomainStatusReady
+	// if _, err = m.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomains(newCD.Namespace).UpdateStatus(ctx, newCD, metav1.UpdateOptions{}); err != nil {
+	// 	return fmt.Errorf("error updating nodes in ComputeDomain status: %w", err)
+	// }
 
 	return nil
 }
