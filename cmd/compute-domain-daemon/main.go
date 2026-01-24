@@ -341,12 +341,12 @@ func IMEXDaemonUpdateLoopWithDNSNames(ctx context.Context, controller *Controlle
 			klog.Infof("shutdown: stop IMEXDaemonUpdateLoopWithDNSNames")
 			return nil
 		case nodes := <-controller.GetNodesUpdateChan():
-			updated, err := dnsNameManager.UpdateDNSNameMappings(nodes)
+			updated, err := dnsNameManager.UpdateDNSNameMappings(nodes, controller.computeDomainManager.config.cliqueID)
 			if err != nil {
 				return fmt.Errorf("failed to update DNS name => IP mappings: %w", err)
 			}
 
-			if dnsNameManager.cliqueID == "" {
+			if controller.computeDomainManager.config.cliqueID == "" {
 				klog.V(1).Infof("empty cliqueID: do not start IMEX daemon")
 				break
 			}
