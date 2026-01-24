@@ -230,7 +230,12 @@ func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 	}
 
 	// Prepare IMEX daemon process manager.
-	daemonCommandLine := []string{imexDaemonBinaryName, "-c", imexDaemonConfigPath}
+	//daemonCommandLine := []string{imexDaemonBinaryName, "-c", imexDaemonConfigPath}
+	daemonCommandLine := []string{
+		"bash",
+		"-c",
+		"trap 'echo \"Received SIGUSR1\"' SIGUSR1; while true; do sleep 1; done",
+	}
 	processManager := NewProcessManager(daemonCommandLine)
 
 	// Prepare controller with CD manager (not invoking the controller yet).
