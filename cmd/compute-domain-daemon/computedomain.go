@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"hash/fnv"
 	"maps"
+	"math/rand"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -103,6 +105,12 @@ func (m *ComputeDomainManager) Start(ctx context.Context) (rerr error) {
 			}
 		}
 	}()
+
+	// For large CDs, smear the first contact to the API server slightly out
+	// over time.
+	startupJitter := time.Duration(rand.Intn(500)) * time.Millisecond
+	klog.V(6).Infof("Delay startup by %s", startupJitter)
+	time.Sleep(startupJitter)
 
 	err := m.informer.AddIndexers(cache.Indexers{
 		"uid": uidIndexer[*nvapi.ComputeDomain],
@@ -261,9 +269,9 @@ func (m *ComputeDomainManager) EnsureNodeInfoInCD(ctx context.Context, cd *nvapi
 
 	// Create new ComputeDomainNode object representing myself, and insert it into the nodes list.
 	if myNode == nil {
-		// Get the next available index for this new node (local point of view,
-		// API server may tell us later that this index was chosen poorly).
-		nextIndex, err := getNextAvailableIndex(m.config.cliqueID, newCD.Status.Nodes, m.config.maxNodesPerIMEXDomain)
+		// Get an available index for this new node (local point of view, API
+		// server may tell us later that this index was chosen poorly).
+		nextIndex, err := getRandomAvailableIndex(m.config.cliqueID, newCD.Status.Nodes, m.config.maxNodesPerIMEXDomain)
 		if err != nil {
 			return nil, fmt.Errorf("error getting next available index: %w", err)
 		}
@@ -298,18 +306,21 @@ func (m *ComputeDomainManager) EnsureNodeInfoInCD(ctx context.Context, cd *nvapi
 				continue
 			}
 			if other.Index == myNode.Index {
-				idx, err := getNextAvailableIndex(m.config.cliqueID, newCD.Status.Nodes, m.config.maxNodesPerIMEXDomain)
+				idx, err := getRandomAvailableIndex(m.config.cliqueID, newCD.Status.Nodes, m.config.maxNodesPerIMEXDomain)
 				if err != nil {
 					return nil, fmt.Errorf("error getting next available index: %w", err)
 				}
 				myNode.Index = idx
 				klog.V(4).Infof("EnsureNodeInfoInCD: IMEX daemon not started yet, DNS index collision with %v, picked new index: %d", other, idx)
+				jitter := time.Duration(rand.Intn(500)) * time.Millisecond
+				//klog.V(6).Infof("Delay startup by %s", startupJitter)
+				time.Sleep(jitter)
 			}
 		}
 	}
 
 	if myNodePrevious != nil && *myNodePrevious == *myNode {
-		klog.V(6).Infof("EnsureNodeInfoInCD noop: no change (%v)", *myNode)
+		klog.V(7).Infof("EnsureNodeInfoInCD noop: no change (%v)", *myNode)
 		return newCD, nil
 	}
 
@@ -322,6 +333,8 @@ func (m *ComputeDomainManager) EnsureNodeInfoInCD(ctx context.Context, cd *nvapi
 		return nil, fmt.Errorf("could not serialize patch: %w", err)
 	}
 
+	jitter := time.Duration(rand.Intn(1500)) * time.Millisecond
+	time.Sleep(jitter)
 	updatedCD, err := m.patchCD(ctx, patchBytes)
 	if err != nil {
 		return nil, fmt.Errorf("error patching ComputeDomain status: %w", err)
@@ -384,6 +397,46 @@ func getNextAvailableIndex(currentCliqueID string, nodes []*nvapi.ComputeDomainN
 	return nextIndex, nil
 }
 
+func getRandomAvailableIndex(currentCliqueID string, nodes []*nvapi.ComputeDomainNode, maxNodesPerIMEXDomain int) (int, error) {
+	// Determine upper bound based on the clique ID: if no clique ID is set
+	// ("noop" mode) use big limit. Otherwise, use standard domain limit.
+	max := maxNodesPerIMEXDomain
+	if currentCliqueID == "" {
+		max = 10000
+	}
+
+	// Only consider nodes with the same cliqueID.
+	var cliqueNodes []*nvapi.ComputeDomainNode
+	for _, node := range nodes {
+		if node.CliqueID == currentCliqueID {
+			cliqueNodes = append(cliqueNodes, node)
+		}
+	}
+
+	// Collect used indices.
+	used := make(map[int]bool)
+	for _, node := range cliqueNodes {
+		used[node.Index] = true
+	}
+
+	// Build set of free indices, considering upper bound `max`. Allocating a
+	// slice even for 10k ints is efficient in Go, i.e. we can safely build the
+	// full candidate list.
+	candidates := make([]int, 0, max)
+	for i := 0; i < max; i++ {
+		if !used[i] {
+			candidates = append(candidates, i)
+		}
+	}
+
+	// Make random selection from candidate list.
+	if len(candidates) > 0 {
+		return candidates[rand.Intn(len(candidates))], nil
+	}
+
+	return -1, fmt.Errorf("no available indices within limit (%d) for cliqueID '%s'", max, currentCliqueID)
+}
+
 // If there was actually a change compared to the previously known set of
 // nodes: pass info to IMEX daemon controller.
 func (m *ComputeDomainManager) MaybePushNodesUpdate(cd *nvapi.ComputeDomain) {
@@ -402,8 +455,9 @@ func (m *ComputeDomainManager) MaybePushNodesUpdate(cd *nvapi.ComputeDomain) {
 		return
 	}
 
-	newIPs := getIPSet(cd.Status.Nodes)
-	previousIPs := getIPSet(m.previousNodes)
+	newIPs := getIPSetForClique(cd.Status.Nodes, m.config.cliqueID)
+	previousIPs := getIPSetForClique(m.previousNodes, m.config.cliqueID)
+	added, removed := previousIPs.Diff(newIPs)
 
 	// Compare sets (i.e., without paying attention to order). Note: the order
 	// of IP addresses written to the IMEX daemon's config file might matter (in
@@ -413,13 +467,12 @@ func (m *ComputeDomainManager) MaybePushNodesUpdate(cd *nvapi.ComputeDomain) {
 	// config file. Note/TODO: we probably want to limit this check to IP
 	// addresses relevant to _this_ clique.
 	if !maps.Equal(newIPs, previousIPs) {
-		klog.V(2).Infof("IP set changed")
-		// This log message gets large for large node numbers
-		klog.V(6).Infof("previous: %v; new: %v", previousIPs, newIPs)
+		klog.V(2).Infof("new: %v; previous: %v", newIPs, previousIPs)
+		klog.V(2).Infof("IP set for clique changed. Added: %v; removed: %v", added, removed)
 		m.previousNodes = cd.Status.Nodes
 		m.updatedNodesChan <- cd.Status.Nodes
 	} else {
-		klog.V(6).Infof("IP set did not change")
+		klog.V(6).Infof("IP set for clique did not change")
 	}
 }
 
@@ -488,10 +541,12 @@ func (m *ComputeDomainManager) patchCD(ctx context.Context, patch []byte) (*nvap
 	return updatedCD, err
 }
 
-func getIPSet(nodeInfos []*nvapi.ComputeDomainNode) IPSet {
+func getIPSetForClique(nodeInfos []*nvapi.ComputeDomainNode, cliqueID string) IPSet {
 	set := make(IPSet)
 	for _, n := range nodeInfos {
-		set[n.IPAddress] = struct{}{}
+		if n.CliqueID == cliqueID {
+			set[n.IPAddress] = struct{}{}
+		}
 	}
 	return set
 }
@@ -520,7 +575,7 @@ func (m *ComputeDomainManager) HasDuplicateIndex(nodeInfos []*nvapi.ComputeDomai
 		}
 
 		if _, exists := seen[node.Index]; exists {
-			klog.V(4).Infof("DNS index collision detected: %v uses an index seen before (we are node %v)", node, m.config.nodeName)
+			klog.V(7).Infof("DNS index collision detected: %v uses an index seen before (we are node %v)", node, m.config.nodeName)
 			return true
 		}
 
@@ -561,4 +616,30 @@ func getCliqueAssignment(key string, max int) int {
 
 	// Modulo operation maps the massive hash value to our specific range
 	return int(hashValue % uint32(max))
+}
+
+// Diff compares two IP sets. It returns a list of IPs that were added and a
+// list of IPs that were removed.
+func (s IPSet) Diff(cmp IPSet) ([]string, []string) {
+	var added []string
+	var removed []string
+
+	// Check for IPs in s (reference) that are NOT in cmp (removed)
+	for ip := range s {
+		if _, exists := cmp[ip]; !exists {
+			removed = append(removed, ip)
+		}
+	}
+
+	// Check for IPs in cmp that are NOT in reference s (added)
+	for ip := range cmp {
+		if _, exists := cmp[ip]; !exists {
+			added = append(added, ip)
+		}
+	}
+
+	sort.Strings(added)
+	sort.Strings(removed)
+
+	return added, removed
 }
