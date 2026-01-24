@@ -51,7 +51,7 @@ const (
 	// a given IMEX Domain. On GB200 and GB300 the limit is 18, so we pick
 	// this for now. It can be overridden as an environment variable or
 	// command line argument as required.
-	defaultMaxNodesPerIMEXDomain = 18
+	defaultMaxNodesPerIMEXDomain = 4096
 )
 
 type Flags struct {
