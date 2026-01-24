@@ -416,13 +416,12 @@ func (m *ComputeDomainCliqueManager) maybePushDaemonsUpdate(clique *nvapi.Comput
 	// perform a stable sort of IP addresses before writing them to the nodes
 	// config file.
 	if !maps.Equal(newIPs, previousIPs) {
-		klog.V(2).Infof("IP set changed")
-		// This log message gets large for large node numbers
-		klog.V(6).Infof("previous: %v; new: %v", previousIPs, newIPs)
+		added, removed := previousIPs.Diff(newIPs)
+		klog.V(2).Infof("IP set for clique changed.\nAdded: %v\nRemoved: %v", added, removed)
 		m.previousDaemons = clique.Daemons
 		m.updatedDaemonsChan <- clique.Daemons
 	} else {
-		klog.V(6).Infof("IP set did not change")
+		klog.V(6).Infof("IP set for clique did not change")
 	}
 }
 
