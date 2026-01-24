@@ -1,6 +1,6 @@
 ---
 apiVersion: apps/v1
-kind: DaemonSet
+kind: Deployment
 metadata:
   namespace: {{ .Namespace }}
   generateName: {{ .GenerateName }}
@@ -17,9 +17,17 @@ spec:
       labels:
         {{ .ComputeDomainLabelKey }}: {{ .ComputeDomainLabelValue }}
     spec:
+      replicas: 10
       serviceAccountName: compute-domain-daemon-service-account
-      nodeSelector:
-        {{ .ComputeDomainLabelKey }}: {{ .ComputeDomainLabelValue }}
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            {{ .ComputeDomainLabelKey }}: {{ .ComputeDomainLabelValue }}
+      # nodeSelector:
+      #   {{ .ComputeDomainLabelKey }}: {{ .ComputeDomainLabelValue }}
       containers:
       # Run the compute domain daemon
       - name: compute-domain-daemon
@@ -65,28 +73,28 @@ spec:
         # ready). After the startup probe completes, we run readiness probes
         # and liveness probes to less aggressively mark this pod as not-ready
         # if/when necessary.
-        startupProbe:
-          exec:
-            command: ["compute-domain-daemon", "-v", "$(LOG_VERBOSITY)", "check"]
-          initialDelaySeconds: 0
-          periodSeconds: 1
-          timeoutSeconds: 10
-          failureThreshold: 1200 # (1s*1200s)=20min
-          successThreshold: 1
-        livenessProbe:
-          exec:
-            command: ["compute-domain-daemon", "-v", "$(LOG_VERBOSITY)", "check"]
-          periodSeconds: 60
-          timeoutSeconds: 10
-          failureThreshold: 20 # (60s*20)=20min
-          successThreshold: 1
-        readinessProbe:
-          exec:
-            command: ["compute-domain-daemon", "-v", "$(LOG_VERBOSITY)", "check"]
-          periodSeconds: 10
-          timeoutSeconds: 10
-          failureThreshold: 1
-          successThreshold: 1
+        # startupProbe:
+        #   exec:
+        #     command: ["compute-domain-daemon", "-v", "$(LOG_VERBOSITY)", "check"]
+        #   initialDelaySeconds: 0
+        #   periodSeconds: 1
+        #   timeoutSeconds: 10
+        #   failureThreshold: 1200 # (1s*1200s)=20min
+        #   successThreshold: 1
+        # livenessProbe:
+        #   exec:
+        #     command: ["compute-domain-daemon", "-v", "$(LOG_VERBOSITY)", "check"]
+        #   periodSeconds: 60
+        #   timeoutSeconds: 10
+        #   failureThreshold: 20 # (60s*20)=20min
+        #   successThreshold: 1
+        # readinessProbe:
+        #   exec:
+        #     command: ["compute-domain-daemon", "-v", "$(LOG_VERBOSITY)", "check"]
+        #   periodSeconds: 10
+        #   timeoutSeconds: 10
+        #   failureThreshold: 1
+        #   successThreshold: 1
       # Repel all node taints.
       # See https://github.com/NVIDIA/k8s-dra-driver-gpu/issues/305
       tolerations:

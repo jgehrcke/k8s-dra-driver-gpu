@@ -181,8 +181,8 @@ func (m *DaemonSetManager) Stop() error {
 	return nil
 }
 
-func (m *DaemonSetManager) Create(ctx context.Context, cd *nvapi.ComputeDomain) (*appsv1.DaemonSet, error) {
-	ds, err := getByComputeDomainUID[*appsv1.DaemonSet](ctx, m.mutationCache, string(cd.UID))
+func (m *DaemonSetManager) Create(ctx context.Context, cd *nvapi.ComputeDomain) (*appsv1.Deployment, error) {
+	ds, err := getByComputeDomainUID[*appsv1.Deployment](ctx, m.mutationCache, string(cd.UID))
 	if err != nil {
 		return nil, fmt.Errorf("error retrieving DaemonSet: %w", err)
 	}
@@ -227,15 +227,15 @@ func (m *DaemonSetManager) Create(ctx context.Context, cd *nvapi.ComputeDomain) 
 		return nil, fmt.Errorf("failed to unmarshal yaml: %w", err)
 	}
 
-	var daemonSet appsv1.DaemonSet
+	var daemonSet appsv1.Deployment //DaemonSet
 	err = runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredObj.UnstructuredContent(), &daemonSet)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert unstructured data to typed object: %w", err)
 	}
 
-	d, err := m.config.clientsets.Core.AppsV1().DaemonSets(daemonSet.Namespace).Create(ctx, &daemonSet, metav1.CreateOptions{})
+	d, err := m.config.clientsets.Core.AppsV1().Deployments(daemonSet.Namespace).Create(ctx, &daemonSet, metav1.CreateOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("error creating DaemonSet: %w", err)
+		return nil, fmt.Errorf("error creating Depl: %w", err)
 	}
 
 	// Add the newly created DaemonSet to the mutation cache
@@ -245,8 +245,8 @@ func (m *DaemonSetManager) Create(ctx context.Context, cd *nvapi.ComputeDomain) 
 	return d, nil
 }
 
-func (m *DaemonSetManager) Get(ctx context.Context, cdUID string) (*appsv1.DaemonSet, error) {
-	ds, err := getByComputeDomainUID[*appsv1.DaemonSet](ctx, m.mutationCache, cdUID)
+func (m *DaemonSetManager) Get(ctx context.Context, cdUID string) (*appsv1.Deployment, error) {
+	ds, err := getByComputeDomainUID[*appsv1.Deployment](ctx, m.mutationCache, cdUID)
 	if err != nil {
 		return nil, fmt.Errorf("error retrieving DaemonSet: %w", err)
 	}
