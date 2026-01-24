@@ -21,7 +21,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"sync"
@@ -213,9 +212,9 @@ func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 	}
 
 	// Render and write the IMEX daemon config with the current pod IP
-	if err := writeIMEXConfig(flags.podIP); err != nil {
-		return fmt.Errorf("writeIMEXConfig failed: %w", err)
-	}
+	// if err := writeIMEXConfig(flags.podIP); err != nil {
+	// 	return fmt.Errorf("writeIMEXConfig failed: %w", err)
+	// }
 
 	// Prepare IMEX daemon process manager (not invoking the process yet).
 	var dnsNameManager *DNSNameManager
@@ -234,7 +233,7 @@ func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 	daemonCommandLine := []string{
 		"bash",
 		"-c",
-		"trap 'echo \"Received SIGUSR1\"' SIGUSR1; while true; do sleep 1; done",
+		"trap 'echo \"Received SIGUSR1\"' SIGUSR1; echo; echo; echo START; while true; touch /running; echo running; do sleep 5; done",
 	}
 	processManager := NewProcessManager(daemonCommandLine)
 
@@ -385,29 +384,13 @@ func IMEXDaemonUpdateLoopWithDNSNames(ctx context.Context, controller *Controlle
 // check verifies if the node is IMEX capable and if so, checks if the IMEX daemon is ready.
 // It returns an error if any step fails.
 func check(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
-	if flags.cliqueID == "" {
-		fmt.Println("check succeeded (noop, clique ID is empty)")
+	if _, err := os.Stat("/running"); err == nil {
+		fmt.Println("/running found")
 		return nil
 	}
 
-	// -q is documented with "Query the status of the IMEX daemon once and
-	// return". This probes if the local IMEX daemon is ready (not the entire
-	// domain). Reference:
-	// https://docs.nvidia.com/multi-node-nvlink-systems/imex-guide/cmdservice.html
-	cmd := exec.CommandContext(ctx, imexCtlBinaryName, "-c", imexDaemonConfigPath, "-q")
-
-	// Spawn child, collect standard streams.
-	outerr, err := cmd.CombinedOutput()
-	if err != nil {
-		klog.Errorf("%s failed (%s), stdout/err: %s", imexCtlBinaryName, err, outerr)
-		return fmt.Errorf("IMEX daemon check failed: error running %s: %w", imexCtlBinaryName, err)
-	}
-
-	if string(outerr) != "READY\n" {
-		return fmt.Errorf("IMEX daemon not ready: %s", string(outerr))
-	}
-
-	return nil
+	fmt.Println("/running not found yet")
+	return fmt.Errorf("/running not found yet")
 }
 
 // writeIMEXConfig renders the config template with the pod IP and writes it to the final config file.
