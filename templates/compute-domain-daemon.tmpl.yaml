@@ -9,7 +9,7 @@ metadata:
   labels:
     {{ .ComputeDomainLabelKey }}: {{ .ComputeDomainLabelValue }}
 spec:
-  replicas: 32
+  replicas: {{ .NumNodes }}
   selector:
     matchLabels:
       {{ .ComputeDomainLabelKey }}: {{ .ComputeDomainLabelValue }}
@@ -65,6 +65,8 @@ spec:
           value: "{{ .CDName }}"
         - name: COMPUTE_DOMAIN_NAMESPACE
           value: "{{ .CDNamespace }}"
+        - name: COMPUTE_DOMAIN_NUM_NODES
+          value: "{{ .CDNamespace }}"
         - name: CLIQUE_ID
           value: "{{ .CliqueID }}"
         # Use runc: explicit "void"; otherwise we inherit "all".
@@ -78,6 +80,10 @@ spec:
         # resources:
         #   claims:
         #   - name: compute-domain-daemon
+        resources:
+          requests:
+            memory: "10Mi"
+            cpu: "1m"
         # The startup probe aggressively checks every second to see if the pod
         # is healthy. We set a large failureThreshold to avoid having the
         # startup probe kill the pod if it fails (we just don't want it to go
