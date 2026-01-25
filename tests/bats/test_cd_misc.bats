@@ -221,3 +221,11 @@ bats::on_failure() {
 
   kubectl delete -f demo/specs/imex/channel-injection.yaml --ignore-not-found=true
 }
+
+
+# bats test_tags=fastfeedback
+@test "IMEX channel injection (featureGates.ComputeDomainClique=true)" {
+  local _iargs=("--set" "logVerbosity=6" "--set" "featureGates.ComputeDomainCliques=true")
+  iupgrade_wait "${TEST_CHART_REPO}" "${TEST_CHART_VERSION}" _iargs
+  apply_check_delete_workload_imex_chan_inject
+}
