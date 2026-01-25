@@ -109,7 +109,7 @@ func (m *ComputeDomainManager) Start(ctx context.Context) (rerr error) {
 
 	// For large CDs, smear the first contact to the API server slightly out
 	// over time.
-	startupJitter := time.Duration(rand.Intn(15000)) * time.Millisecond
+	startupJitter := time.Duration(rand.Intn(35000)) * time.Millisecond
 	klog.V(6).Infof("Delay startup by %s ms", startupJitter)
 	time.Sleep(startupJitter)
 
@@ -330,10 +330,18 @@ func (m *ComputeDomainManager) EnsureNodeInfoInCD(ctx context.Context, cd *nvapi
 		return nil, fmt.Errorf("could not serialize patch: %w", err)
 	}
 
-	jitter := time.Duration(rand.Intn(1500)) * time.Millisecond
-	time.Sleep(jitter)
+	// Before proceeding to send PATCH, add a tiny amount of jitter
+	// (for large N).
+	// jitter := time.Duration(rand.Intn(2000)) * time.Millisecond
+	// time.Sleep(jitter)
 	updatedCD, err := m.patchCD(ctx, patchBytes)
+
 	if err != nil {
+		if err == context.DeadlineExceeded {
+			jitter := time.Duration(rand.Intn(10000)) * time.Millisecond
+			klog.V(6).Infof("EnsureNodeInfoInCD: PATCH failed with timeout, sleep %d ms", jitter)
+			time.Sleep(jitter)
+		}
 		return nil, fmt.Errorf("error patching ComputeDomain status: %w", err)
 	}
 	m.mutationCache.Mutation(updatedCD)
@@ -525,8 +533,14 @@ func (m *ComputeDomainManager) removeNodeFromComputeDomain(ctx context.Context) 
 //     request reflects both, the patch, and also patches made by other
 //     owners if they happened in the meantime.
 func (m *ComputeDomainManager) patchCD(ctx context.Context, patch []byte) (*nvapi.ComputeDomain, error) {
+	// Patching may result in contention indicated by the response not coming
+	// back in time. As a pragmatic of backpressure, abort early and let the
+	// caller wait.
+	childCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
 	updatedCD, err := m.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomains(m.config.computeDomainNamespace).Patch(
-		ctx,
+		childCtx,
 		m.config.computeDomainName,
 		types.ApplyPatchType,
 		patch,
