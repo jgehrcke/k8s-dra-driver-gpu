@@ -47,9 +47,9 @@ type GetComputeDomainFunc func(uid string) (*nvapi.ComputeDomain, error)
 
 type IPSet map[string]struct{}
 
-// ComputeDomainManager watches compute domains and updates their status with
+// ComputeDomainStatusManager watches compute domains and updates their status with
 // info about the ComputeDomain daemon running on this node.
-type ComputeDomainManager struct {
+type ComputeDomainStatusManager struct {
 	config        *ManagerConfig
 	waitGroup     sync.WaitGroup
 	cancelContext context.CancelFunc
@@ -66,8 +66,8 @@ type ComputeDomainManager struct {
 	mutationCache cache.MutationCache
 }
 
-// NewComputeDomainManager creates a new ComputeDomainManager instance.
-func NewComputeDomainManager(config *ManagerConfig) *ComputeDomainManager {
+// NewComputeDomainStatusManager creates a new ComputeDomainStatusManager instance.
+func NewComputeDomainStatusManager(config *ManagerConfig) *ComputeDomainStatusManager {
 	factory := nvinformers.NewSharedInformerFactoryWithOptions(
 		config.clientsets.Nvidia,
 		informerResyncPeriod,
@@ -78,7 +78,7 @@ func NewComputeDomainManager(config *ManagerConfig) *ComputeDomainManager {
 	)
 	informer := factory.Resource().V1beta1().ComputeDomains().Informer()
 
-	m := &ComputeDomainManager{
+	m := &ComputeDomainStatusManager{
 		config:           config,
 		factory:          factory,
 		informer:         informer,
@@ -90,14 +90,14 @@ func NewComputeDomainManager(config *ManagerConfig) *ComputeDomainManager {
 }
 
 // Start starts the compute domain manager.
-func (m *ComputeDomainManager) Start(ctx context.Context) (rerr error) {
+func (m *ComputeDomainStatusManager) Start(ctx context.Context) (rerr error) {
 	ctx, cancel := context.WithCancel(ctx)
 	m.cancelContext = cancel
 
 	defer func() {
 		if rerr != nil {
 			if err := m.Stop(); err != nil {
-				klog.Errorf("error stopping ComputeDomainManager: %v", err)
+				klog.Errorf("error stopping ComputeDomainStatusManager: %v", err)
 			}
 		}
 	}()
@@ -154,7 +154,7 @@ func (m *ComputeDomainManager) Start(ctx context.Context) (rerr error) {
 // Stop stops the compute domain manager.
 //
 //nolint:contextcheck
-func (m *ComputeDomainManager) Stop() error {
+func (m *ComputeDomainStatusManager) Stop() error {
 	// Stop the pod manager first
 	if err := m.podManager.Stop(); err != nil {
 		klog.Errorf("Failed to stop pod manager: %v", err)
@@ -179,7 +179,7 @@ func (m *ComputeDomainManager) Stop() error {
 }
 
 // Get gets the ComputeDomain by UID from the mutation cache.
-func (m *ComputeDomainManager) Get(uid string) (*nvapi.ComputeDomain, error) {
+func (m *ComputeDomainStatusManager) Get(uid string) (*nvapi.ComputeDomain, error) {
 	cds, err := getByComputeDomainUID[*nvapi.ComputeDomain](m.mutationCache, uid)
 	if err != nil {
 		return nil, fmt.Errorf("error retrieving ComputeDomain by UID: %w", err)
@@ -197,7 +197,7 @@ func (m *ComputeDomainManager) Get(uid string) (*nvapi.ComputeDomain, error) {
 // receive updates not for all CDs in the system, but only for the CD that we
 // are registered for (filtered by CD name). Note that the informer triggers
 // this callback once upon startup for all existing objects.
-func (m *ComputeDomainManager) onAddOrUpdate(ctx context.Context, obj any) error {
+func (m *ComputeDomainStatusManager) onAddOrUpdate(ctx context.Context, obj any) error {
 	// Cast the object to a ComputeDomain object
 	o, ok := obj.(*nvapi.ComputeDomain)
 	if !ok {
@@ -238,7 +238,7 @@ func (m *ComputeDomainManager) onAddOrUpdate(ctx context.Context, obj any) error
 // is needed (first insertion, or IP address update) and successful, it reflects
 // the mutation in `m.mutationCache`.
 // TODO: rename function?
-func (m *ComputeDomainManager) EnsureNodeInfoInCD(ctx context.Context, cd *nvapi.ComputeDomain) (*nvapi.ComputeDomain, error) {
+func (m *ComputeDomainStatusManager) EnsureNodeInfoInCD(ctx context.Context, cd *nvapi.ComputeDomain) (*nvapi.ComputeDomain, error) {
 	var myNode, myNodePrevious *nvapi.ComputeDomainNode
 
 	// Create a deep copy of the ComputeDomain to avoid modifying the original
@@ -380,7 +380,7 @@ func getNextAvailableIndex(currentCliqueID string, nodes []*nvapi.ComputeDomainN
 
 // If there was actually a change compared to the previously known set of
 // nodes: pass info to IMEX daemon controller.
-func (m *ComputeDomainManager) MaybePushNodesUpdate(cd *nvapi.ComputeDomain) {
+func (m *ComputeDomainStatusManager) MaybePushNodesUpdate(cd *nvapi.ComputeDomain) {
 	// When not running with the 'IMEXDaemonsWithDNSNames' feature enabled,
 	// wait for all 'numNodes' nodes to show up before sending an update.
 	if !featuregates.Enabled(featuregates.IMEXDaemonsWithDNSNames) {
@@ -417,13 +417,13 @@ func (m *ComputeDomainManager) MaybePushNodesUpdate(cd *nvapi.ComputeDomain) {
 	}
 }
 
-func (m *ComputeDomainManager) GetNodesUpdateChan() chan []*nvapi.ComputeDomainNode {
+func (m *ComputeDomainStatusManager) GetNodesUpdateChan() chan []*nvapi.ComputeDomainNode {
 	// Yields numNodes-size nodes updates.
 	return m.updatedNodesChan
 }
 
 // removeNodeFromComputeDomain removes the current node's entry from the ComputeDomain status.
-func (m *ComputeDomainManager) removeNodeFromComputeDomain(ctx context.Context) error {
+func (m *ComputeDomainStatusManager) removeNodeFromComputeDomain(ctx context.Context) error {
 	// Patch with an empty object: instructs to delete all list items owned by
 	// the SSA field manager (which is precisely one:the item for this node, as
 	// identified by node name).
@@ -468,7 +468,7 @@ func (m *ComputeDomainManager) removeNodeFromComputeDomain(ctx context.Context) 
 //   - We verified that the API server object returned in response to a PATCH
 //     request reflects both, the patch, and also patches made by other
 //     owners if they happened in the meantime.
-func (m *ComputeDomainManager) patchCD(ctx context.Context, patch []byte) (*nvapi.ComputeDomain, error) {
+func (m *ComputeDomainStatusManager) patchCD(ctx context.Context, patch []byte) (*nvapi.ComputeDomain, error) {
 	updatedCD, err := m.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomains(m.config.computeDomainNamespace).Patch(
 		ctx,
 		m.config.computeDomainName,
@@ -504,7 +504,7 @@ func generatePatchForNodeInfo(nodes []*nvapi.ComputeDomainNode) ([]byte, error) 
 
 // HasDuplicateIndex iterates over the list of ComputeDomainNodes (in this CD,
 // and in this clique), and returns true if any Index appears more than once.
-func (m *ComputeDomainManager) HasDuplicateIndex(nodeInfos []*nvapi.ComputeDomainNode, cliqueID string) bool {
+func (m *ComputeDomainStatusManager) HasDuplicateIndex(nodeInfos []*nvapi.ComputeDomainNode, cliqueID string) bool {
 	seen := make(map[int]struct{})
 
 	for _, node := range nodeInfos {
