@@ -19,3 +19,5 @@
 package v1beta1
 
 type ComputeDomainExpansion interface{}
+
+type ComputeDomainCliqueExpansion interface{}

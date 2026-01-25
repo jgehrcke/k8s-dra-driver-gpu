@@ -33,6 +33,7 @@ const (
 	ComputeDomainChannelConfigKind = "ComputeDomainChannelConfig"
 	ComputeDomainDaemonConfigKind  = "ComputeDomainDaemonConfig"
 	ComputeDomainKind              = "ComputeDomain"
+	ComputeDomainCliqueKind        = "ComputeDomainClique"
 )
 
 // Interface defines the set of common APIs for all configs
@@ -71,6 +72,7 @@ func init() {
 		&ComputeDomainChannelConfig{},
 		&ComputeDomainDaemonConfig{},
 		&ComputeDomain{},
+		&ComputeDomainClique{},
 	)
 	metav1.AddToGroupVersion(scheme, schemeGroupVersion)
 
