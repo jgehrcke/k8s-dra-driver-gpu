@@ -29,6 +29,7 @@ import (
 	"sync"
 	"syscall"
 	"text/template"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -372,6 +373,9 @@ func IMEXDaemonUpdateLoopWithIPs(ctx context.Context, controller *Controller, cl
 // connections. We only restart the IMEX daemon if it crashes (both
 // unexpectedly and expectedly).
 func IMEXDaemonUpdateLoopWithDNSNames(ctx context.Context, controller *Controller, processManager *ProcessManager, dnsNameManager *DNSNameManager) error {
+	t0 := time.Now()
+	firstupdate := true
+
 	for {
 		klog.V(1).Infof("wait for daemons update")
 
@@ -380,7 +384,13 @@ func IMEXDaemonUpdateLoopWithDNSNames(ctx context.Context, controller *Controlle
 			klog.Infof("shutdown: stop IMEXDaemonUpdateLoopWithDNSNames")
 			return nil
 		case daemons := <-controller.GetDaemonInfoUpdateChan():
+			if firstupdate {
+				klog.V(6).Infof("t_process_start %.3f s", time.Since(t0).Seconds())
+				firstupdate = false
+			}
+
 			updated, err := dnsNameManager.UpdateDNSNameMappings(daemons)
+
 			if err != nil {
 				return fmt.Errorf("failed to update DNS name => IP mappings: %w", err)
 			}
