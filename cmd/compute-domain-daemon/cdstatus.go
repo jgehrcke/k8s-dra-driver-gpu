@@ -118,7 +118,7 @@ func (m *ComputeDomainStatusManager) Start(ctx context.Context) (rerr error) {
 		true,
 	)
 
-	m.podManager = NewPodManager(m.config, m.Get, m.mutationCache)
+	m.podManager = NewPodManager(m.config, m.UpdatePodReadiness)
 
 	// Use `WithKey` with hard-coded key, to cancel any previous update task (we
 	// want to make sure that the latest CD status update wins).
@@ -230,6 +230,15 @@ func (m *ComputeDomainStatusManager) onAddOrUpdate(ctx context.Context, obj any)
 	m.MaybePushNodesUpdate(cd)
 
 	return nil
+}
+
+// UpdatePodReadiness updates the node status based on pod readiness.
+func (m *ComputeDomainStatusManager) UpdatePodReadiness(ctx context.Context, ready bool) error {
+	status := nvapi.ComputeDomainStatusNotReady
+	if ready {
+		status = nvapi.ComputeDomainStatusReady
+	}
+	return m.updateNodeStatus(ctx, status)
 }
 
 // EnsureNodeInfoInCD makes sure that the current node (by node name) is
@@ -454,6 +463,54 @@ func (m *ComputeDomainStatusManager) removeNodeFromComputeDomain(ctx context.Con
 	m.mutationCache.Mutation(updatedCD)
 
 	klog.Infof("Successfully removed node with IP %s from ComputeDomain %s/%s", m.config.podIP, m.config.computeDomainNamespace, m.config.computeDomainName)
+	return nil
+}
+
+// updateNodeStatus updates the status of the current node in the CD status.
+func (m *ComputeDomainStatusManager) updateNodeStatus(ctx context.Context, status string) error {
+	cd, err := m.Get(m.config.computeDomainUUID)
+	if err != nil {
+		return fmt.Errorf("failed to get ComputeDomain: %w", err)
+	}
+	if cd == nil {
+		return fmt.Errorf("ComputeDomain '%s/%s' not found", m.config.computeDomainName, m.config.computeDomainUUID)
+	}
+
+	// Find the node
+	var node *nvapi.ComputeDomainNode
+	for _, n := range cd.Status.Nodes {
+		if n.Name == m.config.nodeName {
+			node = n.DeepCopy()
+			break
+		}
+	}
+
+	// If node not found, exit early and retry
+	if node == nil {
+		return fmt.Errorf("node not yet listed in CD (waiting for insertion)")
+	}
+
+	// If status hasn't changed, exit early
+	if node.Status == status {
+		klog.V(6).Infof("updateNodeStatus noop: status not changed (%s)", status)
+		return nil
+	}
+
+	// Update the node status
+	node.Status = status
+
+	patchBytes, err := generatePatchForNodeInfo([]*nvapi.ComputeDomainNode{node})
+	if err != nil {
+		return fmt.Errorf("could not serialize patch: %w", err)
+	}
+
+	updatedCD, err := m.patchCD(ctx, patchBytes)
+	if err != nil {
+		return fmt.Errorf("error patching ComputeDomain status: %w", err)
+	}
+	m.mutationCache.Mutation(updatedCD)
+
+	klog.Infof("Successfully updated node status in CD (new nodeinfo: %v)", node)
 	return nil
 }
 
