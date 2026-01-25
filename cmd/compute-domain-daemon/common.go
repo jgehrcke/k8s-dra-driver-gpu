@@ -24,6 +24,10 @@ const (
 	// see https://github.com/NVIDIA/k8s-dra-driver-gpu/issues/742.
 	informerResyncPeriod = 4 * time.Minute
 	mutationCacheTTL     = time.Hour
+
+	// Label keys for ComputeDomainClique objects.
+	computeDomainLabelKey       = "resource.nvidia.com/computeDomain"
+	computeDomainCliqueLabelKey = "resource.nvidia.com/computeDomain.cliqueID"
 )
 
 // IPSet is a set of IP addresses.
