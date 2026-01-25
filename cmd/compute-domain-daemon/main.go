@@ -349,11 +349,11 @@ func IMEXDaemonUpdateLoopWithIPs(ctx context.Context, controller *Controller, cl
 // connections. We only restart the IMEX daemon if it crashes (both
 // unexpectedly and expectedly).
 func IMEXDaemonUpdateLoopWithDNSNames(ctx context.Context, controller *Controller, processManager *ProcessManager, dnsNameManager *DNSNameManager) error {
+	t0 := time.Now()
+	firstupdate := true
+
 	for {
 		klog.V(1).Infof("wait for nodes update")
-
-		t0 := time.Now()
-		firstupdate := true
 
 		select {
 		case <-ctx.Done():
