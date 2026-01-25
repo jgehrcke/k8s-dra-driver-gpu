@@ -19,6 +19,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -28,6 +29,8 @@ import (
 	"syscall"
 	"text/template"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 
 	"github.com/urfave/cli/v2"
@@ -197,7 +200,20 @@ func newApp() *cli.App {
 func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 	common.StartDebugSignalHandlers()
 
+	// Create clientsets for Kubernetes API access
+	kubeConfig := &pkgflags.KubeClientConfig{}
+	clientsets, err := kubeConfig.NewClientSets()
+	if err != nil {
+		return fmt.Errorf("failed to create client sets: %w", err)
+	}
+
+	// Add compute domain clique label to this pod
+	if err := addComputeDomainCliqueLabel(ctx, clientsets, flags); err != nil {
+		return fmt.Errorf("failed to add compute domain clique label to pod: %w", err)
+	}
+
 	config := &ControllerConfig{
+		clientsets:             clientsets,
 		cliqueID:               flags.cliqueID,
 		computeDomainUUID:      flags.computeDomainUUID,
 		computeDomainName:      flags.computeDomainName,
@@ -485,5 +501,34 @@ func logNodesConfig() error {
 		return fmt.Errorf("failed to read nodes config: %w", err)
 	}
 	klog.Infof("Current %s:\n%s", imexDaemonNodesConfigPath, string(content))
+	return nil
+}
+
+// addComputeDomainCliqueLabel adds the compute domain clique label to this daemon pod.
+func addComputeDomainCliqueLabel(ctx context.Context, clientsets pkgflags.ClientSets, flags *Flags) error {
+	patch := map[string]any{
+		"metadata": map[string]any{
+			"labels": map[string]string{
+				computeDomainCliqueLabelKey: flags.cliqueID,
+			},
+		},
+	}
+
+	patchBytes, err := json.Marshal(patch)
+	if err != nil {
+		return fmt.Errorf("failed to marshal patch: %w", err)
+	}
+
+	_, err = clientsets.Core.CoreV1().Pods(flags.podNamespace).Patch(
+		ctx,
+		flags.podName,
+		types.MergePatchType,
+		patchBytes,
+		metav1.PatchOptions{},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to patch pod: %w", err)
+	}
+
 	return nil
 }

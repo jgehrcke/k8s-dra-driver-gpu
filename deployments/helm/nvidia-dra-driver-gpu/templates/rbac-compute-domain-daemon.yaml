@@ -13,7 +13,7 @@ rules:
   verbs: ["get", "list", "watch", "create", "patch"]
 - apiGroups: [""]
   resources: ["pods"]
-  verbs: ["get", "list", "watch"]
+  verbs: ["get", "list", "watch", "patch"]
 
 {{- range $namespace := $namespaces }}
 ---
