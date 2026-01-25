@@ -76,6 +76,9 @@ func NewComputeDomainManager(config *ManagerConfig) *ComputeDomainManager {
 		nvinformers.WithNamespace(config.computeDomainNamespace),
 		nvinformers.WithTweakListOptions(func(opts *metav1.ListOptions) {
 			opts.FieldSelector = fmt.Sprintf("metadata.name=%s", config.computeDomainName)
+			// Forces the initial List to be served from the API Server's memory (Watch Cache)
+			// rather than making a "Quorum Read" to etcd.
+			opts.ResourceVersion = "0"
 		}),
 	)
 	informer := factory.Resource().V1beta1().ComputeDomains().Informer()
@@ -106,8 +109,8 @@ func (m *ComputeDomainManager) Start(ctx context.Context) (rerr error) {
 
 	// For large CDs, smear the first contact to the API server slightly out
 	// over time.
-	startupJitter := time.Duration(rand.Intn(500)) * time.Millisecond
-	klog.V(6).Infof("Delay startup by %s", startupJitter)
+	startupJitter := time.Duration(rand.Intn(15000)) * time.Millisecond
+	klog.V(6).Infof("Delay startup by %s ms", startupJitter)
 	time.Sleep(startupJitter)
 
 	err := m.informer.AddIndexers(cache.Indexers{
