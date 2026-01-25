@@ -338,7 +338,7 @@ func (m *ComputeDomainCliqueManager) periodicCleanup(ctx context.Context) {
 	}
 }
 
-// cleanup reconciles clique entries against running pods.
+// cleanup reconciles clique entries against running pods and removes stale CD status entries.
 func (m *ComputeDomainCliqueManager) cleanup(ctx context.Context) {
 	// List all daemon pods in the driver namespace
 	podList, err := m.config.clientsets.Core.CoreV1().Pods(m.config.driverNamespace).List(ctx, metav1.ListOptions{
@@ -357,15 +357,69 @@ func (m *ComputeDomainCliqueManager) cleanup(ctx context.Context) {
 		}
 	}
 
-	// Get all cliques from the cache
-	cliques := m.informer.GetStore().List()
-	for _, obj := range cliques {
+	// Build map of cliques per CD
+	cliquesByCD := make(map[string]map[string]*nvapi.ComputeDomainClique)
+	for _, obj := range m.informer.GetStore().List() {
 		clique, ok := obj.(*nvapi.ComputeDomainClique)
 		if !ok {
 			continue
 		}
-		m.cleanupClique(ctx, clique, activeNodes)
+		cdUID := clique.Labels[computeDomainLabelKey]
+		cliqueID := clique.Labels[computeDomainCliqueLabelKey]
+		if cdUID == "" || cliqueID == "" {
+			continue
+		}
+		if cliquesByCD[cdUID] == nil {
+			cliquesByCD[cdUID] = make(map[string]*nvapi.ComputeDomainClique)
+		}
+		cliquesByCD[cdUID][cliqueID] = clique
 	}
+
+	// Clean up each CD's cliques
+	for cdUID, cliques := range cliquesByCD {
+		for _, clique := range cliques {
+			m.cleanupClique(ctx, clique, activeNodes)
+		}
+		m.cleanupStaleCliqueEntriesInCDStatus(ctx, cdUID, cliques)
+	}
+}
+
+// cleanupStaleCliqueEntriesInCDStatus removes clique entries from a CD's status that no longer exist.
+func (m *ComputeDomainCliqueManager) cleanupStaleCliqueEntriesInCDStatus(ctx context.Context, cdUID string, existingCliques map[string]*nvapi.ComputeDomainClique) {
+	cd, err := m.getComputeDomain(cdUID)
+	if err != nil {
+		klog.Errorf("CliqueCleanup: error getting ComputeDomain %s: %v", cdUID, err)
+		return
+	}
+	if cd == nil {
+		return
+	}
+
+	var updatedCliques []*nvapi.ComputeDomainCliqueInfo
+	var removedCliques []string
+
+	for _, cliqueInfo := range cd.Status.Cliques {
+		if _, exists := existingCliques[cliqueInfo.ID]; exists {
+			updatedCliques = append(updatedCliques, cliqueInfo)
+		} else {
+			removedCliques = append(removedCliques, cliqueInfo.ID)
+		}
+	}
+
+	if len(removedCliques) == 0 {
+		return
+	}
+
+	klog.Infof("CliqueCleanup: removing stale clique entries from CD %s/%s: %v", cd.Namespace, cd.Name, removedCliques)
+
+	newCD := cd.DeepCopy()
+	newCD.Status.Cliques = updatedCliques
+	if _, err := m.updateComputeDomainStatus(ctx, newCD); err != nil {
+		klog.Errorf("CliqueCleanup: error updating ComputeDomain %s/%s: %v", cd.Namespace, cd.Name, err)
+		return
+	}
+
+	klog.Infof("CliqueCleanup: successfully removed %d stale clique entries from CD %s/%s", len(removedCliques), cd.Namespace, cd.Name)
 }
 
 // cleanupClique removes stale daemon entries from a single clique.
