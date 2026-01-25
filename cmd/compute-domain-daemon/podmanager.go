@@ -18,34 +18,31 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
-
-	nvapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
 )
 
-// PodManager watches for changes to its own pod and updates the CD status accordingly.
+// PodReadinessCallback is called with the current pod readiness state.
+type PodReadinessCallback func(ctx context.Context, ready bool) error
+
+// PodManager watches for changes to its own pod and reports readiness.
 type PodManager struct {
-	config                     *ManagerConfig
-	getComputeDomain           GetComputeDomainFunc
-	waitGroup                  sync.WaitGroup
-	cancelContext              context.CancelFunc
-	podInformer                cache.SharedIndexInformer
-	informerFactory            informers.SharedInformerFactory
-	computeDomainMutationCache cache.MutationCache
+	config             *ManagerConfig
+	updatePodReadiness PodReadinessCallback
+	waitGroup          sync.WaitGroup
+	cancelContext      context.CancelFunc
+	podInformer        cache.SharedIndexInformer
+	informerFactory    informers.SharedInformerFactory
 }
 
 // NewPodManager creates a new PodManager instance.
-func NewPodManager(config *ManagerConfig, getComputeDomain GetComputeDomainFunc, mutationCache cache.MutationCache) *PodManager {
+func NewPodManager(config *ManagerConfig, updatePodReadiness PodReadinessCallback) *PodManager {
 	informerFactory := informers.NewSharedInformerFactoryWithOptions(
 		config.clientsets.Core,
 		informerResyncPeriod,
@@ -58,11 +55,10 @@ func NewPodManager(config *ManagerConfig, getComputeDomain GetComputeDomainFunc,
 	podInformer := informerFactory.Core().V1().Pods().Informer()
 
 	p := &PodManager{
-		config:                     config,
-		getComputeDomain:           getComputeDomain,
-		podInformer:                podInformer,
-		informerFactory:            informerFactory,
-		computeDomainMutationCache: mutationCache,
+		config:             config,
+		updatePodReadiness: updatePodReadiness,
+		podInformer:        podInformer,
+		informerFactory:    informerFactory,
 	}
 
 	return p
@@ -102,16 +98,6 @@ func (pm *PodManager) Start(ctx context.Context) error {
 
 // Stop stops the pod manager.
 func (pm *PodManager) Stop() error {
-	// Create a new context for cleanup operations since the original context might be cancelled
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	// Attempt to update the node status to NotReady
-	// Don't return error here as we still want to proceed with shutdown
-	if err := pm.updateNodeStatus(ctx, nvapi.ComputeDomainStatusNotReady); err != nil {
-		klog.Errorf("Failed to mark node as NotReady during shutdown: %v", err)
-	}
-
 	if pm.cancelContext != nil {
 		pm.cancelContext()
 	}
@@ -121,20 +107,27 @@ func (pm *PodManager) Stop() error {
 	return nil
 }
 
-// addOrUpdate handles pod add/update events and updates the CD status accordingly.
+// addOrUpdate handles pod add/update events and reports readiness.
 func (pm *PodManager) addOrUpdate(ctx context.Context, obj any) error {
+	// Re-pull the pod from the cache to get the latest version
+	key, err := cache.MetaNamespaceKeyFunc(obj)
+	if err != nil {
+		return fmt.Errorf("error getting cache key: %w", err)
+	}
+	obj, exists, err := pm.podInformer.GetStore().GetByKey(key)
+	if err != nil {
+		return fmt.Errorf("error getting pod from cache: %w", err)
+	}
+	if !exists {
+		return nil
+	}
 	pod, ok := obj.(*corev1.Pod)
 	if !ok {
 		return fmt.Errorf("failed to cast object to Pod")
 	}
 
-	status := nvapi.ComputeDomainStatusNotReady
-	if pm.isPodReady(pod) {
-		status = nvapi.ComputeDomainStatusReady
-	}
-
-	if err := pm.updateNodeStatus(ctx, status); err != nil {
-		return fmt.Errorf("pod update: failed to update note status in CD (%s): %w", status, err)
+	if err := pm.updatePodReadiness(ctx, pm.isPodReady(pod)); err != nil {
+		return fmt.Errorf("pod readiness callback failed: %w", err)
 	}
 
 	return nil
@@ -142,12 +135,10 @@ func (pm *PodManager) addOrUpdate(ctx context.Context, obj any) error {
 
 // isPodReady determines if a pod is ready based on its conditions.
 func (pm *PodManager) isPodReady(pod *corev1.Pod) bool {
-	// Check if the pod is in Running phase
 	if pod.Status.Phase != corev1.PodRunning {
 		return false
 	}
 
-	// Check if all containers are ready
 	for _, condition := range pod.Status.Conditions {
 		if condition.Type == corev1.PodReady {
 			return condition.Status == corev1.ConditionTrue
@@ -155,84 +146,4 @@ func (pm *PodManager) isPodReady(pod *corev1.Pod) bool {
 	}
 
 	return false
-}
-
-// updateNodeStatus updates the status of the current node (the status of the
-// pod running the CD daemon) in the CD status.
-func (pm *PodManager) updateNodeStatus(ctx context.Context, status string) error {
-	// Get the current CD using the provided function
-	cd, err := pm.getComputeDomain(pm.config.computeDomainUUID)
-	if err != nil {
-		return fmt.Errorf("failed to get ComputeDomain: %w", err)
-	}
-	if cd == nil {
-		return fmt.Errorf("ComputeDomain '%s/%s' not found", pm.config.computeDomainName, pm.config.computeDomainUUID)
-	}
-
-	// Create a deep copy to avoid modifying the original
-	newCD := cd.DeepCopy()
-
-	// Find the node
-	var node *nvapi.ComputeDomainNode
-	for _, n := range newCD.Status.Nodes {
-		if n.Name == pm.config.nodeName {
-			node = n
-			break
-		}
-	}
-
-	// If node not found, exit early. Here, we could also assert `status ==
-	// NotReady`, assumption: the CD daemon only starts after the CD manager has
-	// performed the node info insert (leading to node != nil below), and the
-	// pod can only change its status to Ready after the CD daemon has started.
-	// Return explicit error that is being retried, and rely on the retry chain
-	// to be canceled by a newer incoming pod update).
-	if node == nil {
-		return fmt.Errorf("node not yet listed in CD (waiting for insertion)")
-	}
-
-	// If status hasn't changed, exit early
-	if node.Status == status {
-		klog.V(6).Infof("updateNodeStatus noop: status not changed (%s)", status)
-		return nil
-	}
-
-	// Update the node status to the new value
-	node.Status = status
-
-	// Use server-side apply (SSA) for mutating the ComputeDomainNode object in
-	// the CD's `status.nodes` list.
-	patch := map[string]interface{}{
-		"apiVersion": "resource.nvidia.com/v1beta1",
-		"kind":       "ComputeDomain",
-		"status": map[string]interface{}{
-			"nodes": []*nvapi.ComputeDomainNode{node},
-		},
-	}
-	patchBytes, err := json.Marshal(patch)
-	if err != nil {
-		return fmt.Errorf("could not serialize patch: %w", err)
-	}
-
-	updatedCD, err := pm.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomains(cd.Namespace).Patch(
-		ctx,
-		cd.Name,
-		types.ApplyPatchType,
-		patchBytes,
-		metav1.PatchOptions{
-			FieldManager: fmt.Sprintf("cd-writer-%s", pm.config.nodeName),
-		},
-		"status",
-	)
-	if err != nil {
-		return fmt.Errorf("error patching ComputeDomain status: %w", err)
-	}
-
-	// Store the CD object returned by the API server in the mutationCache (it
-	// now has a newer ResourceVersion than `newCD` and hence any further
-	// mutations should be performed based on that).
-	pm.computeDomainMutationCache.Mutation(updatedCD)
-
-	klog.Infof("Successfully updated node status in CD (new nodeinfo: %v)", node)
-	return nil
 }
