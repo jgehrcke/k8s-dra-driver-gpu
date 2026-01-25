@@ -598,7 +598,7 @@ func (s IPSet) Diff(cmp IPSet) ([]string, []string) {
 
 	// Check for IPs in cmp that are NOT in reference s (added)
 	for ip := range cmp {
-		if _, exists := cmp[ip]; !exists {
+		if _, exists := s[ip]; !exists {
 			added = append(added, ip)
 		}
 	}
