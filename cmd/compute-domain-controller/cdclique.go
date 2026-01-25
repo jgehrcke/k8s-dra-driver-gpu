@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 
@@ -40,10 +41,13 @@ type ComputeDomainCliqueManager struct {
 	factory       nvinformers.SharedInformerFactory
 	informer      cache.SharedIndexInformer
 	mutationCache cache.MutationCache
+
+	getComputeDomain          GetComputeDomainFunc
+	updateComputeDomainStatus UpdateComputeDomainStatusFunc
 }
 
 // NewComputeDomainCliqueManager creates a new ComputeDomainCliqueManager.
-func NewComputeDomainCliqueManager(config *ManagerConfig) *ComputeDomainCliqueManager {
+func NewComputeDomainCliqueManager(config *ManagerConfig, getComputeDomain GetComputeDomainFunc, updateComputeDomainStatus UpdateComputeDomainStatusFunc) *ComputeDomainCliqueManager {
 	factory := nvinformers.NewSharedInformerFactoryWithOptions(
 		config.clientsets.Nvidia,
 		informerResyncPeriod,
@@ -52,9 +56,11 @@ func NewComputeDomainCliqueManager(config *ManagerConfig) *ComputeDomainCliqueMa
 	informer := factory.Resource().V1beta1().ComputeDomainCliques().Informer()
 
 	m := &ComputeDomainCliqueManager{
-		config:   config,
-		factory:  factory,
-		informer: informer,
+		config:                    config,
+		factory:                   factory,
+		informer:                  informer,
+		getComputeDomain:          getComputeDomain,
+		updateComputeDomainStatus: updateComputeDomainStatus,
 	}
 
 	return m
@@ -81,6 +87,22 @@ func (m *ComputeDomainCliqueManager) Start(ctx context.Context) (rerr error) {
 		mutationCacheTTL,
 		true,
 	)
+
+	// Add event handlers to update CD status when cliques change
+	_, err := m.informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj any) {
+			m.config.workQueue.Enqueue(obj, m.onAddOrUpdate)
+		},
+		UpdateFunc: func(oldObj, newObj any) {
+			m.config.workQueue.Enqueue(newObj, m.onAddOrUpdate)
+		},
+		DeleteFunc: func(obj any) {
+			m.config.workQueue.Enqueue(obj, m.onDelete)
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("error adding event handlers for ComputeDomainClique informer: %w", err)
+	}
 
 	m.waitGroup.Add(1)
 	go func() {
@@ -109,6 +131,132 @@ func (m *ComputeDomainCliqueManager) Stop() error {
 	}
 	m.waitGroup.Wait()
 	return nil
+}
+
+// onAddOrUpdate handles clique add/update events by updating the CD's clique list.
+func (m *ComputeDomainCliqueManager) onAddOrUpdate(ctx context.Context, obj any) error {
+	clique, ok := obj.(*nvapi.ComputeDomainClique)
+	if !ok {
+		return fmt.Errorf("failed to cast to ComputeDomainClique")
+	}
+
+	cdUID := clique.Labels[computeDomainLabelKey]
+	if cdUID == "" {
+		return nil
+	}
+
+	cliqueID := clique.Labels[computeDomainCliqueLabelKey]
+	if cliqueID == "" {
+		return nil
+	}
+
+	// Re-pull from mutation cache to get the latest version
+	clique = m.Get(cdUID, cliqueID)
+	if clique == nil {
+		return nil
+	}
+
+	return m.updateCliqueInCDStatus(ctx, cdUID, cliqueID, clique)
+}
+
+// onDelete handles clique delete events by removing from the CD's clique list.
+func (m *ComputeDomainCliqueManager) onDelete(ctx context.Context, obj any) error {
+	clique, ok := obj.(*nvapi.ComputeDomainClique)
+	if !ok {
+		return fmt.Errorf("failed to cast to ComputeDomainClique")
+	}
+
+	cdUID := clique.Labels[computeDomainLabelKey]
+	if cdUID == "" {
+		return nil
+	}
+
+	cliqueID := clique.Labels[computeDomainCliqueLabelKey]
+	if cliqueID == "" {
+		return nil
+	}
+
+	// Re-pull from mutation cache to verify it's actually gone
+	clique = m.Get(cdUID, cliqueID)
+	if clique != nil {
+		return nil
+	}
+
+	return m.updateCliqueInCDStatus(ctx, cdUID, cliqueID, nil)
+}
+
+// updateCliqueInCDStatus updates a single clique entry in the CD's Status.Cliques list.
+// If clique is nil, the entry is removed.
+func (m *ComputeDomainCliqueManager) updateCliqueInCDStatus(ctx context.Context, cdUID, cliqueID string, clique *nvapi.ComputeDomainClique) error {
+	cd, err := m.getComputeDomain(cdUID)
+	if err != nil {
+		return fmt.Errorf("error getting ComputeDomain: %w", err)
+	}
+	if cd == nil {
+		return nil
+	}
+
+	newCliqueInfos := m.buildUpdatedCliqueInfos(cd.Status.Cliques, cliqueID, clique)
+	if cliqueInfosEqual(cd.Status.Cliques, newCliqueInfos) {
+		return nil
+	}
+
+	newCD := cd.DeepCopy()
+	newCD.Status.Cliques = newCliqueInfos
+	if _, err := m.updateComputeDomainStatus(ctx, newCD); err != nil {
+		return fmt.Errorf("error updating ComputeDomain status: %w", err)
+	}
+
+	klog.V(4).Infof("Updated cliques in ComputeDomain %s/%s: cliques=%d", cd.Namespace, cd.Name, len(newCliqueInfos))
+	return nil
+}
+
+// buildUpdatedCliqueInfos builds an updated clique info list with the given clique added/updated/removed.
+func (m *ComputeDomainCliqueManager) buildUpdatedCliqueInfos(existing []*nvapi.ComputeDomainCliqueInfo, cliqueID string, clique *nvapi.ComputeDomainClique) []*nvapi.ComputeDomainCliqueInfo {
+	var result []*nvapi.ComputeDomainCliqueInfo
+
+	// Copy existing entries, excluding the one we're updating
+	for _, info := range existing {
+		if info.ID != cliqueID {
+			result = append(result, info)
+		}
+	}
+
+	// Add the new/updated entry if clique is not nil (not a delete)
+	if clique != nil {
+		result = append(result, &nvapi.ComputeDomainCliqueInfo{
+			ID:     cliqueID,
+			Status: m.calculateCliqueStatus(clique),
+		})
+	}
+
+	return result
+}
+
+// calculateCliqueStatus calculates the status of a single clique.
+func (m *ComputeDomainCliqueManager) calculateCliqueStatus(clique *nvapi.ComputeDomainClique) string {
+	if len(clique.Daemons) == 0 {
+		return nvapi.ComputeDomainStatusNotReady
+	}
+	for _, daemon := range clique.Daemons {
+		if daemon.Status == nvapi.ComputeDomainStatusNotReady {
+			return nvapi.ComputeDomainStatusNotReady
+		}
+	}
+	return nvapi.ComputeDomainStatusReady
+}
+
+// cliqueInfosEqual checks if two slices of ComputeDomainCliqueInfo are equal.
+func cliqueInfosEqual(a, b []*nvapi.ComputeDomainCliqueInfo) bool {
+	aMap := make(map[string]string)
+	for _, info := range a {
+		aMap[info.ID] = info.Status
+	}
+	bMap := make(map[string]string)
+	for _, info := range b {
+		bMap[info.ID] = info.Status
+	}
+	return maps.Equal(aMap, bMap)
 }
 
 // Get returns the ComputeDomainClique for the given ComputeDomain UID and clique ID.

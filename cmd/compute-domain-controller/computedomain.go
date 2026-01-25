@@ -27,6 +27,7 @@ import (
 	"k8s.io/klog/v2"
 
 	nvapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
+	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
 	nvinformers "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/nvidia.com/informers/externalversions"
 )
 
@@ -193,9 +194,8 @@ func (m *ComputeDomainManager) Get(uid string) (*nvapi.ComputeDomain, error) {
 
 // UpdateStatus updates a ComputeDomain's status and caches the result in the mutation cache.
 func (m *ComputeDomainManager) UpdateStatus(ctx context.Context, cd *nvapi.ComputeDomain) (*nvapi.ComputeDomain, error) {
-	if cd.Status.Status == nvapi.ComputeDomainStatusNone {
-		cd.Status.Status = nvapi.ComputeDomainStatusNotReady
-	}
+	// Recalculate global status based on current state
+	cd.Status.Status = m.calculateGlobalStatus(cd)
 
 	updatedCD, err := m.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomains(cd.Namespace).UpdateStatus(ctx, cd, metav1.UpdateOptions{})
 	if err != nil {
@@ -239,6 +239,13 @@ func (m *ComputeDomainManager) RemoveFinalizer(ctx context.Context, uid string) 
 }
 
 func (m *ComputeDomainManager) calculateGlobalStatus(cd *nvapi.ComputeDomain) string {
+	if featuregates.Enabled(featuregates.ComputeDomainCliques) {
+		return m.calculateGlobalStatusFromCliques(cd)
+	}
+	return m.calculateGlobalStatusFromNodes(cd)
+}
+
+func (m *ComputeDomainManager) calculateGlobalStatusFromNodes(cd *nvapi.ComputeDomain) string {
 	// Mark the ComputeDomain as not ready if not enough nodes are present in the nodes list.
 	if len(cd.Status.Nodes) < cd.Spec.NumNodes {
 		return nvapi.ComputeDomainStatusNotReady
@@ -251,6 +258,21 @@ func (m *ComputeDomainManager) calculateGlobalStatus(cd *nvapi.ComputeDomain) st
 		}
 	}
 
+	return nvapi.ComputeDomainStatusReady
+}
+
+func (m *ComputeDomainManager) calculateGlobalStatusFromCliques(cd *nvapi.ComputeDomain) string {
+	// Mark the ComputeDomain as not ready if no cliques are present.
+	if len(cd.Status.Cliques) == 0 {
+		return nvapi.ComputeDomainStatusNotReady
+	}
+
+	// If any of the individual cliques is not ready, return NotReady.
+	for _, c := range cd.Status.Cliques {
+		if c.Status == nvapi.ComputeDomainStatusNotReady {
+			return nvapi.ComputeDomainStatusNotReady
+		}
+	}
 	return nvapi.ComputeDomainStatusReady
 }
 

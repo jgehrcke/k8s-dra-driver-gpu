@@ -78,7 +78,7 @@ func NewDaemonSetPodManager(config *ManagerConfig, getComputeDomain GetComputeDo
 	}
 
 	if featuregates.Enabled(featuregates.ComputeDomainCliques) {
-		m.cliqueManager = NewComputeDomainCliqueManager(config)
+		m.cliqueManager = NewComputeDomainCliqueManager(config, getComputeDomain, updateComputeDomainStatus)
 	}
 
 	return m
