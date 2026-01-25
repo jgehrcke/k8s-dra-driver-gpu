@@ -327,8 +327,8 @@ func (m *ComputeDomainCliqueManager) periodicCleanup(ctx context.Context) {
 	}
 }
 
-// getRunningDaemons returns a set of node names that have running daemon pods.
-func (m *ComputeDomainCliqueManager) getRunningDaemons(ctx context.Context) (map[string]struct{}, error) {
+// getDaemonsByCD returns a set of node names that have running daemon pods.
+func (m *ComputeDomainCliqueManager) getDaemonsByCD(ctx context.Context) (map[string]struct{}, error) {
 	podList, err := m.config.clientsets.Core.CoreV1().Pods(m.config.driverNamespace).List(ctx, metav1.ListOptions{
 		LabelSelector: computeDomainLabelKey,
 	})
@@ -345,22 +345,89 @@ func (m *ComputeDomainCliqueManager) getRunningDaemons(ctx context.Context) (map
 	return daemons, nil
 }
 
-// cleanup reconciles clique entries against running pods.
-func (m *ComputeDomainCliqueManager) cleanup(ctx context.Context) {
-	daemons, err := m.getRunningDaemons(ctx)
-	if err != nil {
-		klog.Errorf("CliqueCleanup: error listing daemon pods: %v", err)
-		return
-	}
-
-	// Get all cliques from the cache
-	cliques := m.informer.GetStore().List()
-	for _, obj := range cliques {
+// getCliquesByCD returns a map of cliques grouped by ComputeDomain UID.
+func (m *ComputeDomainCliqueManager) getCliquesByCD() map[string]map[string]*nvapi.ComputeDomainClique {
+	cliques := make(map[string]map[string]*nvapi.ComputeDomainClique)
+	for _, obj := range m.informer.GetStore().List() {
 		clique, ok := obj.(*nvapi.ComputeDomainClique)
 		if !ok {
 			continue
 		}
-		m.cleanupClique(ctx, clique, daemons)
+
+		cdUID := clique.Labels[computeDomainLabelKey]
+		cliqueID := clique.Labels[computeDomainCliqueLabelKey]
+		if cdUID == "" || cliqueID == "" {
+			continue
+		}
+
+		if cliques[cdUID] == nil {
+			cliques[cdUID] = make(map[string]*nvapi.ComputeDomainClique)
+		}
+		cliques[cdUID][cliqueID] = clique
+	}
+	return cliques
+}
+
+// getNodesByCD returns a map of clique IDs that have nodes in each CD's Status.Nodes.
+func (m *ComputeDomainCliqueManager) getNodesByCD(ctx context.Context) (map[string]map[string]struct{}, error) {
+	cds, err := m.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomains(m.config.driverNamespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	nodes := make(map[string]map[string]struct{})
+	for _, cd := range cds.Items {
+		cdUID := string(cd.UID)
+		for _, node := range cd.Status.Nodes {
+			if nodes[cdUID] == nil {
+				nodes[cdUID] = make(map[string]struct{})
+			}
+			nodes[cdUID][node.CliqueID] = struct{}{}
+		}
+	}
+	return nodes, nil
+}
+
+// cleanup reconciles clique entries against running pods and removes stale CD status entries.
+func (m *ComputeDomainCliqueManager) cleanup(ctx context.Context) {
+	cliques := m.getCliquesByCD()
+
+	daemons, err := m.getDaemonsByCD(ctx)
+	if err != nil {
+		klog.Errorf("CliqueCleanup: error getting daemons: %v", err)
+		return
+	}
+
+	nodes, err := m.getNodesByCD(ctx)
+	if err != nil {
+		klog.Errorf("CliqueCleanup: error getting nodes: %v", err)
+		return
+	}
+
+	m.cleanupOrphanedDaemonsInCliques(ctx, daemons, cliques)
+	m.cleanupOrphanedCliquesInNodes(ctx, cliques, nodes)
+}
+
+// cleanupOrphanedDaemonsInCliques removes stale daemon entries from cliques.
+func (m *ComputeDomainCliqueManager) cleanupOrphanedDaemonsInCliques(ctx context.Context, daemons map[string]struct{}, cliques map[string]map[string]*nvapi.ComputeDomainClique) {
+	for _, cliquesForCD := range cliques {
+		for _, clique := range cliquesForCD {
+			m.cleanupClique(ctx, clique, daemons)
+		}
+	}
+}
+
+// cleanupOrphanedCliquesInNodes removes Status.Nodes entries whose cliques no longer exist.
+func (m *ComputeDomainCliqueManager) cleanupOrphanedCliquesInNodes(ctx context.Context, cliques map[string]map[string]*nvapi.ComputeDomainClique, nodes map[string]map[string]struct{}) {
+	for cdUID, cliqueIDs := range nodes {
+		for cliqueID := range cliqueIDs {
+			if _, exists := cliques[cdUID][cliqueID]; exists {
+				continue
+			}
+			if err := m.updateNodesInCDStatus(ctx, cdUID, cliqueID, nil); err != nil {
+				klog.Errorf("CliqueCleanup: error removing orphaned nodes for clique %s: %v", cliqueID, err)
+			}
+		}
 	}
 }
 
