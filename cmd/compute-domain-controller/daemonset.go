@@ -157,7 +157,7 @@ func (m *DaemonSetManager) Start(ctx context.Context) (rerr error) {
 
 func (m *DaemonSetManager) Stop() error {
 	if err := m.daemonsetPodManager.Stop(); err != nil {
-		return fmt.Errorf("error removing daemonset Pod manager: %w", err)
+		return fmt.Errorf("error stopping daemonset Pod manager: %w", err)
 	}
 	if err := m.resourceClaimTemplateManager.Stop(); err != nil {
 		return fmt.Errorf("error stopping ResourceClaimTemplate manager: %w", err)
