@@ -28,6 +28,8 @@ spec:
             {{ .ComputeDomainLabelKey }}: {{ .ComputeDomainLabelValue }}
       # nodeSelector:
       #   {{ .ComputeDomainLabelKey }}: {{ .ComputeDomainLabelValue }}
+      nodeSelector:
+        node-role.kubernetes.io/worker: ""
       containers:
       # Run the compute domain daemon
       - name: compute-domain-daemon
@@ -66,7 +68,7 @@ spec:
         - name: COMPUTE_DOMAIN_NAMESPACE
           value: "{{ .CDNamespace }}"
         - name: COMPUTE_DOMAIN_NUM_NODES
-          value: "{{ .CDNamespace }}"
+          value: "{{ .NumNodes }}"
         - name: CLIQUE_ID
           value: "{{ .CliqueID }}"
         # Use runc: explicit "void"; otherwise we inherit "all".
