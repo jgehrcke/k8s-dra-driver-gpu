@@ -21,9 +21,18 @@ import (
 	"fmt"
 
 	nvapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
+	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
 	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/flags"
 	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/workqueue"
 )
+
+// DaemonInfoManager is an interface for managing daemon info updates.
+// It is implemented by ComputeDomainStatusManager and ComputeDomainCliqueManager.
+type DaemonInfoManager interface {
+	Start(ctx context.Context) error
+	Stop() error
+	GetDaemonInfoUpdateChan() chan []*nvapi.ComputeDomainDaemonInfo
+}
 
 // ManagerConfig holds the configuration for the compute domain manager.
 type ManagerConfig struct {
@@ -35,6 +44,7 @@ type ManagerConfig struct {
 	computeDomainNamespace string
 	cliqueID               string
 	podIP                  string
+	podUID                 string
 	podName                string
 	podNamespace           string
 	maxNodesPerIMEXDomain  int
@@ -48,6 +58,7 @@ type ControllerConfig struct {
 	computeDomainNamespace string
 	cliqueID               string
 	podIP                  string
+	podUID                 string
 	podName                string
 	podNamespace           string
 	maxNodesPerIMEXDomain  int
@@ -55,8 +66,8 @@ type ControllerConfig struct {
 
 // Controller manages the lifecycle of compute domain operations.
 type Controller struct {
-	computeDomainStatusManager *ComputeDomainStatusManager
-	workQueue                  *workqueue.WorkQueue
+	daemonInfoManager DaemonInfoManager
+	workQueue         *workqueue.WorkQueue
 }
 
 // NewController creates and initializes a new Controller instance.
@@ -79,14 +90,23 @@ func NewController(config *ControllerConfig) (*Controller, error) {
 		computeDomainNamespace: config.computeDomainNamespace,
 		cliqueID:               config.cliqueID,
 		podIP:                  config.podIP,
+		podUID:                 config.podUID,
 		podName:                config.podName,
 		podNamespace:           config.podNamespace,
 		maxNodesPerIMEXDomain:  config.maxNodesPerIMEXDomain,
 	}
 
+	// Choose the appropriate daemon info manager based on the feature gate
+	var daemonInfoManager DaemonInfoManager
+	if featuregates.Enabled(featuregates.ComputeDomainCliques) {
+		daemonInfoManager = NewComputeDomainCliqueManager(mc)
+	} else {
+		daemonInfoManager = NewComputeDomainStatusManager(mc)
+	}
+
 	controller := &Controller{
-		computeDomainStatusManager: NewComputeDomainStatusManager(mc),
-		workQueue:                  workQueue,
+		daemonInfoManager: daemonInfoManager,
+		workQueue:         workQueue,
 	}
 
 	return controller, nil
@@ -95,25 +115,25 @@ func NewController(config *ControllerConfig) (*Controller, error) {
 // Run starts the controller's main loop and manages the lifecycle of its components.
 // It initializes the work queue and handles graceful shutdown when the context is cancelled.
 func (c *Controller) Run(ctx context.Context) error {
-	// Start the compute domain status manager
-	if err := c.computeDomainStatusManager.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start compute domain status manager: %v", err)
+	// Start the daemon info manager
+	if err := c.daemonInfoManager.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start daemon info manager: %v", err)
 	}
 
 	// Start processing the workqueue
 	c.workQueue.Run(ctx)
 
-	// Stop the compute domain status manager
-	if err := c.computeDomainStatusManager.Stop(); err != nil {
-		return fmt.Errorf("failed to stop compute domain status manager: %v", err)
+	// Stop the daemon info manager
+	if err := c.daemonInfoManager.Stop(); err != nil {
+		return fmt.Errorf("failed to stop daemon info manager: %v", err)
 	}
 
 	return nil
 }
 
 // GetDaemonInfoUpdateChan returns a channel that yields updates for the daemons
-// currently present in the CD status. This is only a complete set of daemons
-// (size `numNodes`) if IMEXDaemonsWithDNSNames=false.
+// currently present in the CD status or CDClique. This is only a complete set of
+// daemons (size `numNodes`) if IMEXDaemonsWithDNSNames=false.
 func (c *Controller) GetDaemonInfoUpdateChan() chan []*nvapi.ComputeDomainDaemonInfo {
-	return c.computeDomainStatusManager.GetDaemonInfoUpdateChan()
+	return c.daemonInfoManager.GetDaemonInfoUpdateChan()
 }

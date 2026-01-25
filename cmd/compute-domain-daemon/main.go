@@ -204,6 +204,7 @@ func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 		computeDomainNamespace: flags.computeDomainNamespace,
 		nodeName:               flags.nodeName,
 		podIP:                  flags.podIP,
+		podUID:                 flags.podUID,
 		podName:                flags.podName,
 		podNamespace:           flags.podNamespace,
 		maxNodesPerIMEXDomain:  flags.maxNodesPerIMEXDomain,
