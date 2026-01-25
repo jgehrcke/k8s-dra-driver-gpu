@@ -554,8 +554,7 @@ func (m *ComputeDomainManager) MaybePushNodesUpdate(cd *nvapi.ComputeDomain) {
 	// config file. Note/TODO: we probably want to limit this check to IP
 	// addresses relevant to _this_ clique.
 	if !maps.Equal(newIPs, previousIPs) {
-		klog.V(2).Infof("new: %v; previous: %v", newIPs, previousIPs)
-		klog.V(2).Infof("IP set for clique changed. Added: %v; removed: %v", added, removed)
+		klog.V(2).Infof("IP set for clique changed.\nAdded:%v\nRemoved:%v", added, removed)
 		m.previousNodes = cd.Status.Nodes
 		m.updatedNodesChan <- cd.Status.Nodes
 	} else {
