@@ -28,6 +28,7 @@ import (
 	"sync"
 	"syscall"
 	"text/template"
+	"time"
 
 	"k8s.io/klog/v2"
 
@@ -351,11 +352,19 @@ func IMEXDaemonUpdateLoopWithDNSNames(ctx context.Context, controller *Controlle
 	for {
 		klog.V(1).Infof("wait for nodes update")
 
+		t0 := time.Now()
+		firstupdate := true
+
 		select {
 		case <-ctx.Done():
 			klog.Infof("shutdown: stop IMEXDaemonUpdateLoopWithDNSNames")
 			return nil
 		case nodes := <-controller.GetNodesUpdateChan():
+			if firstupdate {
+				klog.V(6).Infof("t_process_start %.3f s", time.Since(t0).Seconds())
+				firstupdate = false
+			}
+
 			updated, err := dnsNameManager.UpdateDNSNameMappings(nodes, controller.computeDomainManager.config.cliqueID)
 			if err != nil {
 				return fmt.Errorf("failed to update DNS name => IP mappings: %w", err)
