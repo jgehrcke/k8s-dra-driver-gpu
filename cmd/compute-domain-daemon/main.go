@@ -304,14 +304,14 @@ func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 // IMEX daemon nodes config file and (re)starting the IMEX daemon process.
 func IMEXDaemonUpdateLoopWithIPs(ctx context.Context, controller *Controller, cliqueID string, pm *ProcessManager) error {
 	for {
-		klog.V(1).Infof("wait for nodes update")
+		klog.V(1).Infof("wait for daemons update")
 		select {
 		case <-ctx.Done():
 			klog.Infof("shutdown: stop IMEXDaemonUpdateLoopWithIPs")
 			return nil
-		case nodes := <-controller.GetNodesUpdateChan():
-			if err := writeNodesConfig(cliqueID, nodes); err != nil {
-				return fmt.Errorf("writeNodesConfig failed: %w", err)
+		case daemons := <-controller.GetDaemonInfoUpdateChan():
+			if err := writeDaemonsConfig(cliqueID, daemons); err != nil {
+				return fmt.Errorf("writeDaemonsConfig failed: %w", err)
 			}
 
 			if cliqueID == "" {
@@ -337,14 +337,14 @@ func IMEXDaemonUpdateLoopWithIPs(ctx context.Context, controller *Controller, cl
 // unexpectedly and expectedly).
 func IMEXDaemonUpdateLoopWithDNSNames(ctx context.Context, controller *Controller, processManager *ProcessManager, dnsNameManager *DNSNameManager) error {
 	for {
-		klog.V(1).Infof("wait for nodes update")
+		klog.V(1).Infof("wait for daemons update")
 
 		select {
 		case <-ctx.Done():
 			klog.Infof("shutdown: stop IMEXDaemonUpdateLoopWithDNSNames")
 			return nil
-		case nodes := <-controller.GetNodesUpdateChan():
-			updated, err := dnsNameManager.UpdateDNSNameMappings(nodes)
+		case daemons := <-controller.GetDaemonInfoUpdateChan():
+			updated, err := dnsNameManager.UpdateDNSNameMappings(daemons)
 			if err != nil {
 				return fmt.Errorf("failed to update DNS name => IP mappings: %w", err)
 			}
@@ -444,7 +444,7 @@ func writeIMEXConfig(podIP string) error {
 }
 
 // writeNodesConfig creates a nodesConfig file with IPs for nodes in the same clique.
-func writeNodesConfig(cliqueID string, nodes []*nvapi.ComputeDomainNode) error {
+func writeDaemonsConfig(cliqueID string, daemons []*nvapi.ComputeDomainDaemonInfo) error {
 	// Ensure the directory exists
 	dir := filepath.Dir(imexDaemonNodesConfigPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -458,13 +458,13 @@ func writeNodesConfig(cliqueID string, nodes []*nvapi.ComputeDomainNode) error {
 	}
 	defer f.Close()
 
-	// Write IPs for nodes in the same clique
+	// Write IPs for daemons in the same clique
 	//
-	// Note(JP): wo we need to apply this type of filtering also in the logic
+	// Note(JP): do we need to apply this type of filtering also in the logic
 	// that checks if an IMEX daemon restart is required?
-	for _, node := range nodes {
-		if node.CliqueID == cliqueID {
-			if _, err := fmt.Fprintf(f, "%s\n", node.IPAddress); err != nil {
+	for _, daemon := range daemons {
+		if daemon.CliqueID == cliqueID {
+			if _, err := fmt.Fprintf(f, "%s\n", daemon.IPAddress); err != nil {
 				return fmt.Errorf("failed to write to nodes config file: %w", err)
 			}
 		}
