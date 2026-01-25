@@ -34,18 +34,8 @@ import (
 	nvinformers "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/nvidia.com/informers/externalversions"
 )
 
-const (
-	// Detecting when a CD daemon transitions from NotReady to Ready (based on
-	// the startup probe) at the moment sometimes requires an informer resync,
-	// see https://github.com/NVIDIA/k8s-dra-driver-gpu/issues/742.
-	informerResyncPeriod = 4 * time.Minute
-	mutationCacheTTL     = time.Hour
-)
-
 // GetComputeDomainFunc is a function type for getting a ComputeDomain by UID.
 type GetComputeDomainFunc func(uid string) (*nvapi.ComputeDomain, error)
-
-type IPSet map[string]struct{}
 
 // ComputeDomainStatusManager watches compute domains and updates their status with
 // info about the ComputeDomain daemon running on this node.
