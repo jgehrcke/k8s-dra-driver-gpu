@@ -193,9 +193,8 @@ func (m *ComputeDomainManager) Get(uid string) (*nvapi.ComputeDomain, error) {
 
 // UpdateStatus updates a ComputeDomain's status and caches the result in the mutation cache.
 func (m *ComputeDomainManager) UpdateStatus(ctx context.Context, cd *nvapi.ComputeDomain) (*nvapi.ComputeDomain, error) {
-	if cd.Status.Status == nvapi.ComputeDomainStatusNone {
-		cd.Status.Status = nvapi.ComputeDomainStatusNotReady
-	}
+	// Recalculate global status based on current state
+	cd.Status.Status = m.calculateGlobalStatus(cd)
 
 	updatedCD, err := m.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomains(cd.Namespace).UpdateStatus(ctx, cd, metav1.UpdateOptions{})
 	if err != nil {
