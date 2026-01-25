@@ -55,8 +55,8 @@ type ControllerConfig struct {
 
 // Controller manages the lifecycle of compute domain operations.
 type Controller struct {
-	computeDomainManager *ComputeDomainManager
-	workQueue            *workqueue.WorkQueue
+	computeDomainStatusManager *ComputeDomainStatusManager
+	workQueue                  *workqueue.WorkQueue
 }
 
 // NewController creates and initializes a new Controller instance.
@@ -85,8 +85,8 @@ func NewController(config *ControllerConfig) (*Controller, error) {
 	}
 
 	controller := &Controller{
-		computeDomainManager: NewComputeDomainManager(mc),
-		workQueue:            workQueue,
+		computeDomainStatusManager: NewComputeDomainStatusManager(mc),
+		workQueue:                  workQueue,
 	}
 
 	return controller, nil
@@ -95,17 +95,17 @@ func NewController(config *ControllerConfig) (*Controller, error) {
 // Run starts the controller's main loop and manages the lifecycle of its components.
 // It initializes the work queue and handles graceful shutdown when the context is cancelled.
 func (c *Controller) Run(ctx context.Context) error {
-	// Start the compute domain manager
-	if err := c.computeDomainManager.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start compute domain manager: %v", err)
+	// Start the compute domain status manager
+	if err := c.computeDomainStatusManager.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start compute domain status manager: %v", err)
 	}
 
 	// Start processing the workqueue
 	c.workQueue.Run(ctx)
 
-	// Stop the compute domain manager
-	if err := c.computeDomainManager.Stop(); err != nil {
-		return fmt.Errorf("failed to stop compute domain manager: %v", err)
+	// Stop the compute domain status manager
+	if err := c.computeDomainStatusManager.Stop(); err != nil {
+		return fmt.Errorf("failed to stop compute domain status manager: %v", err)
 	}
 
 	return nil
@@ -115,5 +115,5 @@ func (c *Controller) Run(ctx context.Context) error {
 // currently present in the CD status. This is only a complete set of nodes
 // (size `numNodes`) if IMEXDaemonsWithDNSNames=false.
 func (c *Controller) GetNodesUpdateChan() chan []*nvapi.ComputeDomainNode {
-	return c.computeDomainManager.GetNodesUpdateChan()
+	return c.computeDomainStatusManager.GetNodesUpdateChan()
 }
