@@ -52,6 +52,7 @@ type ManagerConfig struct {
 
 // ControllerConfig holds the configuration for the controller.
 type ControllerConfig struct {
+	clientsets             flags.ClientSets
 	nodeName               string
 	computeDomainUUID      string
 	computeDomainName      string
@@ -72,18 +73,11 @@ type Controller struct {
 
 // NewController creates and initializes a new Controller instance.
 func NewController(config *ControllerConfig) (*Controller, error) {
-	// Create a new KubeConfig from flags
-	kubeConfig := &flags.KubeClientConfig{}
-	clientSets, err := kubeConfig.NewClientSets()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create client sets: %v", err)
-	}
-
 	workQueue := workqueue.New(workqueue.DefaultCDDaemonRateLimiter())
 
 	mc := &ManagerConfig{
 		workQueue:              workQueue,
-		clientsets:             clientSets,
+		clientsets:             config.clientsets,
 		nodeName:               config.nodeName,
 		computeDomainUUID:      config.computeDomainUUID,
 		computeDomainName:      config.computeDomainName,
