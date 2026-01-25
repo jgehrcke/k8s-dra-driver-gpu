@@ -105,6 +105,34 @@ spec:
               Workload however should not rely on inspecting this field at any point
               during its lifecycle.
             properties:
+              cliques:
+                items:
+                  description: |-
+                    ComputeDomainCliqueInfo provides status information about a given clique associated with a ComputeDomain.
+                    One can query the API server for ComputeDomainClique objects named with the ComputeDomain UID and cliqueID.
+                  properties:
+                    id:
+                      type: string
+                    status:
+                      default: NotReady
+                      description: |-
+                        The Status field tracks the readiness of all IMEX daemons running on
+                        nodes within this clique on behalf of a given compute domain. It
+                        gets switched to Ready whenever all IMEX daemons in the clique are
+                        ready to broker GPU memory exchanges and switches to NotReady when
+                        even one is not. It is marked as optional in order to support
+                        downgrades and avoid an API bump.
+                      enum:
+                      - Ready
+                      - NotReady
+                      type: string
+                  required:
+                  - id
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - id
+                x-kubernetes-list-type: map
               nodes:
                 items:
                   description: ComputeDomainNode provides information about each node

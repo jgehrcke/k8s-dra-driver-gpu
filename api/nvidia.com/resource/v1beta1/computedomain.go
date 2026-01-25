@@ -113,6 +113,9 @@ type ComputeDomainStatus struct {
 	// +listType=map
 	// +listMapKey=name
 	Nodes []*ComputeDomainNode `json:"nodes,omitempty"`
+	// +listType=map
+	// +listMapKey=id
+	Cliques []*ComputeDomainCliqueInfo `json:"cliques,omitempty"`
 }
 
 // ComputeDomainNode provides information about each node added to a ComputeDomain.
@@ -133,6 +136,22 @@ type ComputeDomainNode struct {
 	// ready to broker GPU memory exchanges and switches to NotReady when
 	// it is not. It is marked as optional in order to support downgrades
 	// and avoid an API bump.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Enum=Ready;NotReady
+	// +kubebuilder:default:=NotReady
+	Status string `json:"status,omitempty"`
+}
+
+// ComputeDomainCliqueInfo provides status information about a given clique associated with a ComputeDomain.
+// One can query the API server for ComputeDomainClique objects named with the ComputeDomain UID and cliqueID.
+type ComputeDomainCliqueInfo struct {
+	ID string `json:"id"`
+	// The Status field tracks the readiness of all IMEX daemons running on
+	// nodes within this clique on behalf of a given compute domain. It
+	// gets switched to Ready whenever all IMEX daemons in the clique are
+	// ready to broker GPU memory exchanges and switches to NotReady when
+	// even one is not. It is marked as optional in order to support
+	// downgrades and avoid an API bump.
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:validation:Enum=Ready;NotReady
 	// +kubebuilder:default:=NotReady
