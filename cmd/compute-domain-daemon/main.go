@@ -54,6 +54,7 @@ type Flags struct {
 	computeDomainNamespace string
 	nodeName               string
 	podIP                  string
+	podUID                 string
 	podName                string
 	podNamespace           string
 	maxNodesPerIMEXDomain  int
@@ -131,6 +132,12 @@ func newApp() *cli.App {
 			Usage:       "The IP address of this pod.",
 			EnvVars:     []string{"POD_IP"},
 			Destination: &flags.podIP,
+		},
+		&cli.StringFlag{
+			Name:        "pod-uid",
+			Usage:       "The UID of this pod.",
+			EnvVars:     []string{"POD_UID"},
+			Destination: &flags.podUID,
 		},
 		&cli.StringFlag{
 			Name:        "pod-name",
