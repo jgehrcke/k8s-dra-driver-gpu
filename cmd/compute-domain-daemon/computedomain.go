@@ -399,7 +399,7 @@ func (m *ComputeDomainManager) EnsureNodeInfoInCD(ctx context.Context, cd *nvapi
 	}
 
 	if myNodePrevious != nil && *myNodePrevious == *myNode {
-		klog.V(7).Infof("EnsureNodeInfoInCD noop: no change (%v)", *myNode)
+		klog.V(6).Infof("EnsureNodeInfoInCD noop: no change (%v)", *myNode)
 		return newCD, nil
 	}
 
@@ -628,6 +628,7 @@ func (m *ComputeDomainManager) patchCD(ctx context.Context, patch []byte) (*nvap
 	childCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 
+	klog.V(6).Infof("try to PATCH CD")
 	updatedCD, err := m.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomains(m.config.computeDomainNamespace).Patch(
 		childCtx,
 		m.config.computeDomainName,
@@ -675,7 +676,7 @@ func (m *ComputeDomainManager) HasDuplicateIndex(nodeInfos []*nvapi.ComputeDomai
 		}
 
 		if _, exists := seen[node.Index]; exists {
-			klog.V(7).Infof("DNS index collision detected: %v uses an index seen before (we are node %v)", node, m.config.nodeName)
+			klog.V(6).Infof("DNS index collision detected: %v uses an index seen before (we are node %v)", node, m.config.nodeName)
 			return true
 		}
 
