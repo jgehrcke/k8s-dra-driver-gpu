@@ -20,9 +20,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"syscall"
 	"text/template"
@@ -51,6 +53,7 @@ type Flags struct {
 	computeDomainUUID      string
 	computeDomainName      string
 	computeDomainNamespace string
+	computeDomainNumNodes  int
 	nodeName               string
 	podIP                  string
 	podName                string
@@ -118,6 +121,12 @@ func newApp() *cli.App {
 			Value:       "default",
 			EnvVars:     []string{"COMPUTE_DOMAIN_NAMESPACE"},
 			Destination: &flags.computeDomainNamespace,
+		},
+		&cli.IntFlag{
+			Name:        "compute-domain-num-nodes",
+			Usage:       "",
+			EnvVars:     []string{"COMPUTE_DOMAIN_NUM_NODES"},
+			Destination: &flags.computeDomainNumNodes,
 		},
 		&cli.StringFlag{
 			Name:        "node-name",
@@ -194,6 +203,7 @@ func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 		computeDomainUUID:      flags.computeDomainUUID,
 		computeDomainName:      flags.computeDomainName,
 		computeDomainNamespace: flags.computeDomainNamespace,
+		computeDomainNumNodes:  flags.computeDomainNumNodes,
 		nodeName:               flags.nodeName,
 		podIP:                  flags.podIP,
 		podName:                flags.podName,
@@ -209,6 +219,11 @@ func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 	// this node's state in the CD object.
 	if flags.cliqueID == "" {
 		klog.Infof("no cliqueID: register with ComputeDomain, but do not run IMEX daemon")
+	}
+
+	// large-N-simulation hack
+	if config.cliqueID == "none" {
+		config.cliqueID = calcCliqueID(config.nodeName, config.computeDomainNumNodes)
 	}
 
 	// Render and write the IMEX daemon config with the current pod IP
@@ -466,4 +481,36 @@ func logNodesConfig() error {
 	}
 	klog.Infof("Current %s:\n%s", imexDaemonNodesConfigPath, string(content))
 	return nil
+}
+
+func calcCliqueID(nodename string, numnodes int) string {
+	// 1. Determine number of cliques
+	// To round up NUMNODES / 18, we use integer math: (n + divisor - 1) / divisor
+	// Example: 19 nodes / 18 = 2 cliques
+	ccount := (numnodes + 17) / 18
+	if ccount == 0 {
+		ccount = 1
+	}
+
+	// 2. Calculate clique assignment
+	// We hash the node name and map it to one of the clique indices
+	cliqueIndex := getCliqueAssignment(nodename, ccount)
+	// overwrite assigned clique ID (so far, it was noop)
+	cliqueID := strconv.Itoa(cliqueIndex)
+	klog.Infof("identified clique count: %d, picked cliqueID %s", ccount, cliqueID)
+	return cliqueID
+}
+
+// Each node (simulated in a pod) must independently self-assign a clique using
+// only its name and the total node count -- the most robust "uniform" strategy
+// is Modulo Hashing. getCliqueAssignment hashes a string to a range [0, max-1]
+func getCliqueAssignment(key string, max int) int {
+	// FNV-1a is a non-cryptographic hash function that is fast
+	// and has excellent distribution properties for short strings.
+	h := fnv.New32a()
+	h.Write([]byte(key))
+	hashValue := h.Sum32()
+
+	// Modulo operation maps the massive hash value to our specific range
+	return int(hashValue % uint32(max))
 }
