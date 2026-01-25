@@ -111,9 +111,9 @@ func (c *Controller) Run(ctx context.Context) error {
 	return nil
 }
 
-// GetNodesUpdateChan() returns a channel that yields updates for the nodes
-// currently present in the CD status. This is only a complete set of nodes
+// GetDaemonInfoUpdateChan returns a channel that yields updates for the daemons
+// currently present in the CD status. This is only a complete set of daemons
 // (size `numNodes`) if IMEXDaemonsWithDNSNames=false.
-func (c *Controller) GetNodesUpdateChan() chan []*nvapi.ComputeDomainNode {
-	return c.computeDomainStatusManager.GetNodesUpdateChan()
+func (c *Controller) GetDaemonInfoUpdateChan() chan []*nvapi.ComputeDomainDaemonInfo {
+	return c.computeDomainStatusManager.GetDaemonInfoUpdateChan()
 }

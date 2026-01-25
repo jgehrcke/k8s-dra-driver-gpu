@@ -59,8 +59,8 @@ type ComputeDomainStatusManager struct {
 
 	// Note: if `previousNodes` is empty it means we're early in the daemon's
 	// lifecycle and the IMEX daemon child process wasn't started yet.
-	previousNodes    []*nvapi.ComputeDomainNode
-	updatedNodesChan chan []*nvapi.ComputeDomainNode
+	previousNodes      []*nvapi.ComputeDomainNode
+	updatedDaemonsChan chan []*nvapi.ComputeDomainDaemonInfo
 
 	podManager    *PodManager
 	mutationCache cache.MutationCache
@@ -79,11 +79,11 @@ func NewComputeDomainStatusManager(config *ManagerConfig) *ComputeDomainStatusMa
 	informer := factory.Resource().V1beta1().ComputeDomains().Informer()
 
 	m := &ComputeDomainStatusManager{
-		config:           config,
-		factory:          factory,
-		informer:         informer,
-		previousNodes:    []*nvapi.ComputeDomainNode{},
-		updatedNodesChan: make(chan []*nvapi.ComputeDomainNode),
+		config:             config,
+		factory:            factory,
+		informer:           informer,
+		previousNodes:      []*nvapi.ComputeDomainNode{},
+		updatedDaemonsChan: make(chan []*nvapi.ComputeDomainDaemonInfo),
 	}
 
 	return m
@@ -411,15 +411,31 @@ func (m *ComputeDomainStatusManager) MaybePushNodesUpdate(cd *nvapi.ComputeDomai
 		// This log message gets large for large node numbers
 		klog.V(6).Infof("previous: %v; new: %v", previousIPs, newIPs)
 		m.previousNodes = cd.Status.Nodes
-		m.updatedNodesChan <- cd.Status.Nodes
+		m.updatedDaemonsChan <- m.nodesToDaemonInfos(cd.Status.Nodes)
 	} else {
 		klog.V(6).Infof("IP set did not change")
 	}
 }
 
-func (m *ComputeDomainStatusManager) GetNodesUpdateChan() chan []*nvapi.ComputeDomainNode {
-	// Yields numNodes-size nodes updates.
-	return m.updatedNodesChan
+// nodesToDaemonInfos converts ComputeDomainNodes to ComputeDomainDaemonInfos.
+func (m *ComputeDomainStatusManager) nodesToDaemonInfos(nodes []*nvapi.ComputeDomainNode) []*nvapi.ComputeDomainDaemonInfo {
+	daemons := make([]*nvapi.ComputeDomainDaemonInfo, len(nodes))
+	for i, node := range nodes {
+		daemons[i] = &nvapi.ComputeDomainDaemonInfo{
+			NodeName:  node.Name,
+			IPAddress: node.IPAddress,
+			CliqueID:  node.CliqueID,
+			Index:     node.Index,
+			Status:    node.Status,
+		}
+	}
+	return daemons
+}
+
+// GetDaemonInfoUpdateChan returns the channel that yields daemon info updates.
+// Updates are only a complete set (size `numNodes`) if IMEXDaemonsWithDNSNames=false.
+func (m *ComputeDomainStatusManager) GetDaemonInfoUpdateChan() chan []*nvapi.ComputeDomainDaemonInfo {
+	return m.updatedDaemonsChan
 }
 
 // removeNodeFromComputeDomain removes the current node's entry from the ComputeDomain status.
