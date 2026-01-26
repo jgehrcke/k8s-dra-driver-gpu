@@ -8,6 +8,9 @@ cat demo/specs/imex/channel-injection.yaml | grep numNodes
 
 make image-build-and-copy-to-nodes
 
+kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-dra-driver-gpu/refs/heads/pull-request/826/deployments/helm/nvidia-dra-driver-gpu/crds/resource.nvidia.com_computedomaincliques.yaml
+kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-dra-driver-gpu/refs/heads/pull-request/826/deployments/helm/nvidia-dra-driver-gpu/crds/resource.nvidia.com_computedomains.yaml
+
 helm uninstall -n nvidia-dra-driver-gpu nvidia-dra-driver-gpu --wait
 helm install nvidia-dra-driver-gpu deployments/helm/nvidia-dra-driver-gpu/ \
     --create-namespace \
@@ -15,6 +18,7 @@ helm install nvidia-dra-driver-gpu deployments/helm/nvidia-dra-driver-gpu/ \
     --set resources.gpus.enabled=false \
     --set nvidiaDriverRoot=/run/nvidia/driver \
     --set featureGates.IMEXDaemonsWithDNSNames=true \
+    --set featureGates.ComputeDomainCliques=true \
     --set logVerbosity=6 \
     --wait
 
@@ -100,16 +104,16 @@ echo "Time from first-pod-READY to all-pods-READY T_fprapr: $duration1 seconds"
 echo "Time from first-pod-READY to CD-READY T_fprapr: $duration2 seconds"
 
 echo -e "\nclique distribution\n#pods | clique ID"
-kubectl get computedomains.resource.nvidia.com imex-channel-injection -o json | \
-    jq -r '.status.nodes[].cliqueID' | \
-    sort | \
-    uniq -c
+# kubectl get computedomains.resource.nvidia.com imex-channel-injection -o json | \
+#     jq -r '.status.nodes[].cliqueID' | \
+#     sort | \
+#     uniq -c
 
 get_all_cd_daemon_logs_for_cd_name imex-channel-injection > _big_n_cd_daemon.logs
 
 cat _big_n_cd_daemon.logs | \
     grep PATCH | \
-    grep 'computedomains' | \
+    grep 'computedomaincliques' | \
     grep '200 OK' | \
     grep -oP 'milliseconds=\K\d+' | \
     uplot hist --nbins 12 --xlabel "count" --ylabel "time (ms)" --title "distribution of 200 OK PATCH latencies (ms)"
@@ -118,7 +122,7 @@ cat _big_n_cd_daemon.logs | \
     grep -oP 't_process_start \K[0-9.]+' | \
     uplot hist --nbins 12 --xlabel "count"  --ylabel "time (s)" --title "distribution of t_process_start (s)"
 
-echo "Mean PATCH request latency"
+echo "Mean computedomaincliques PATCH request latency"
 cat _big_n_cd_daemon.logs | \
     grep PATCH | \
     grep 'computedomaincliques' | \
