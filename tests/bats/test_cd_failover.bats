@@ -28,6 +28,7 @@ teardown_file() {
 }
 
 
+# bats test_tags=fastfeedback
 @test "CD failover nvb: force-delete worker pod 0" {
   bash tests/bats/lib/test_cd_nvb_failover.sh "$SPECPATH" 1
 }
@@ -43,7 +44,7 @@ teardown_file() {
 }
 
 
-# bats test_tags=bats:focus
+# bats test_tags=fastfeedback
 @test "CD nvb many-iteration wrapper" {
   # Propose and test-cover a snippet that is meant to be used for manual,
   # long-running, many-iteration testing. Parameters used below: fault injection
