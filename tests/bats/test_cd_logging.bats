@@ -117,7 +117,7 @@ setup () {
 
   # Confirm that the CD daemon logs on level six
   run get_all_cd_daemon_logs_for_cd_name "imex-channel-injection"
-  assert_output --partial 'wait for nodes update'  # level 1 msg
+  assert_output --partial 'Wait for updated ComputeDomainDaemonInfo list'  # level 1 msg
   assert_output --partial 'round_trippers.go'  # level 6 msg
 
   # Delete workload and hence CD daemon
@@ -146,7 +146,7 @@ setup () {
 
   # Confirm that the CD daemon now does not contain a level 1 msg
   run get_all_cd_daemon_logs_for_cd_name "imex-channel-injection"
-  refute_output --partial 'wait for nodes update'  # expected level 1 msg
+  refute_output --partial 'Wait for updated ComputeDomainDaemonInfo list'  # expected level 1 msg
 
   # Delete workload
   kubectl delete -f demo/specs/imex/channel-injection.yaml
