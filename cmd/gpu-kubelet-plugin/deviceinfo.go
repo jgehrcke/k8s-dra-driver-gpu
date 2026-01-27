@@ -55,6 +55,7 @@ type GpuInfo struct {
 	pcieRootAttr          *deviceattribute.DeviceAttribute
 	migProfiles           []*MigProfileInfo
 	MigCapable            bool
+	addressingMode        *string
 	Health                HealthStatus
 
 	// Properties that can only be known after inspecting MIG profiles
@@ -244,6 +245,11 @@ func (d *GpuInfo) GetDevice() resourceapi.Device {
 	if d.pcieRootAttr != nil {
 		device.Attributes[d.pcieRootAttr.Name] = d.pcieRootAttr.Value
 	}
+	if d.addressingMode != nil {
+		device.Attributes["addressingMode"] = resourceapi.DeviceAttribute{
+			StringValue: d.addressingMode,
+		}
+	}
 	return device
 }
 
@@ -318,6 +324,11 @@ func (d *MigDeviceInfo) GetDevice() resourceapi.Device {
 	}
 	if d.pcieRootAttr != nil {
 		device.Attributes[d.pcieRootAttr.Name] = d.pcieRootAttr.Value
+	}
+	if d.parent.addressingMode != nil {
+		device.Attributes["addressingMode"] = resourceapi.DeviceAttribute{
+			StringValue: d.parent.addressingMode,
+		}
 	}
 	return device
 }

@@ -18,12 +18,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"sync"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
@@ -55,6 +57,8 @@ type ComputeDomainManager struct {
 	factory  nvinformers.SharedInformerFactory
 	informer cache.SharedIndexInformer
 
+	// Note: if `previousNodes` is empty it means we're early in the daemon's
+	// lifecycle and the IMEX daemon child process wasn't started yet.
 	previousNodes    []*nvapi.ComputeDomainNode
 	updatedNodesChan chan []*nvapi.ComputeDomainNode
 
@@ -219,9 +223,11 @@ func (m *ComputeDomainManager) onAddOrUpdate(ctx context.Context, obj any) error
 	}
 
 	// Update node info in ComputeDomain, if required.
-	if err := m.EnsureNodeInfoInCD(ctx, cd); err != nil {
+	cd, err = m.EnsureNodeInfoInCD(ctx, cd)
+	if err != nil {
 		return fmt.Errorf("CD update: failed to insert/update node info in CD: %w", err)
 	}
+	m.MaybePushNodesUpdate(cd)
 
 	return nil
 }
@@ -231,41 +237,32 @@ func (m *ComputeDomainManager) onAddOrUpdate(ctx context.Context, obj any) error
 // reports the IP address of this current pod running the CD daemon. If mutation
 // is needed (first insertion, or IP address update) and successful, it reflects
 // the mutation in `m.mutationCache`.
-func (m *ComputeDomainManager) EnsureNodeInfoInCD(ctx context.Context, cd *nvapi.ComputeDomain) (rerr error) {
-	var nodeInfo *nvapi.ComputeDomainNode
+// TODO: rename function?
+func (m *ComputeDomainManager) EnsureNodeInfoInCD(ctx context.Context, cd *nvapi.ComputeDomain) (*nvapi.ComputeDomain, error) {
+	var myNode, myNodePrevious *nvapi.ComputeDomainNode
 
 	// Create a deep copy of the ComputeDomain to avoid modifying the original
 	newCD := cd.DeepCopy()
 
-	defer func() {
-		if rerr == nil {
-			m.MaybePushNodesUpdate(newCD)
-		}
-	}()
-
 	// Try to find an existing entry for the current k8s node
 	for _, node := range newCD.Status.Nodes {
 		if node.Name == m.config.nodeName {
-			nodeInfo = node
+			myNode = node.DeepCopy()
+			myNodePrevious = node.DeepCopy()
 			break
 		}
 	}
 
-	// If there is one and its IP is the same as this one, we are done
-	if nodeInfo != nil && nodeInfo.IPAddress == m.config.podIP {
-		klog.V(6).Infof("EnsureNodeInfoInCD noop: pod IP unchanged (%s)", m.config.podIP)
-		return nil
-	}
-
-	// If there isn't one, create one and append it to the list
-	if nodeInfo == nil {
-		// Get the next available index for this new node
+	// Create new ComputeDomainNode object representing myself, and insert it into the nodes list.
+	if myNode == nil {
+		// Get the next available index for this new node (local point of view,
+		// API server may tell us later that this index was chosen poorly).
 		nextIndex, err := getNextAvailableIndex(m.config.cliqueID, newCD.Status.Nodes, m.config.maxNodesPerIMEXDomain)
 		if err != nil {
-			return fmt.Errorf("error getting next available index: %w", err)
+			return nil, fmt.Errorf("error getting next available index: %w", err)
 		}
 
-		nodeInfo = &nvapi.ComputeDomainNode{
+		myNode = &nvapi.ComputeDomainNode{
 			Name:     m.config.nodeName,
 			CliqueID: m.config.cliqueID,
 			Index:    nextIndex,
@@ -273,30 +270,60 @@ func (m *ComputeDomainManager) EnsureNodeInfoInCD(ctx context.Context, cd *nvapi
 			Status: nvapi.ComputeDomainStatusNotReady,
 		}
 
-		klog.Infof("CD status does not contain node name '%s' yet, try to insert myself: %v", m.config.nodeName, nodeInfo)
-		newCD.Status.Nodes = append(newCD.Status.Nodes, nodeInfo)
+		klog.Infof("CD status does not contain node name '%s' yet, try to insert myself: %v", m.config.nodeName, myNode)
 	}
 
 	// Unconditionally update its IP address. Note that the nodeInfo.IPAddress
-	// as of now translates into a pod IP address and may therefore change
+	// as of now translates into a pod IP address and may therefore changes
 	// across pod restarts.
-	nodeInfo.IPAddress = m.config.podIP
+	myNode.IPAddress = m.config.podIP
 
-	// Conditionally update global CD status if it's still in its initial status
-	if newCD.Status.Status == "" {
-		newCD.Status.Status = nvapi.ComputeDomainStatusNotReady
+	// Detect and handle DNS index collision where my self-chosen DNS index
+	// appears elsewhere (among the nodes with the same cliqueID). If
+	// `m.previousNodes` is empty, we haven't started the IMEX daemon yet and
+	// hence can change our previous choice safely.
+	if len(m.previousNodes) == 0 {
+		for _, other := range newCD.Status.Nodes {
+			// Skip items in different cliques, and also myself.
+			if other.CliqueID != m.config.cliqueID {
+				continue
+			}
+			if other.Name == m.config.nodeName {
+				continue
+			}
+			if other.Index == myNode.Index {
+				idx, err := getNextAvailableIndex(m.config.cliqueID, newCD.Status.Nodes, m.config.maxNodesPerIMEXDomain)
+				if err != nil {
+					return nil, fmt.Errorf("error getting next available index: %w", err)
+				}
+				myNode.Index = idx
+				klog.V(4).Infof("EnsureNodeInfoInCD: IMEX daemon not started yet, DNS index collision with %v, picked new index: %d", other, idx)
+			}
+		}
 	}
 
-	// Update status and (upon success) store the latest version of the object
-	// (as returned by the API server) in the mutation cache.
-	newCD, err := m.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomains(newCD.Namespace).UpdateStatus(ctx, newCD, metav1.UpdateOptions{})
+	if myNodePrevious != nil && *myNodePrevious == *myNode {
+		klog.V(6).Infof("EnsureNodeInfoInCD noop: no change (%v)", *myNode)
+		return newCD, nil
+	}
+
+	// Use server-side apply (SSA) to perform insertion or update, with a
+	// localized patch affecting just one `ComputeDomainNode` item in the
+	// `status.nodes` list. See
+	// https://github.com/NVIDIA/k8s-dra-driver-gpu/issues/821 for context.
+	patchBytes, err := generatePatchForNodeInfo([]*nvapi.ComputeDomainNode{myNode})
 	if err != nil {
-		return fmt.Errorf("error updating ComputeDomain status: %w", err)
+		return nil, fmt.Errorf("could not serialize patch: %w", err)
 	}
-	m.mutationCache.Mutation(newCD)
 
-	klog.Infof("Successfully inserted/updated node in CD (nodeinfo: %v)", nodeInfo)
-	return nil
+	updatedCD, err := m.patchCD(ctx, patchBytes)
+	if err != nil {
+		return nil, fmt.Errorf("error patching ComputeDomain status: %w", err)
+	}
+	m.mutationCache.Mutation(updatedCD)
+
+	klog.Infof("Successfully inserted/updated node in CD (nodeinfo: %v)", myNode)
+	return updatedCD, nil
 }
 
 // The Index field in the Nodes section of the ComputeDomain status ensures a
@@ -363,6 +390,12 @@ func (m *ComputeDomainManager) MaybePushNodesUpdate(cd *nvapi.ComputeDomain) {
 		}
 	}
 
+	// Do not update the IMEX daemon config if the current nodes list
+	// contains any duplicate DNS index (within our clique).
+	if m.HasDuplicateIndex(cd.Status.Nodes, m.config.cliqueID) {
+		return
+	}
+
 	newIPs := getIPSet(cd.Status.Nodes)
 	previousIPs := getIPSet(m.previousNodes)
 
@@ -371,7 +404,8 @@ func (m *ComputeDomainManager) MaybePushNodesUpdate(cd *nvapi.ComputeDomain) {
 	// the sense that if across config files the set is equal but the order is
 	// not: that may lead to an IMEX daemon startup error). Maybe we should
 	// perform a stable sort of IP addresses before writing them to the nodes
-	// config file.
+	// config file. Note/TODO: we probably want to limit this check to IP
+	// addresses relevant to _this_ clique.
 	if !maps.Equal(newIPs, previousIPs) {
 		klog.V(2).Infof("IP set changed")
 		// This log message gets large for large node numbers
@@ -390,46 +424,62 @@ func (m *ComputeDomainManager) GetNodesUpdateChan() chan []*nvapi.ComputeDomainN
 
 // removeNodeFromComputeDomain removes the current node's entry from the ComputeDomain status.
 func (m *ComputeDomainManager) removeNodeFromComputeDomain(ctx context.Context) error {
-	cd, err := m.Get(m.config.computeDomainUUID)
+	// Patch with an empty object: instructs to delete all list items owned by
+	// the SSA field manager (which is precisely one:the item for this node, as
+	// identified by node name).
+	patchBytes, err := generatePatchForNodeInfo([]*nvapi.ComputeDomainNode{})
 	if err != nil {
-		return fmt.Errorf("error getting ComputeDomain from mutation cache: %w", err)
+		return fmt.Errorf("could not serialize patch: %w", err)
 	}
-	if cd == nil {
-		klog.Infof("No ComputeDomain object found in mutation cache during cleanup")
-		return nil
-	}
-
-	newCD := cd.DeepCopy()
-
-	// Filter out the node with the current pod's IP address
-	var updatedNodes []*nvapi.ComputeDomainNode
-	for _, node := range newCD.Status.Nodes {
-		if node.IPAddress != m.config.podIP {
-			updatedNodes = append(updatedNodes, node)
-		}
-	}
-
-	// Exit early if no nodes were removed
-	if len(updatedNodes) == len(newCD.Status.Nodes) {
-		return nil
-	}
-
-	// If the number of nodes is now less than required, set status to NotReady
-	if len(updatedNodes) < newCD.Spec.NumNodes {
-		newCD.Status.Status = nvapi.ComputeDomainStatusNotReady
-	}
-
-	// Update status and (upon success) store the latest version of the object
-	// (as returned by the API server) in the mutation cache.
-	newCD.Status.Nodes = updatedNodes
-	newCD, err = m.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomains(newCD.Namespace).UpdateStatus(ctx, newCD, metav1.UpdateOptions{})
+	updatedCD, err := m.patchCD(ctx, patchBytes)
 	if err != nil {
-		return fmt.Errorf("error removing node from ComputeDomain status: %w", err)
+		return fmt.Errorf("error patching ComputeDomain status for node removal: %w", err)
 	}
-	m.mutationCache.Mutation(newCD)
+	m.mutationCache.Mutation(updatedCD)
 
-	klog.Infof("Successfully removed node with IP %s from ComputeDomain %s/%s", m.config.podIP, newCD.Namespace, newCD.Name)
+	klog.Infof("Successfully removed node with IP %s from ComputeDomain %s/%s", m.config.podIP, m.config.computeDomainNamespace, m.config.computeDomainName)
 	return nil
+}
+
+// Notes:
+//
+// 1) Field owner and field manager are referring to the same concept.
+// Specifically, `client.FieldOwner("foo")` (which is often shown in
+// documentation snippets) renders as `PatchOptions{FieldManager: "foo"}`.
+//
+// 2) In SSA documentation, one finds the `force: true` concept -- it can be
+// used to take ownership of fields that are currently owned by a different
+// field manager. This is not needed in our context.
+//
+// 3) We cannot get away with one shared owner/manager that is used across
+// nodes. SSA tracks field ownership at the field manager level, not at the
+// client/process level. When a field manager applies a patch with a list, it's
+// declaring the complete desired state for all entries that this field manager
+// owns. When multiple writers use the same field manager name, all such writes
+// are treated as coming from one logical actor. Notably, each apply operation
+// must include all fields that field manager owns. If node A adds/updates entry
+// "node-a" and node B adds/updates entry "node-b" using the same field manager,
+// SSA interprets the omission as intent to delete those entries.
+//
+// Note:
+//   - The `Patch()` method requires the patch itself to be provided as
+//     byte sequence (as JSON document).
+//   - The `apiVersion` and `kind“ fields are required in the patch payload.
+//   - We verified that the API server object returned in response to a PATCH
+//     request reflects both, the patch, and also patches made by other
+//     owners if they happened in the meantime.
+func (m *ComputeDomainManager) patchCD(ctx context.Context, patch []byte) (*nvapi.ComputeDomain, error) {
+	updatedCD, err := m.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomains(m.config.computeDomainNamespace).Patch(
+		ctx,
+		m.config.computeDomainName,
+		types.ApplyPatchType,
+		patch,
+		metav1.PatchOptions{
+			FieldManager: fmt.Sprintf("cd-writer-%s", m.config.nodeName),
+		},
+		"status",
+	)
+	return updatedCD, err
 }
 
 func getIPSet(nodeInfos []*nvapi.ComputeDomainNode) IPSet {
@@ -438,4 +488,39 @@ func getIPSet(nodeInfos []*nvapi.ComputeDomainNode) IPSet {
 		set[n.IPAddress] = struct{}{}
 	}
 	return set
+}
+
+func generatePatchForNodeInfo(nodes []*nvapi.ComputeDomainNode) ([]byte, error) {
+	patch := map[string]interface{}{
+		"apiVersion": "resource.nvidia.com/v1beta1",
+		"kind":       "ComputeDomain",
+		"status": map[string]interface{}{
+			"nodes": nodes,
+		},
+	}
+	patchBytes, err := json.Marshal(patch)
+	return patchBytes, err
+}
+
+// HasDuplicateIndex iterates over the list of ComputeDomainNodes (in this CD,
+// and in this clique), and returns true if any Index appears more than once.
+func (m *ComputeDomainManager) HasDuplicateIndex(nodeInfos []*nvapi.ComputeDomainNode, cliqueID string) bool {
+	seen := make(map[int]struct{})
+
+	for _, node := range nodeInfos {
+		// Ignore nodes in a different clique.
+		if node.CliqueID != cliqueID {
+			continue
+		}
+
+		if _, exists := seen[node.Index]; exists {
+			klog.V(4).Infof("DNS index collision detected: %v uses an index seen before (we are node %v)", node, m.config.nodeName)
+			return true
+		}
+
+		// Mark as seen.
+		seen[node.Index] = struct{}{}
+	}
+
+	return false
 }

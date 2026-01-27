@@ -240,3 +240,23 @@ func (d PreparedDevices) VfioDeviceUUIDs() []string {
 	slices.Sort(uuids)
 	return uuids
 }
+
+// GetNonAdminDevices returns a map of device names that were requested
+// without admin access in the prepared claim.
+func (c *PreparedClaim) GetNonAdminDevices() map[string]struct{} {
+	requested := make(map[string]struct{}, len(c.Status.Allocation.Devices.Results))
+
+	if c.Status.Allocation == nil {
+		return requested
+	}
+	for _, r := range c.Status.Allocation.Devices.Results {
+		if r.Driver != DriverName {
+			continue
+		}
+		if r.AdminAccess != nil && *r.AdminAccess {
+			continue
+		}
+		requested[r.Device] = struct{}{}
+	}
+	return requested
+}

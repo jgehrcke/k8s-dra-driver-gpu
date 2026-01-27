@@ -54,11 +54,8 @@ type Flags struct {
 	kubeletRegistrarDirectoryPath string
 	kubeletPluginsDirectoryPath   string
 	healthcheckPort               int
-<<<<<<< HEAD
 	klogVerbosity                 int
-=======
 	additionalXidsToIgnore        string
->>>>>>> upstream/main
 }
 
 type Config struct {

@@ -21,6 +21,7 @@ import (
 )
 
 const (
+	ComputeDomainStatusNone     = ""
 	ComputeDomainStatusReady    = "Ready"
 	ComputeDomainStatusNotReady = "NotReady"
 

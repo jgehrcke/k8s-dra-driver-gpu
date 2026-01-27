@@ -251,7 +251,7 @@ func getDevicePlacementMap(allocatable AllocatableDevices) devicePlacementMap {
 			ciID = FullGPUInstanceID
 
 		case MigDeviceType:
-			parentUUID = d.Mig.parent.UUID
+			parentUUID = d.Mig.Parent.UUID
 			if parentUUID == "" {
 				continue
 			}

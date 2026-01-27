@@ -31,6 +31,7 @@ import (
 )
 
 type GetComputeDomainFunc func(uid string) (*nvapi.ComputeDomain, error)
+type UpdateComputeDomainStatusFunc func(ctx context.Context, cd *nvapi.ComputeDomain) (*nvapi.ComputeDomain, error)
 
 const (
 	// informerResyncPeriod defines how often the informer will resync its cache
@@ -59,8 +60,9 @@ type ComputeDomainManager struct {
 	waitGroup     sync.WaitGroup
 	cancelContext context.CancelFunc
 
-	factory  nvinformers.SharedInformerFactory
-	informer cache.SharedIndexInformer
+	factory       nvinformers.SharedInformerFactory
+	informer      cache.SharedIndexInformer
+	mutationCache cache.MutationCache
 
 	daemonSetManager             *MultiNamespaceDaemonSetManager
 	resourceClaimTemplateManager *WorkloadResourceClaimTemplateManager
@@ -78,7 +80,7 @@ func NewComputeDomainManager(config *ManagerConfig) *ComputeDomainManager {
 		informer: informer,
 	}
 
-	m.daemonSetManager = NewMultiNamespaceDaemonSetManager(config, m.Get)
+	m.daemonSetManager = NewMultiNamespaceDaemonSetManager(config, m.Get, m.UpdateStatus)
 	m.resourceClaimTemplateManager = NewWorkloadResourceClaimTemplateManager(config, m.Get)
 	m.nodeManager = NewNodeManager(config, m.Get)
 
@@ -104,6 +106,16 @@ func (m *ComputeDomainManager) Start(ctx context.Context) (rerr error) {
 	if err != nil {
 		return fmt.Errorf("error adding indexer for UIDs: %w", err)
 	}
+
+	// Create mutation cache to track ComputeDomain updates
+	// This reduces conflicts when multiple managers update the same ComputeDomain concurrently
+	m.mutationCache = cache.NewIntegerResourceVersionMutationCache(
+		klog.Background(),
+		m.informer.GetStore(),
+		m.informer.GetIndexer(),
+		mutationCacheTTL,
+		true,
+	)
 
 	_, err = m.informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) {
@@ -159,9 +171,9 @@ func (m *ComputeDomainManager) Stop() error {
 	return nil
 }
 
-// Get gets a ComputeDomain with a specific UID.
+// Get gets a ComputeDomain with a specific UID from the mutation cache.
 func (m *ComputeDomainManager) Get(uid string) (*nvapi.ComputeDomain, error) {
-	cds, err := m.informer.GetIndexer().ByIndex("uid", uid)
+	cds, err := m.mutationCache.ByIndex("uid", uid)
 	if err != nil {
 		return nil, fmt.Errorf("error retrieving ComputeDomain by UID: %w", err)
 	}
@@ -176,6 +188,21 @@ func (m *ComputeDomainManager) Get(uid string) (*nvapi.ComputeDomain, error) {
 		return nil, fmt.Errorf("failed to cast to ComputeDomain")
 	}
 	return cd, nil
+}
+
+// UpdateStatus updates a ComputeDomain's status and caches the result in the mutation cache.
+func (m *ComputeDomainManager) UpdateStatus(ctx context.Context, cd *nvapi.ComputeDomain) (*nvapi.ComputeDomain, error) {
+	if cd.Status.Status == nvapi.ComputeDomainStatusNone {
+		cd.Status.Status = nvapi.ComputeDomainStatusNotReady
+	}
+
+	updatedCD, err := m.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomains(cd.Namespace).UpdateStatus(ctx, cd, metav1.UpdateOptions{})
+	if err != nil {
+		return nil, err
+	}
+	m.mutationCache.Mutation(updatedCD)
+
+	return updatedCD, nil
 }
 
 // RemoveFinalizer removes the finalizer from a ComputeDomain.
@@ -210,6 +237,37 @@ func (m *ComputeDomainManager) RemoveFinalizer(ctx context.Context, uid string) 
 	return nil
 }
 
+func (m *ComputeDomainManager) calculateGlobalStatus(cd *nvapi.ComputeDomain) string {
+	// Mark the ComputeDomain as not ready if not enough nodes are present in the nodes list.
+	if len(cd.Status.Nodes) < cd.Spec.NumNodes {
+		return nvapi.ComputeDomainStatusNotReady
+	}
+
+	// If any of the individual nodes is not ready, return NotReady.
+	for _, n := range cd.Status.Nodes {
+		if n.Status == nvapi.ComputeDomainStatusNotReady {
+			return nvapi.ComputeDomainStatusNotReady
+		}
+	}
+
+	return nvapi.ComputeDomainStatusReady
+}
+
+func (m *ComputeDomainManager) updateGlobalStatus(ctx context.Context, cd *nvapi.ComputeDomain) error {
+	newCD := cd.DeepCopy()
+	newStatus := m.calculateGlobalStatus(newCD)
+
+	if newCD.Status.Status == newStatus {
+		return nil
+	}
+
+	newCD.Status.Status = newStatus
+	if _, err := m.UpdateStatus(ctx, newCD); err != nil {
+		return fmt.Errorf("error updating ComputeDomain status: %w", err)
+	}
+	return nil
+}
+
 func (m *ComputeDomainManager) addFinalizer(ctx context.Context, cd *nvapi.ComputeDomain) error {
 	for _, f := range cd.Finalizers {
 		if f == computeDomainFinalizer {
@@ -233,6 +291,14 @@ func (m *ComputeDomainManager) onAddOrUpdate(ctx context.Context, obj any) error
 	}
 
 	klog.V(2).Infof("Processing added or updated ComputeDomain: %s/%s/%s", cd.Namespace, cd.Name, cd.UID)
+
+	cd, err := m.Get(string(cd.UID))
+	if err != nil {
+		return fmt.Errorf("error getting ComputeDomain: %w", err)
+	}
+	if cd == nil {
+		return nil
+	}
 
 	if cd.GetDeletionTimestamp() != nil {
 		if err := m.resourceClaimTemplateManager.Delete(ctx, string(cd.UID)); err != nil {
@@ -270,6 +336,7 @@ func (m *ComputeDomainManager) onAddOrUpdate(ctx context.Context, obj any) error
 		return nil
 	}
 
+	// Add the finalizer.
 	if err := m.addFinalizer(ctx, cd); err != nil {
 		return fmt.Errorf("error adding finalizer: %w", err)
 	}
@@ -277,12 +344,19 @@ func (m *ComputeDomainManager) onAddOrUpdate(ctx context.Context, obj any) error
 	// Do not wait for the next periodic label cleanup to happen.
 	m.nodeManager.RemoveStaleComputeDomainLabelsAsync(ctx)
 
+	// Create the DaemonsetManager.
 	if _, err := m.daemonSetManager.Create(ctx, cd); err != nil {
 		return fmt.Errorf("error creating DaemonSet: %w", err)
 	}
 
+	// Create the ResourceClaimTemplateManager.
 	if _, err := m.resourceClaimTemplateManager.Create(ctx, cd.Namespace, cd.Spec.Channel.ResourceClaimTemplate.Name, cd); err != nil {
 		return fmt.Errorf("error creating ResourceClaimTemplate '%s/%s': %w", cd.Namespace, cd.Spec.Channel.ResourceClaimTemplate.Name, err)
+	}
+
+	// Change the global Status to reflect the number of ComputeDomain daemons connected.
+	if err := m.updateGlobalStatus(ctx, cd); err != nil {
+		return fmt.Errorf("error updating global status on ComputeDoimain '%s/%s': %w", cd.Namespace, cd.Name, err)
 	}
 
 	return nil
