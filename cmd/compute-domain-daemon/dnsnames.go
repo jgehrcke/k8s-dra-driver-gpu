@@ -62,31 +62,31 @@ func NewDNSNameManager(cliqueID string, maxNodesPerIMEXDomain int, nodesConfigPa
 // UpdateDNSNameMappings updates the /etc/hosts file with any new IP to DNS name
 // mappings. The boolean return value indicates whether the hosts file was
 // updated or not (it must be ignored when the returned error is non-nil).
-func (m *DNSNameManager) UpdateDNSNameMappings(nodes []*nvapi.ComputeDomainNode) (bool, error) {
+func (m *DNSNameManager) UpdateDNSNameMappings(daemons []*nvapi.ComputeDomainDaemonInfo) (bool, error) {
 	m.Lock()
 	defer m.Unlock()
 
 	// Make a local ipToDNSName mappings
 	ipToDNSName := make(IPToDNSNameMap)
 
-	// Prefilter nodes to only consider those with the matching cliqueID
-	var cliqueNodes []*nvapi.ComputeDomainNode
-	for _, node := range nodes {
-		if node.CliqueID == m.cliqueID {
-			cliqueNodes = append(cliqueNodes, node)
+	// Prefilter daemons to only consider those with the matching cliqueID
+	var cliqueDaemons []*nvapi.ComputeDomainDaemonInfo
+	for _, daemon := range daemons {
+		if daemon.CliqueID == m.cliqueID {
+			cliqueDaemons = append(cliqueDaemons, daemon)
 		}
 	}
 
 	// Add IPs to map
-	for _, node := range cliqueNodes {
-		// Construct the DNS name from the node index
-		dnsName, err := m.constructDNSName(node)
+	for _, daemon := range cliqueDaemons {
+		// Construct the DNS name from the daemon index
+		dnsName, err := m.constructDNSName(daemon)
 		if err != nil {
-			return false, fmt.Errorf("failed to allocate DNS name for IP %s: %w", node.IPAddress, err)
+			return false, fmt.Errorf("failed to allocate DNS name for IP %s: %w", daemon.IPAddress, err)
 		}
 
 		// Assign the IP -> DNS name mapping
-		ipToDNSName[node.IPAddress] = dnsName
+		ipToDNSName[daemon.IPAddress] = dnsName
 	}
 
 	// If the existing ipToDNSName mappings are unchanged, exit early
@@ -128,16 +128,16 @@ func (m *DNSNameManager) LogDNSNameMappings() {
 	}
 }
 
-// contructDNSName constructs a DNS name for a node based on its index field.
+// constructDNSName constructs a DNS name for a daemon based on its index field.
 // Returns an error if the index is invalid or exceeds maxNodesPerIMEXDomain.
-func (m *DNSNameManager) constructDNSName(node *nvapi.ComputeDomainNode) (string, error) {
-	if node.Index < 0 {
-		return "", fmt.Errorf("node %s has invalid index %d", node.Name, node.Index)
+func (m *DNSNameManager) constructDNSName(daemon *nvapi.ComputeDomainDaemonInfo) (string, error) {
+	if daemon.Index < 0 {
+		return "", fmt.Errorf("daemon %s has invalid index %d", daemon.NodeName, daemon.Index)
 	}
-	if node.Index >= m.maxNodesPerIMEXDomain {
-		return "", fmt.Errorf("node %s has invalid index %d, must be less than %d", node.Name, node.Index, m.maxNodesPerIMEXDomain)
+	if daemon.Index >= m.maxNodesPerIMEXDomain {
+		return "", fmt.Errorf("daemon %s has invalid index %d, must be less than %d", daemon.NodeName, daemon.Index, m.maxNodesPerIMEXDomain)
 	}
-	dnsName := fmt.Sprintf(dnsNameFormat, node.Index)
+	dnsName := fmt.Sprintf(dnsNameFormat, daemon.Index)
 	return dnsName, nil
 }
 

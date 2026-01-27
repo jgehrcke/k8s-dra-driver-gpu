@@ -19,6 +19,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -28,6 +29,8 @@ import (
 	"syscall"
 	"text/template"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 
 	"github.com/urfave/cli/v2"
@@ -54,6 +57,7 @@ type Flags struct {
 	computeDomainNamespace string
 	nodeName               string
 	podIP                  string
+	podUID                 string
 	podName                string
 	podNamespace           string
 	maxNodesPerIMEXDomain  int
@@ -133,6 +137,12 @@ func newApp() *cli.App {
 			Destination: &flags.podIP,
 		},
 		&cli.StringFlag{
+			Name:        "pod-uid",
+			Usage:       "The UID of this pod.",
+			EnvVars:     []string{"POD_UID"},
+			Destination: &flags.podUID,
+		},
+		&cli.StringFlag{
 			Name:        "pod-name",
 			Usage:       "The name of this pod.",
 			EnvVars:     []string{"POD_NAME"},
@@ -190,13 +200,27 @@ func newApp() *cli.App {
 func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 	common.StartDebugSignalHandlers()
 
+	// Create clientsets for Kubernetes API access
+	kubeConfig := &pkgflags.KubeClientConfig{}
+	clientsets, err := kubeConfig.NewClientSets()
+	if err != nil {
+		return fmt.Errorf("failed to create client sets: %w", err)
+	}
+
+	// Add compute domain clique label to this pod
+	if err := addComputeDomainCliqueLabel(ctx, clientsets, flags); err != nil {
+		return fmt.Errorf("failed to add compute domain clique label to pod: %w", err)
+	}
+
 	config := &ControllerConfig{
+		clientsets:             clientsets,
 		cliqueID:               flags.cliqueID,
 		computeDomainUUID:      flags.computeDomainUUID,
 		computeDomainName:      flags.computeDomainName,
 		computeDomainNamespace: flags.computeDomainNamespace,
 		nodeName:               flags.nodeName,
 		podIP:                  flags.podIP,
+		podUID:                 flags.podUID,
 		podName:                flags.podName,
 		podNamespace:           flags.podNamespace,
 		maxNodesPerIMEXDomain:  flags.maxNodesPerIMEXDomain,
@@ -297,14 +321,14 @@ func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 // IMEX daemon nodes config file and (re)starting the IMEX daemon process.
 func IMEXDaemonUpdateLoopWithIPs(ctx context.Context, controller *Controller, cliqueID string, pm *ProcessManager) error {
 	for {
-		klog.V(1).Infof("wait for nodes update")
+		klog.V(1).Infof("Wait for updated ComputeDomainDaemonInfo list")
 		select {
 		case <-ctx.Done():
 			klog.Infof("shutdown: stop IMEXDaemonUpdateLoopWithIPs")
 			return nil
-		case nodes := <-controller.GetNodesUpdateChan():
-			if err := writeNodesConfig(cliqueID, nodes); err != nil {
-				return fmt.Errorf("writeNodesConfig failed: %w", err)
+		case daemons := <-controller.GetDaemonInfoUpdateChan():
+			if err := writeDaemonsConfig(cliqueID, daemons); err != nil {
+				return fmt.Errorf("writeDaemonsConfig failed: %w", err)
 			}
 
 			if cliqueID == "" {
@@ -330,14 +354,14 @@ func IMEXDaemonUpdateLoopWithIPs(ctx context.Context, controller *Controller, cl
 // unexpectedly and expectedly).
 func IMEXDaemonUpdateLoopWithDNSNames(ctx context.Context, controller *Controller, processManager *ProcessManager, dnsNameManager *DNSNameManager) error {
 	for {
-		klog.V(1).Infof("wait for nodes update")
+		klog.V(1).Infof("Wait for updated ComputeDomainDaemonInfo list")
 
 		select {
 		case <-ctx.Done():
 			klog.Infof("shutdown: stop IMEXDaemonUpdateLoopWithDNSNames")
 			return nil
-		case nodes := <-controller.GetNodesUpdateChan():
-			updated, err := dnsNameManager.UpdateDNSNameMappings(nodes)
+		case daemons := <-controller.GetDaemonInfoUpdateChan():
+			updated, err := dnsNameManager.UpdateDNSNameMappings(daemons)
 			if err != nil {
 				return fmt.Errorf("failed to update DNS name => IP mappings: %w", err)
 			}
@@ -437,7 +461,7 @@ func writeIMEXConfig(podIP string) error {
 }
 
 // writeNodesConfig creates a nodesConfig file with IPs for nodes in the same clique.
-func writeNodesConfig(cliqueID string, nodes []*nvapi.ComputeDomainNode) error {
+func writeDaemonsConfig(cliqueID string, daemons []*nvapi.ComputeDomainDaemonInfo) error {
 	// Ensure the directory exists
 	dir := filepath.Dir(imexDaemonNodesConfigPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -451,13 +475,13 @@ func writeNodesConfig(cliqueID string, nodes []*nvapi.ComputeDomainNode) error {
 	}
 	defer f.Close()
 
-	// Write IPs for nodes in the same clique
+	// Write IPs for daemons in the same clique
 	//
-	// Note(JP): wo we need to apply this type of filtering also in the logic
+	// Note(JP): do we need to apply this type of filtering also in the logic
 	// that checks if an IMEX daemon restart is required?
-	for _, node := range nodes {
-		if node.CliqueID == cliqueID {
-			if _, err := fmt.Fprintf(f, "%s\n", node.IPAddress); err != nil {
+	for _, daemon := range daemons {
+		if daemon.CliqueID == cliqueID {
+			if _, err := fmt.Fprintf(f, "%s\n", daemon.IPAddress); err != nil {
 				return fmt.Errorf("failed to write to nodes config file: %w", err)
 			}
 		}
@@ -477,5 +501,34 @@ func logNodesConfig() error {
 		return fmt.Errorf("failed to read nodes config: %w", err)
 	}
 	klog.Infof("Current %s:\n%s", imexDaemonNodesConfigPath, string(content))
+	return nil
+}
+
+// addComputeDomainCliqueLabel adds the compute domain clique label to this daemon pod.
+func addComputeDomainCliqueLabel(ctx context.Context, clientsets pkgflags.ClientSets, flags *Flags) error {
+	patch := map[string]any{
+		"metadata": map[string]any{
+			"labels": map[string]string{
+				computeDomainCliqueLabelKey: flags.cliqueID,
+			},
+		},
+	}
+
+	patchBytes, err := json.Marshal(patch)
+	if err != nil {
+		return fmt.Errorf("failed to marshal patch: %w", err)
+	}
+
+	_, err = clientsets.Core.CoreV1().Pods(flags.podNamespace).Patch(
+		ctx,
+		flags.podName,
+		types.MergePatchType,
+		patchBytes,
+		metav1.PatchOptions{},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to patch pod: %w", err)
+	}
+
 	return nil
 }

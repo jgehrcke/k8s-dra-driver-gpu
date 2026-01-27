@@ -33,6 +33,7 @@ import (
 
 	nvapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
 	"github.com/NVIDIA/k8s-dra-driver-gpu/internal/common"
+	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
 	nvinformers "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/nvidia.com/informers/externalversions"
 )
 
@@ -244,7 +245,7 @@ func (m *ComputeDomainManager) AssertComputeDomainReady(ctx context.Context, cdU
 	}
 
 	// Check if the current node is ready in the ComputeDomain
-	if !m.isCurrentNodeReady(cd) {
+	if !m.isCurrentNodeReady(ctx, cd) {
 		return fmt.Errorf("current node not ready in ComputeDomain")
 	}
 
@@ -252,10 +253,41 @@ func (m *ComputeDomainManager) AssertComputeDomainReady(ctx context.Context, cdU
 }
 
 // isCurrentNodeReady checks if the current node is marked as ready in the ComputeDomain.
-func (m *ComputeDomainManager) isCurrentNodeReady(cd *nvapi.ComputeDomain) bool {
+// When the feature gate is enabled, we check both the clique and the status to ensure
+// that compute domains started before the feature gate was enabled continue to work
+// even after the feature gate is enabled.
+func (m *ComputeDomainManager) isCurrentNodeReady(ctx context.Context, cd *nvapi.ComputeDomain) bool {
+	if featuregates.Enabled(featuregates.ComputeDomainCliques) {
+		if m.isCurrentNodeReadyInClique(ctx, cd) {
+			return true
+		}
+	}
+	return m.isCurrentNodeReadyInStatus(cd)
+}
+
+// isCurrentNodeReadyInStatus checks if the current node is marked as ready in the ComputeDomain status.
+func (m *ComputeDomainManager) isCurrentNodeReadyInStatus(cd *nvapi.ComputeDomain) bool {
 	for _, node := range cd.Status.Nodes {
 		if node.Name == m.config.flags.nodeName {
 			return node.Status == nvapi.ComputeDomainStatusReady
+		}
+	}
+	return false
+}
+
+// isCurrentNodeReadyInClique checks if the current node is marked as ready in the ComputeDomainClique.
+func (m *ComputeDomainManager) isCurrentNodeReadyInClique(ctx context.Context, cd *nvapi.ComputeDomain) bool {
+	cliqueName := fmt.Sprintf("%s.%s", cd.UID, m.cliqueID)
+
+	clique, err := m.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomainCliques(m.config.flags.namespace).Get(ctx, cliqueName, metav1.GetOptions{})
+	if err != nil {
+		klog.Errorf("error getting ComputeDomainClique %s: %v", cliqueName, err)
+		return false
+	}
+
+	for _, daemon := range clique.Daemons {
+		if daemon.NodeName == m.config.flags.nodeName {
+			return daemon.Status == nvapi.ComputeDomainStatusReady
 		}
 	}
 	return false

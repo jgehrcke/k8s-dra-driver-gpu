@@ -43,6 +43,10 @@ const (
 
 	// NVMLDeviceHealthCheck allows Device Health Checking using NVML.
 	NVMLDeviceHealthCheck featuregate.Feature = "NVMLDeviceHealthCheck"
+
+	// ComputeDomainCliques enables using ComputeDomainClique CRD objects instead of
+	// storing daemon info directly in ComputeDomainStatus.Nodes.
+	ComputeDomainCliques featuregate.Feature = "ComputeDomainCliques"
 )
 
 // defaultFeatureGates contains the default settings for all project-specific feature gates.
@@ -78,6 +82,13 @@ var defaultFeatureGates = map[featuregate.Feature]featuregate.VersionedSpecs{
 	},
 
 	NVMLDeviceHealthCheck: {
+		{
+			Default:    false,
+			PreRelease: featuregate.Alpha,
+			Version:    version.MajorMinor(25, 12),
+		},
+	},
+	ComputeDomainCliques: {
 		{
 			Default:    false,
 			PreRelease: featuregate.Alpha,
