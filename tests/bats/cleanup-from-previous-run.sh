@@ -60,11 +60,15 @@ timeout -v 5 kubectl delete -f demo/specs/imex/nvbandwidth-test-job-2.yaml 2> /d
 timeout -v 5 kubectl delete -f tests/bats/specs/nvb2.yaml 2> /dev/null
 timeout -v 2 kubectl delete resourceclaim batssuite-rc-bad-opaque-config --force 2> /dev/null
 timeout -v 2 kubectl delete -f demo/specs/imex/simple-mig-test 2> /dev/null
+timeout -v 5 kubectl delete -f tests/bats/specs/gpu-anymig.yaml 2> /dev/null
+
 timeout -v 10 kubectl delete pods -l 'env=batssuite' 2> /dev/null
 
 # Cleanup any GPU stress test pods left behind
 timeout -v 30 kubectl delete pods -l 'env=batssuite,test=stress-shared' 2> /dev/null
 timeout -v 5 kubectl delete -f tests/bats/specs/rc-shared-gpu.yaml 2> /dev/null
+
+
 kubectl wait --for=delete pods -l 'env=batssuite,test=stress-shared' \
     --timeout=60s \
     || echo "wait-for-delete failed"

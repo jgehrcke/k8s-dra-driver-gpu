@@ -346,6 +346,7 @@ func (d *driver) publishResources(ctx context.Context, config *Config) error {
 	// Enumerate the set of GPU, MIG and VFIO devices and publish them
 	var resourceSlice resourceslice.Slice
 	for _, device := range d.state.allocatable {
+		klog.V(4).Infof("About to announce device %s", device.GetDevice().Name)
 		resourceSlice.Devices = append(resourceSlice.Devices, device.GetDevice())
 	}
 
