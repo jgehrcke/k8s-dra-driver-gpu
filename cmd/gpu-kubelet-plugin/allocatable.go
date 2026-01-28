@@ -258,7 +258,9 @@ func (d *AllocatableDevice) CanonicalName() string {
 	switch d.Type() {
 	case GpuDeviceType:
 		return d.Gpu.CanonicalName()
-	case MigDeviceType:
+	case MigStaticDeviceType:
+		return d.Mig.CanonicalName()
+	case MigDynamicDeviceType:
 		return d.Mig.CanonicalName()
 	case VfioDeviceType:
 		return d.Vfio.CanonicalName()
@@ -270,8 +272,8 @@ func (d *AllocatableDevice) GetDevice() resourceapi.Device {
 	switch d.Type() {
 	case GpuDeviceType:
 		return d.Gpu.GetDevice()
-	// TODO: use new type for _concrete_ MIG device.
-	case MigDeviceType:
+	// Concrete MIG device, pre-created (not managed by dynamic MIG feature)
+	case MigStaticDeviceType:
 		return d.MigConcrete.GetDevice()
 	case VfioDeviceType:
 		return d.Vfio.GetDevice()
@@ -279,11 +281,16 @@ func (d *AllocatableDevice) GetDevice() resourceapi.Device {
 	panic("unexpected type for AllocatableDevice")
 }
 
+// A variant of the legacy `GetDevice()`, for the PartitionableDevices paradigm.
 func (d *AllocatableDevice) PartGetDevice() resourceapi.Device {
 	switch d.Type() {
 	case GpuDeviceType:
 		return d.Gpu.PartGetDevice()
-	case MigDeviceType:
+	case MigStaticDeviceType:
+		panic("PartGetDevice() called for MigStaticDeviceType")
+	case MigDynamicDeviceType:
+		// TODO: this lookup should not be `d.Mig` but `d.MigAbstract` or
+		// something like that.
 		return d.Mig.PartGetDevice()
 	case VfioDeviceType:
 		panic("not yet implemented")
@@ -320,10 +327,13 @@ func (d AllocatableDevices) getDevicesByGPUPCIBusID(pcieBusID string) Allocatabl
 			if device.Gpu.pcieBusID == pcieBusID {
 				devices = append(devices, device)
 			}
-		case MigDeviceType:
+		case MigStaticDeviceType:
 			if device.Mig.Parent.pcieBusID == pcieBusID {
 				devices = append(devices, device)
 			}
+		case MigDynamicDeviceType:
+			// TODO: also inspect parent
+			continue
 		case VfioDeviceType:
 			if device.Vfio.pcieBusID == pcieBusID {
 				devices = append(devices, device)
@@ -355,15 +365,15 @@ func (d AllocatableDevices) GetGPUs() AllocatableDeviceList {
 	return devices
 }
 
-func (d AllocatableDevices) GetMigDevices() AllocatableDeviceList {
-	var devices AllocatableDeviceList
-	for _, device := range d {
-		if device.Type() == MigDeviceType {
-			devices = append(devices, device)
-		}
-	}
-	return devices
-}
+// func (d AllocatableDevices) GetMigDevices() AllocatableDeviceList {
+// 	var devices AllocatableDeviceList
+// 	for _, device := range d {
+// 		if device.Type() == MigDeviceType {
+// 			devices = append(devices, device)
+// 		}
+// 	}
+// 	return devices
+// }
 
 func (d AllocatableDevices) GetVfioDevices() AllocatableDeviceList {
 	var devices AllocatableDeviceList
@@ -386,15 +396,17 @@ func (d AllocatableDevices) GpuUUIDs() []string {
 	return uuids
 }
 
+// TODO: document the relevance of this method -- where are these names used,
+// what are guarantees about them? How does this relate to the UUID concept?
 func (d AllocatableDevices) PossibleMigDeviceNames() []string {
-	var uuids []string
+	var names []string
 	for _, device := range d {
-		if device.Type() == MigDeviceType {
-			uuids = append(uuids, device.Mig.CanonicalName())
+		if device.Type() == MigStaticDeviceType || device.Type() == MigDynamicDeviceType {
+			names = append(names, device.Mig.CanonicalName())
 		}
 	}
-	slices.Sort(uuids)
-	return uuids
+	slices.Sort(names)
+	return names
 }
 
 func (d AllocatableDevices) VfioDeviceUUIDs() []string {
@@ -475,8 +487,11 @@ func (d AllocatableDevices) RemoveSiblingDevices(device *AllocatableDevice) {
 		pciBusID = device.Gpu.pcieBusID
 	case VfioDeviceType:
 		pciBusID = device.Vfio.pcieBusID
-	case MigDeviceType:
+	case MigStaticDeviceType:
 		// TODO: Implement once dynamic MIG is supported.
+		return
+	case MigDynamicDeviceType:
+		// TODO
 		return
 	}
 
@@ -490,8 +505,11 @@ func (d AllocatableDevices) RemoveSiblingDevices(device *AllocatableDevice) {
 			delete(d, sibling.Gpu.CanonicalName())
 		case VfioDeviceType:
 			delete(d, sibling.Vfio.CanonicalName())
-		case MigDeviceType:
-			// TODO: Implement once dynamic MIG is supported.
+		case MigStaticDeviceType:
+			// TODO
+			continue
+		case MigDynamicDeviceType:
+			// TODO
 			continue
 		}
 	}
@@ -501,9 +519,13 @@ func (d *AllocatableDevice) IsHealthy() bool {
 	switch d.Type() {
 	case GpuDeviceType:
 		return d.Gpu.Health == Healthy
-	// TODO: distinguish concrete vs. abstract MIG device
-	case MigDeviceType:
-		//return d.Mig.Health == Healthy
+	case MigStaticDeviceType:
+		// TODO: review -- what about the parent?
+		return d.Mig.Health == Healthy
+	case MigDynamicDeviceType:
+		// TODO. For now, pretend health -- this device maybe hasn't manifested
+		// yet. Or has it? We could adopt the health status of the parent, but
+		// that's also not meaningful I think.
 		return true
 	}
 	panic("unexpected type for AllocatableDevice")

@@ -24,10 +24,13 @@ import (
 )
 
 const (
-	GpuDeviceType     = "gpu"
-	MigDeviceType     = "mig"
-	VfioDeviceType    = "vfio"
-	UnknownDeviceType = "unknown"
+	GpuDeviceType = "gpu"
+	// Allocatable MIG device which is managed out-of-band.
+	MigStaticDeviceType = "migstatic"
+	// Allocatable MIG device which is manged by us.
+	MigDynamicDeviceType = "migdyn"
+	VfioDeviceType       = "vfio"
+	UnknownDeviceType    = "unknown"
 )
 
 type UUIDProvider interface {
