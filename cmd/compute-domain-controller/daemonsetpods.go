@@ -86,7 +86,7 @@ func NewDaemonSetPodManager(config *ManagerConfig, getComputeDomain GetComputeDo
 	}
 
 	if featuregates.Enabled(featuregates.ComputeDomainCliques) {
-		m.cliqueManager = NewComputeDomainCliqueManager(config, getComputeDomain, listComputeDomains, updateComputeDomainStatus)
+		m.cliqueManager = NewComputeDomainCliqueManager(config, listComputeDomains, updateComputeDomainStatus)
 	}
 
 	return m
@@ -249,15 +249,16 @@ func (m *DaemonSetPodManager) onPodDelete(ctx context.Context, obj any) error {
 		return nil
 	}
 
-	// Always remove from status
-	if err := m.removeNodeFromComputeDomainStatus(ctx, p, cd); err != nil {
-		return fmt.Errorf("error removing node from ComputeDomain status: %w", err)
-	}
-
-	// Additionally remove from clique if feature gate is enabled
 	if m.cliqueManager != nil {
+		// When ComputeDomainCliques feature gate is enabled, remove from clique
+		// and let the periodic sync update the CD status.
 		if err := m.removeDaemonInfoFromClique(ctx, p, cd); err != nil {
 			return fmt.Errorf("error removing daemon info from clique: %w", err)
+		}
+	} else {
+		// When feature gate is disabled, directly update CD status.
+		if err := m.removeNodeFromComputeDomainStatus(ctx, p, cd); err != nil {
+			return fmt.Errorf("error removing node from ComputeDomain status: %w", err)
 		}
 	}
 

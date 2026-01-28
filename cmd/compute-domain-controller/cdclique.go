@@ -33,8 +33,13 @@ import (
 	nvlisters "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/nvidia.com/listers/resource/v1beta1"
 )
 
+const (
+	// cdStatusSyncInterval is how often to sync clique info to CD status.
+	cdStatusSyncInterval = 2 * time.Second
+)
+
 // ComputeDomainCliqueManager manages ComputeDomainClique objects, providing
-// Get/Update methods and periodic cleanup of stale entries.
+// Get/List/Update methods for clique access and periodic sync to CD status.
 type ComputeDomainCliqueManager struct {
 	config        *ManagerConfig
 	waitGroup     sync.WaitGroup
@@ -45,13 +50,12 @@ type ComputeDomainCliqueManager struct {
 	lister        nvlisters.ComputeDomainCliqueLister
 	mutationCache cache.MutationCache
 
-	getComputeDomain          GetComputeDomainFunc
 	listComputeDomains        ListComputeDomainsFunc
 	updateComputeDomainStatus UpdateComputeDomainStatusFunc
 }
 
 // NewComputeDomainCliqueManager creates a new ComputeDomainCliqueManager.
-func NewComputeDomainCliqueManager(config *ManagerConfig, getComputeDomain GetComputeDomainFunc, listComputeDomains ListComputeDomainsFunc, updateComputeDomainStatus UpdateComputeDomainStatusFunc) *ComputeDomainCliqueManager {
+func NewComputeDomainCliqueManager(config *ManagerConfig, listComputeDomains ListComputeDomainsFunc, updateComputeDomainStatus UpdateComputeDomainStatusFunc) *ComputeDomainCliqueManager {
 	factory := nvinformers.NewSharedInformerFactoryWithOptions(
 		config.clientsets.Nvidia,
 		informerResyncPeriod,
@@ -65,7 +69,6 @@ func NewComputeDomainCliqueManager(config *ManagerConfig, getComputeDomain GetCo
 		factory:                   factory,
 		informer:                  informer,
 		lister:                    lister,
-		getComputeDomain:          getComputeDomain,
 		listComputeDomains:        listComputeDomains,
 		updateComputeDomainStatus: updateComputeDomainStatus,
 	}
@@ -95,22 +98,6 @@ func (m *ComputeDomainCliqueManager) Start(ctx context.Context) (rerr error) {
 		true,
 	)
 
-	// Add event handlers to update CD status when cliques change
-	_, err := m.informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj any) {
-			m.config.workQueue.Enqueue(obj, m.onAddOrUpdate)
-		},
-		UpdateFunc: func(oldObj, newObj any) {
-			m.config.workQueue.Enqueue(newObj, m.onAddOrUpdate)
-		},
-		DeleteFunc: func(obj any) {
-			m.config.workQueue.Enqueue(obj, m.onDelete)
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("error adding event handlers for ComputeDomainClique informer: %w", err)
-	}
-
 	m.waitGroup.Add(1)
 	go func() {
 		defer m.waitGroup.Done()
@@ -121,11 +108,15 @@ func (m *ComputeDomainCliqueManager) Start(ctx context.Context) (rerr error) {
 		return fmt.Errorf("informer cache sync for ComputeDomainCliques failed")
 	}
 
-	// Start periodic cleanup
+	// Run sync once at startup
+	klog.Info("CDStatusSync: running initial sync")
+	m.syncCDStatus(ctx)
+
+	// Start periodic sync loop
 	m.waitGroup.Add(1)
 	go func() {
 		defer m.waitGroup.Done()
-		m.periodicCleanup(ctx)
+		m.startPeriodicSync(ctx)
 	}()
 
 	return nil
@@ -138,121 +129,6 @@ func (m *ComputeDomainCliqueManager) Stop() error {
 	}
 	m.waitGroup.Wait()
 	return nil
-}
-
-// onAddOrUpdate handles clique add/update events by updating the CD's nodes list.
-func (m *ComputeDomainCliqueManager) onAddOrUpdate(ctx context.Context, obj any) error {
-	clique, ok := obj.(*nvapi.ComputeDomainClique)
-	if !ok {
-		return fmt.Errorf("failed to cast to ComputeDomainClique")
-	}
-
-	cdUID := clique.Labels[computeDomainLabelKey]
-	if cdUID == "" {
-		return nil
-	}
-
-	cliqueID := clique.Labels[computeDomainCliqueLabelKey]
-	if cliqueID == "" {
-		return nil
-	}
-
-	// Re-pull from cache to get the latest version
-	clique = m.Get(cdUID, cliqueID)
-	if clique == nil {
-		return nil
-	}
-
-	return m.updateNodesInCDStatus(ctx, cdUID, cliqueID, clique)
-}
-
-// onDelete handles clique delete events by removing nodes from the CD's nodes list.
-func (m *ComputeDomainCliqueManager) onDelete(ctx context.Context, obj any) error {
-	clique, ok := obj.(*nvapi.ComputeDomainClique)
-	if !ok {
-		return fmt.Errorf("failed to cast to ComputeDomainClique")
-	}
-
-	cdUID := clique.Labels[computeDomainLabelKey]
-	if cdUID == "" {
-		return nil
-	}
-
-	cliqueID := clique.Labels[computeDomainCliqueLabelKey]
-	if cliqueID == "" {
-		return nil
-	}
-
-	return m.updateNodesInCDStatus(ctx, cdUID, cliqueID, nil)
-}
-
-// updateNodesInCDStatus updates the CD's Status.Nodes for a specific clique.
-// If clique is nil, nodes from that clique are removed.
-func (m *ComputeDomainCliqueManager) updateNodesInCDStatus(ctx context.Context, cdUID, cliqueID string, clique *nvapi.ComputeDomainClique) error {
-	cd, err := m.getComputeDomain(cdUID)
-	if err != nil {
-		return fmt.Errorf("error getting ComputeDomain: %w", err)
-	}
-	if cd == nil {
-		return nil
-	}
-
-	newNodes := m.buildUpdatedNodes(cd, cliqueID, clique)
-	if nodesEqual(cd.Status.Nodes, newNodes) {
-		return nil
-	}
-
-	newCD := cd.DeepCopy()
-	newCD.Status.Nodes = newNodes
-	if _, err := m.updateComputeDomainStatus(ctx, newCD); err != nil {
-		return fmt.Errorf("error updating ComputeDomain status: %w", err)
-	}
-
-	klog.V(4).Infof("Updated nodes in ComputeDomain %s/%s: nodes=%d", cd.Namespace, cd.Name, len(newNodes))
-	return nil
-}
-
-// buildUpdatedNodes builds an updated nodes list with nodes from the given clique added/updated/removed.
-func (m *ComputeDomainCliqueManager) buildUpdatedNodes(cd *nvapi.ComputeDomain, cliqueID string, clique *nvapi.ComputeDomainClique) []*nvapi.ComputeDomainNode {
-	var result []*nvapi.ComputeDomainNode
-
-	// Keep nodes from other cliques
-	for _, node := range cd.Status.Nodes {
-		if node.CliqueID != cliqueID {
-			result = append(result, node)
-		}
-	}
-
-	// Return early if this is a delete
-	if clique == nil {
-		return result
-	}
-
-	// Add nodes from this clique
-	for _, daemon := range clique.Daemons {
-		result = append(result, &nvapi.ComputeDomainNode{
-			Name:      daemon.NodeName,
-			IPAddress: daemon.IPAddress,
-			CliqueID:  daemon.CliqueID,
-			Index:     daemon.Index,
-			Status:    daemon.Status,
-		})
-	}
-
-	return result
-}
-
-// nodesEqual checks if two slices of ComputeDomainNode are equal.
-func nodesEqual(a, b []*nvapi.ComputeDomainNode) bool {
-	aMap := make(map[string]nvapi.ComputeDomainNode)
-	for _, node := range a {
-		aMap[node.Name] = *node
-	}
-	bMap := make(map[string]nvapi.ComputeDomainNode)
-	for _, node := range b {
-		bMap[node.Name] = *node
-	}
-	return maps.Equal(aMap, bMap)
 }
 
 // Get returns the ComputeDomainClique for the given ComputeDomain UID and clique ID.
@@ -320,95 +196,100 @@ func filterOutDaemonByNodeName(daemons []*nvapi.ComputeDomainDaemonInfo, nodeNam
 	return result
 }
 
-// periodicCleanup runs cleanup periodically.
-func (m *ComputeDomainCliqueManager) periodicCleanup(ctx context.Context) {
-	ticker := time.NewTicker(cleanupInterval)
+// startPeriodicSync runs the sync every cdStatusSyncInterval.
+func (m *ComputeDomainCliqueManager) startPeriodicSync(ctx context.Context) {
+	ticker := time.NewTicker(cdStatusSyncInterval)
 	defer ticker.Stop()
-
-	// Run cleanup once at startup
-	m.cleanup(ctx)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			klog.V(6).Infof("Running periodic cleanup for ComputeDomainClique entries")
-			m.cleanup(ctx)
+			m.syncCDStatus(ctx)
 		}
 	}
 }
 
-// getCliquesByCD returns a map of cliques grouped by ComputeDomain UID.
-func (m *ComputeDomainCliqueManager) getCliquesByCD() (map[string]map[string]*nvapi.ComputeDomainClique, error) {
-	cliqueList, err := m.List()
-	if err != nil {
-		return nil, err
-	}
-
-	cliques := make(map[string]map[string]*nvapi.ComputeDomainClique)
-	for _, clique := range cliqueList {
-		cdUID := clique.Labels[computeDomainLabelKey]
-		cliqueID := clique.Labels[computeDomainCliqueLabelKey]
-		if cdUID == "" || cliqueID == "" {
-			continue
-		}
-
-		if cliques[cdUID] == nil {
-			cliques[cdUID] = make(map[string]*nvapi.ComputeDomainClique)
-		}
-		cliques[cdUID][cliqueID] = clique
-	}
-	return cliques, nil
-}
-
-// getNodesByCD returns a map of clique IDs that have nodes in each CD's Status.Nodes.
-func (m *ComputeDomainCliqueManager) getNodesByCD() (map[string]map[string]struct{}, error) {
+// syncCDStatus synchronizes clique information to all ComputeDomain statuses.
+func (m *ComputeDomainCliqueManager) syncCDStatus(ctx context.Context) {
 	cds, err := m.listComputeDomains()
 	if err != nil {
-		return nil, err
+		klog.Errorf("CDStatusSync: error listing ComputeDomains: %v", err)
+		return
 	}
 
-	nodes := make(map[string]map[string]struct{})
+	cliques, err := m.List()
+	if err != nil {
+		klog.Errorf("CDStatusSync: error listing cliques: %v", err)
+		return
+	}
+
+	// Group cliques by CD UID
+	cliquesByCD := make(map[string][]*nvapi.ComputeDomainClique)
+	for _, clique := range cliques {
+		cdUID := clique.Labels[computeDomainLabelKey]
+		if cdUID == "" {
+			continue
+		}
+		cliquesByCD[cdUID] = append(cliquesByCD[cdUID], clique)
+	}
+
+	// Sync each CD
 	for _, cd := range cds {
-		cdUID := string(cd.UID)
-		for _, node := range cd.Status.Nodes {
-			if nodes[cdUID] == nil {
-				nodes[cdUID] = make(map[string]struct{})
-			}
-			nodes[cdUID][node.CliqueID] = struct{}{}
-		}
+		m.syncCD(ctx, cd, cliquesByCD[string(cd.UID)])
 	}
-	return nodes, nil
 }
 
-// cleanup removes stale CD status entries for cliques that no longer exist.
-func (m *ComputeDomainCliqueManager) cleanup(ctx context.Context) {
-	cliques, err := m.getCliquesByCD()
-	if err != nil {
-		klog.Errorf("CliqueCleanup: error getting cliques: %v", err)
+// syncCD synchronizes clique information to a single ComputeDomain's status.
+func (m *ComputeDomainCliqueManager) syncCD(ctx context.Context, cd *nvapi.ComputeDomain, cliques []*nvapi.ComputeDomainClique) {
+	// Build the expected nodes list from cliques
+	newNodes := m.buildNodesFromCliques(cliques)
+
+	// Check if update is needed
+	if nodesEqual(cd.Status.Nodes, newNodes) {
 		return
 	}
 
-	nodes, err := m.getNodesByCD()
-	if err != nil {
-		klog.Errorf("CliqueCleanup: error getting nodes: %v", err)
+	klog.V(6).Infof("CDStatusSync: syncing ComputeDomain %s/%s", cd.Namespace, cd.Name)
+
+	// Update status
+	newCD := cd.DeepCopy()
+	newCD.Status.Nodes = newNodes
+	if _, err := m.updateComputeDomainStatus(ctx, newCD); err != nil {
+		klog.Errorf("CDStatusSync: error updating ComputeDomain %s status: %v", cd.Name, err)
 		return
 	}
 
-	m.cleanupOrphanedCliquesInNodes(ctx, cliques, nodes)
+	klog.V(4).Infof("CDStatusSync: updated nodes in ComputeDomain %s/%s: nodes=%d", cd.Namespace, cd.Name, len(newNodes))
 }
 
-// cleanupOrphanedCliquesInNodes removes Status.Nodes entries whose cliques no longer exist.
-func (m *ComputeDomainCliqueManager) cleanupOrphanedCliquesInNodes(ctx context.Context, cliques map[string]map[string]*nvapi.ComputeDomainClique, nodes map[string]map[string]struct{}) {
-	for cdUID, cliqueIDs := range nodes {
-		for cliqueID := range cliqueIDs {
-			if _, exists := cliques[cdUID][cliqueID]; exists {
-				continue
-			}
-			if err := m.updateNodesInCDStatus(ctx, cdUID, cliqueID, nil); err != nil {
-				klog.Errorf("CliqueCleanup: error removing orphaned nodes for clique %s: %v", cliqueID, err)
-			}
+// buildNodesFromCliques builds a nodes list from all cliques.
+func (m *ComputeDomainCliqueManager) buildNodesFromCliques(cliques []*nvapi.ComputeDomainClique) []*nvapi.ComputeDomainNode {
+	var result []*nvapi.ComputeDomainNode
+	for _, clique := range cliques {
+		for _, daemon := range clique.Daemons {
+			result = append(result, &nvapi.ComputeDomainNode{
+				Name:      daemon.NodeName,
+				IPAddress: daemon.IPAddress,
+				CliqueID:  daemon.CliqueID,
+				Index:     daemon.Index,
+				Status:    daemon.Status,
+			})
 		}
 	}
+	return result
+}
+
+// nodesEqual checks if two slices of ComputeDomainNode are equal.
+func nodesEqual(a, b []*nvapi.ComputeDomainNode) bool {
+	aMap := make(map[string]nvapi.ComputeDomainNode)
+	for _, node := range a {
+		aMap[node.Name] = *node
+	}
+	bMap := make(map[string]nvapi.ComputeDomainNode)
+	for _, node := range b {
+		bMap[node.Name] = *node
+	}
+	return maps.Equal(aMap, bMap)
 }
