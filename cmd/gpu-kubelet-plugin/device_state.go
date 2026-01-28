@@ -58,15 +58,15 @@ type DeviceState struct {
 	allocatable    AllocatableDevices
 	config         *Config
 
-	// Same set of allocatable devices as stored in `allocatable`, but grouped
-	// by physical GPU. This is useful for grouped announcement (e.g., when
-	// announcing one ResourceSlice per physical GPU).
+	// Same set of allocatable devices as stored in `allocatable` (abovee), but
+	// grouped by physical GPU. This is useful for grouped announcement (e.g.,
+	// when announcing one ResourceSlice per physical GPU).
 	perGPUAllocatable PerGPUMinorAllocatableDevices
 
 	nvdevlib          *deviceLib
 	checkpointManager checkpointmanager.CheckpointManager
-	// Checkpoint read/write lock, file-based for multi-process synchronization.
 
+	// Checkpoint read/write lock, file-based for multi-process synchronization.
 	cplock *flock.Flock
 }
 
@@ -276,9 +276,11 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 	return preparedDevices.GetDevices(), nil
 }
 
-// Quick&dirty; call me only once during startup for now -- before starting the
-// driver logic (before accepting requests from the kubelet). This needs to be
-// thought through properly.
+// Expected to be called once during startup, before starting the driver logic
+// (before accepting requests from the kubelet). This is critical cleanup in the
+// sense that it is important and at the same time dangerous -- if done wrongly,
+// it may affect workload negatively. Here, we as always rely on the checkpoint
+// state to be the source of truth.
 func (s *DeviceState) DestroyUnknownMIGDevices(ctx context.Context) {
 	logpfx := "Destroy unknown MIG devices"
 	cp, err := s.getCheckpoint(ctx)
@@ -288,7 +290,7 @@ func (s *DeviceState) DestroyUnknownMIGDevices(ctx context.Context) {
 	}
 
 	// Get checkpointed claims in PrepareCompleted state (explicitly not
-	// PrepareStarted - those are of course good cleanup candidates in general).
+	// `PrepareStarted` -- we want to think about those separately (TODOMIG)).
 	filtered := make(PreparedClaimsByUIDV2)
 	for uid, claim := range cp.V2.PreparedClaims {
 		if claim.CheckpointState == ClaimCheckpointStatePrepareCompleted {
@@ -298,10 +300,13 @@ func (s *DeviceState) DestroyUnknownMIGDevices(ctx context.Context) {
 
 	var expectedDeviceNames []DeviceName
 	for _, cpclaim := range filtered {
+		// Rely on the full structure having been written out
 		expectedDeviceNames = append(expectedDeviceNames, cpclaim.Status.Allocation.Devices.Results[0].Device)
 	}
 
 	if err := s.nvdevlib.obliterateStaleMIGDevices(expectedDeviceNames); err != nil {
+		// For now, let this be best-effort. Proceed with the program, do not
+		// crash it.
 		klog.Errorf("%s: obliterateStaleMIGDevices failed: %s", logpfx, err)
 	}
 

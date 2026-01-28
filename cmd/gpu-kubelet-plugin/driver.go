@@ -65,7 +65,7 @@ func NewDriver(ctx context.Context, config *Config) (*driver, error) {
 	}
 
 	// Could be done in NewDeviceState, but I want to make sure that the
-	// checkpoint logic is intact -- that's most obvious here.
+	// checkpoint machinery is ready to use -- that's more obvious here.
 	if featuregates.Enabled(featuregates.DynamicMIG) {
 		state.DestroyUnknownMIGDevices(ctx)
 	}
