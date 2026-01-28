@@ -831,6 +831,7 @@ func (s *DeviceState) applySharingConfig(ctx context.Context, config configapi.S
 
 	// Apply time-slicing settings (if available and feature gate enabled).
 	if featuregates.Enabled(featuregates.TimeSlicingSettings) && config.IsTimeSlicing() {
+		//TODOMIG: re-enable!
 		// tsc, err := config.GetTimeSlicingConfig()
 		// if err != nil {
 		// 	return nil, fmt.Errorf("error getting timeslice config for requests '%v' in claim '%v': %w", requests, claim.UID, err)

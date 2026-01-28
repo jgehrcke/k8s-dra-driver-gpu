@@ -261,10 +261,8 @@ func getDevicePlacementMap(allocatable AllocatableDevices) devicePlacementMap {
 
 			// TODO: make this work for concrete vs. abstract MIG device
 			// for the abstract MIG device, gi and ci ID are unknown.
-			//giID = d.Mig.giInfo.Id
-			//ciID = d.Mig.ciInfo.Id
-			giID = 2
-			ciID = 3
+			giID = d.MigStatic.gIInfo.Id
+			ciID = d.MigStatic.gIInfo.Id
 
 		default:
 			klog.V(6).Infof("Skipping device with unknown type: %s", d.Type())

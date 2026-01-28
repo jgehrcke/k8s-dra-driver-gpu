@@ -273,12 +273,6 @@ func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.Res
 		}
 	}
 
-	// Note(JP): below was added for vfio -- TODO: review, clarify
-	// if err = d.publishResources(ctx, d.state.config); err != nil {
-	// 	return kubeletplugin.PrepareResult{
-	// 		Err: fmt.Errorf("error preparing devices for claim %v: %w", claim.UID, err),
-	// 	}
-	// }
 	if featuregates.Enabled(featuregates.PassthroughSupport) {
 		// Re-advertise updated resourceslice after preparing devices.
 		if err = d.publishResources(ctx, d.state.config); err != nil {

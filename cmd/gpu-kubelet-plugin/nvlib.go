@@ -17,14 +17,11 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -64,41 +61,6 @@ type nvcapDeviceInfo struct {
 	path   string
 }
 
-// MIG minors are predictable, and can be looked up:
-//
-// cat /proc/driver/nvidia-caps/mig-minors
-//
-// ...
-// gpu0/gi0/access 3
-// gpu0/gi0/ci0/access 4
-// gpu0/gi0/ci1/access 5
-// gpu0/gi0/ci2/access 6
-// ...
-// gpu3/gi3/ci3/access 439
-// gpu3/gi3/ci4/access 440
-// gpu3/gi3/ci5/access 441
-// ...
-// gpu6/gi11/ci5/access 918
-// gpu6/gi11/ci6/access 919
-// gpu6/gi11/ci7/access 920
-//
-// func getNVCapDevNodeInfoForMigMinor(migminor int) (*nvcapDeviceInfo, error) {
-// 	major, err := getDeviceMajor(nvidiaCapsDeviceName)
-// 	if err != nil {
-// 		return nil, fmt.Errorf("error getting device major: %w", err)
-// 	}
-
-// 	info := &nvcapDeviceInfo{
-// 		major:  major,
-// 		minor:  migminor,
-// 		mode:   0666,
-// 		modify: 0,
-// 		path:   fmt.Sprintf("/dev/nvidia-caps/nvidia-cap%d", migminor),
-// 	}
-
-// 	return info, nil
-// }
-
 func newDeviceLib(driverRoot root) (*deviceLib, error) {
 	driverLibraryPath, err := driverRoot.getDriverLibraryPath()
 	if err != nil {
@@ -117,8 +79,6 @@ func newDeviceLib(driverRoot root) (*deviceLib, error) {
 	)
 	nvpci := nvpci.New()
 
-	//nvmllib.nvsandboxutilslib
-
 	d := deviceLib{
 		Interface:         nvdev.New(nvmllib),
 		nvmllib:           nvmllib,
@@ -130,8 +90,6 @@ func newDeviceLib(driverRoot root) (*deviceLib, error) {
 		devhandleByUUID:   make(map[string]nvml.Device),
 	}
 
-	// Populate `l.gpuInfosByUUID`.
-	//d.VisitAllDevices()
 	if err := d.Init(); err != nil {
 		return nil, fmt.Errorf("failed to initialize NVML: %w", err)
 	}
@@ -219,6 +177,7 @@ func (l deviceLib) enumerateAllPossibleDevices(config *Config) (AllocatableDevic
 		return nil, nil, fmt.Errorf("error enumerating allocatable devices: %w", err)
 	}
 
+	//TODOMIG -- fix code below, and un-outcomment!
 	// if featuregates.Enabled(featuregates.PassthroughSupport) {
 	// 	passthroughDevices, err := l.enumerateGpuPciDevices(config, gms)
 	// 	if err != nil {
@@ -239,32 +198,8 @@ func (l deviceLib) enumerateAllPossibleDevices(config *Config) (AllocatableDevic
 	return all, perGPUAllocatable, nil
 }
 
-// PerGpuAllocatableDevices holds the list of allocatable devices per GPU.
-// QQ(JP): what's the int-index good for/
-
 type GPUMinor = int
 type PerGPUMinorAllocatableDevices map[GPUMinor]AllocatableDevices
-
-// Discover all (physical, full) GPUs. Assume that the result does not change at
-// runtime. Populate `l.gpuInfosByUUID`.
-// func (l deviceLib) VisitAllDevices() {
-// 	if err := l.Init(); err != nil {
-// 		return nil, err
-// 	}
-// 	defer l.alwaysShutdown()
-
-// 	err := l.VisitDevices(func(i int, d nvdev.Device) error {
-// 		gpuInfo, err := l.getGpuInfo(i, d)
-// 		if err != nil {
-// 			return fmt.Errorf("error getting info for GPU %v: %w", i, err)
-// 		}
-
-// 		return nil
-// 	})
-// 	if err != nil {
-// 		return nil, fmt.Errorf("error visiting devices: %w", err)
-// 	}
-// }
 
 // GetPerGpuAllocatableDevices is called once upon driver startup. It gets the
 // set of allocatable devices using NVDeviceLib.  A list of GPU indices can be
@@ -411,6 +346,8 @@ func (l deviceLib) discoverGPUByPCIBusID(pcieBusID string) (*AllocatableDevice, 
 		if err != nil {
 			return fmt.Errorf("error getting info for GPU %d: %w", i, err)
 		}
+
+		//TODOMIG: fix code below, un-outcomment.
 		// migs, err = l.discoverMigDevicesByGPU(gpuInfo)
 		// if err != nil {
 		// 	return fmt.Errorf("error discovering MIG devices for GPU %q: %w", gpuInfo.CanonicalName(), err)
@@ -490,46 +427,6 @@ func (l deviceLib) obliterateStaleMIGDevices(expectedDeviceNames []DeviceName) e
 	}
 	return nil
 }
-
-// This enumerates full GPUs and currently (statically) configured MIG devices
-// func (l deviceLib) enumerateGpusAndMigDevices(config *Config) (AllocatableDevices, error) {
-// 	if err := l.Init(); err != nil {
-// 		return nil, err
-// 	}
-// 	defer l.alwaysShutdown()
-
-// 	devices := make(AllocatableDevices)
-// 	err := l.VisitDevices(func(i int, d nvdev.Device) error {
-// 		gpuInfo, err := l.getGpuInfo(i, d)
-// 		if err != nil {
-// 			return fmt.Errorf("error getting info for GPU %d: %w", i, err)
-// 		}
-
-// 		deviceInfo := &AllocatableDevice{
-// 			Gpu: gpuInfo,
-// 		}
-// 		devices[gpuInfo.CanonicalName()] = deviceInfo
-
-// 		migs, err := l.getMigDevices(gpuInfo)
-// 		if err != nil {
-// 			return fmt.Errorf("error getting MIG devices for GPU %d: %w", i, err)
-// 		}
-
-// 		for _, migDeviceInfo := range migs {
-// 			deviceInfo := &AllocatableDevice{
-// 				Mig: migDeviceInfo,
-// 			}
-// 			devices[migDeviceInfo.CanonicalName()] = deviceInfo
-// 		}
-
-// 		return nil
-// 	})
-// 	if err != nil {
-// 		return nil, fmt.Errorf("error visiting devices: %w", err)
-// 	}
-
-// 	return devices, nil
-// }
 
 func (l deviceLib) getGpuInfo(index int, device nvdev.Device) (*GpuInfo, error) {
 	minor, ret := device.GetMinorNumber()
@@ -726,12 +623,6 @@ func (l deviceLib) getMigDevices(gpuInfo *GpuInfo) (map[string]*MigDeviceInfo, e
 		return nil, nil
 	}
 
-	// if err := l.Init(); err != nil {
-	// 	return nil, err
-	// }
-	// defer l.alwaysShutdown()
-
-	//device, ret := l.nvmllib.DeviceGetHandleByUUID(gpuInfo.UUID)
 	device, ret := l.DeviceGetHandleByUUIDCached(gpuInfo.UUID)
 	if ret != nvml.SUCCESS {
 		return nil, fmt.Errorf("error getting GPU device handle: %v", ret)
@@ -1255,96 +1146,4 @@ func setMax(m map[resourceapi.QualifiedName]resourceapi.DeviceCapacity, k resour
 	if cur, ok := m[k]; !ok || v.Value.Value() > cur.Value.Value() {
 		m[k] = v
 	}
-}
-
-// copied straight from CD plugin
-// that for examplex returns 510 when /proc/devices contains
-// 510 nvidia-caps
-func getDeviceMajor(name string) (int, error) {
-
-	re := regexp.MustCompile(
-		// The `(?s)` flag makes `.` match newlines. The greedy modifier in
-		// `.*?` ensures to pick the first match after "Character devices".
-		// Extract the number as capture group (the first and only group).
-		"(?s)Character devices:.*?" +
-			"([0-9]+) " + regexp.QuoteMeta(name) +
-			// Require `name` to be newline-terminated (to not match on a device
-			// that has `name` as prefix).
-			"\n.*Block devices:",
-	)
-
-	data, err := os.ReadFile(procDevicesPath)
-	if err != nil {
-		return -1, fmt.Errorf("error reading '%s': %w", procDevicesPath, err)
-	}
-
-	// Expect precisely one match: first element is the total match, second
-	// element corresponds to first capture group within that match (i.e., the
-	// number of interest).
-	matches := re.FindStringSubmatch(string(data))
-	if len(matches) != 2 {
-		return -1, fmt.Errorf("error parsing '%s': unexpected regex match: %v", procDevicesPath, matches)
-	}
-
-	// Convert capture group content to integer. Perform upper bound check:
-	// value must fit into 32-bit integer (it's then also guaranteed to fit into
-	// a 32-bit unsigned integer, which is the type that must be passed to
-	// unix.Mkdev()).
-	major, err := strconv.ParseInt(matches[1], 10, 32)
-	if err != nil {
-		return -1, fmt.Errorf("int conversion failed for '%v': %w", matches[1], err)
-	}
-
-	// ParseInt() always returns an integer of explicit type `int64`. We have
-	// performed an upper bound check so it's safe to convert this to `int`
-	// (which is documented as "int is a signed integer type that is at least 32
-	// bits in size", so in theory it could be smaller than int64).
-	return int(major), nil
-}
-
-func parseNVCapDeviceInfo(nvcapsFilePath string) (*nvcapDeviceInfo, error) {
-	// klog.V(6).Infof("Parse %s", nvcapsFilePath)
-
-	file, err := os.Open(nvcapsFilePath)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	info := &nvcapDeviceInfo{}
-
-	major, err := getDeviceMajor(nvidiaCapsDeviceName)
-	if err != nil {
-		return nil, fmt.Errorf("error getting device major: %w", err)
-	}
-
-	klog.V(7).Infof("Got major for %s: %d", nvidiaCapsDeviceName, major)
-	info.major = major
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
-
-		switch key {
-		case "DeviceFileMinor":
-			_, _ = fmt.Sscanf(value, "%d", &info.minor)
-		case "DeviceFileMode":
-			_, _ = fmt.Sscanf(value, "%d", &info.mode)
-		case "DeviceFileModify":
-			_, _ = fmt.Sscanf(value, "%d", &info.modify)
-		}
-	}
-	info.path = fmt.Sprintf("/dev/nvidia-caps/nvidia-cap%d", info.minor)
-
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-
-	return info, nil
 }

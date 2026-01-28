@@ -153,16 +153,6 @@ func (cdi *CDIHandler) GetCommonEditsCached() (*cdiapi.ContainerEdits, error) {
 		return &clone, nil
 	}
 
-	// Initialize NVML in order to get the device edits.
-	// if r := cdi.nvml.Init(); r != nvml.SUCCESS {
-	// 	return nil, fmt.Errorf("failed to initialize NVML: %v", r)
-	// }
-	// defer func() {
-	// 	if r := cdi.nvml.Shutdown(); r != nvml.SUCCESS {
-	// 		klog.Warningf("failed to shutdown NVML: %v", r)
-	// 	}
-	// }()
-
 	t0 := time.Now()
 	v, err := cdi.nvcdiClaim.GetCommonEdits()
 	klog.V(6).Infof("t_cdi_get_common_edits %.3f s", time.Since(t0).Seconds())
@@ -193,16 +183,6 @@ func (cdi *CDIHandler) GetDeviceSpecsByUUIDCached(uuid string) ([]cdispec.Device
 		copy(clone, devs)
 		return clone, nil
 	}
-
-	// Initialize NVML in order to get the device edits.
-	// if r := cdi.nvml.Init(); r != nvml.SUCCESS {
-	// 	return nil, fmt.Errorf("failed to initialize NVML: %v", r)
-	// }
-	// defer func() {
-	// 	if r := cdi.nvml.Shutdown(); r != nvml.SUCCESS {
-	// 		klog.Warningf("failed to shutdown NVML: %v", r)
-	// 	}
-	// }()
 
 	t0 := time.Now()
 	// This has been called 28 times

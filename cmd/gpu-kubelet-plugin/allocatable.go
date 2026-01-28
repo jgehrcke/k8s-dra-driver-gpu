@@ -50,7 +50,7 @@ type AllocatableDevice struct {
 	Vfio       *VfioDeviceInfo
 }
 
-// TODO(JP): add memory slices?
+// TODOMIG(JP): add memory slices or not?
 //
 // Note(JP): for now, I feel like we may want to keep capacity agnostic to
 // placement. That would imply not announcing specific memory slices as part of
@@ -346,16 +346,6 @@ func (d AllocatableDevices) GetGPUs() AllocatableDeviceList {
 	}
 	return devices
 }
-
-// func (d AllocatableDevices) GetMigDevices() AllocatableDeviceList {
-// 	var devices AllocatableDeviceList
-// 	for _, device := range d {
-// 		if device.Type() == MigDeviceType {
-// 			devices = append(devices, device)
-// 		}
-// 	}
-// 	return devices
-// }
 
 func (d AllocatableDevices) GetVfioDevices() AllocatableDeviceList {
 	var devices AllocatableDeviceList
