@@ -46,12 +46,12 @@ type AllocatableDevices map[DeviceName]*AllocatableDevice
 // This can either be a full GPU or MIG device, but not both.
 type AllocatableDevice struct {
 	Gpu         *GpuInfo
-	Mig         *MigInfo
+	Mig         *MigSpec
 	MigConcrete *MigDeviceInfo
 	Vfio        *VfioDeviceInfo
 }
 
-// MigInfo describes an abstract MIG device with precise specification of parent
+// MigSpec describes an abstract MIG device with precise specification of parent
 // GPU, MIG profile and physcical placement on the parent GPU.
 //
 // Does not necessarily encode a _concrete_ (materialized / created /
@@ -64,14 +64,14 @@ type AllocatableDevice struct {
 //
 // This type is case (3); it leaves no degrees of freedom.
 //
-// TODO(JP): maybe rename to AbstractMigInfo or AbstractMigDevice or MigPP.
+// TODO(JP): maybe rename to AbstractMigSpec or AbstractMigDevice or MigPP.
 // TODO2(JP): clarify how CI id and GI id are not orthogonal to placement. Maybe
 // add a method that translates between the two. I don't think we need to wait
 // for creation to then know the CI ID and GI ID. TODO3(JP): clarify the
 // relevance of the three-tuple of parent,ciid,giid for precisely describing a
 // MIG device, and how that's a fundamental data structure. Maybe define its own
 // type for it, and use it elsewhere.
-type MigInfo struct {
+type MigSpec struct {
 	Parent        *GpuInfo
 	Profile       nvdev.MigProfile
 	GIProfileInfo nvml.GpuInstanceProfileInfo
@@ -79,7 +79,7 @@ type MigInfo struct {
 	MemorySlices nvml.GpuInstancePlacement
 }
 
-func (i *MigInfo) CanonicalName() DeviceName {
+func (i *MigSpec) CanonicalName() DeviceName {
 	return migppCanonicalName(i.Parent.minor, i.Profile.String(), &i.MemorySlices)
 }
 
@@ -124,7 +124,7 @@ func (i *MigInfo) CanonicalName() DeviceName {
 // or API usage flow. It feels like these parts of the resource slice device
 // spec serve a different meaning, and hence allow for different information
 // content. Again, I may miss something.
-func (i MigInfo) PartCapacities() PartCapacityMap {
+func (i MigSpec) PartCapacities() PartCapacityMap {
 	p := i.GIProfileInfo
 	return PartCapacityMap{
 		"multiprocessors": intcap(p.MultiprocessorCount),
@@ -145,7 +145,7 @@ func (i MigInfo) PartCapacities() PartCapacityMap {
 	}
 }
 
-func (i MigInfo) PartAttributes() map[resourceapi.QualifiedName]resourceapi.DeviceAttribute {
+func (i MigSpec) PartAttributes() map[resourceapi.QualifiedName]resourceapi.DeviceAttribute {
 	return map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 		"type": {
 			StringValue: ptr.To(MigDeviceType),
@@ -214,7 +214,7 @@ func capacitiesToCounters(m PartCapacityMap) map[string]resourceapi.Counter {
 // currently, a full GPU has precisely one counter set associated with it, and
 // its name has the form 'gpu-%d-counter-set' where the placeholder is the GPU
 // index (change to UUID)?
-func (i MigInfo) PartConsumesCounters() []resourceapi.DeviceCounterConsumption {
+func (i MigSpec) PartConsumesCounters() []resourceapi.DeviceCounterConsumption {
 	return []resourceapi.DeviceCounterConsumption{{
 		CounterSet: i.Parent.GetSharedCounterSetName(),
 		Counters:   addCountersForMemSlices(capacitiesToCounters(i.PartCapacities()), int(i.MemorySlices.Start), int(i.MemorySlices.Size)),
@@ -231,7 +231,7 @@ func addCountersForMemSlices(counters map[string]resourceapi.Counter, start int,
 	return counters
 }
 
-func (i *MigInfo) PartGetDevice() resourceapi.Device {
+func (i *MigSpec) PartGetDevice() resourceapi.Device {
 	d := resourceapi.Device{
 		Name:             i.CanonicalName(),
 		Attributes:       i.PartAttributes(),

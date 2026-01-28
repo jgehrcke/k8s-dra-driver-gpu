@@ -38,7 +38,7 @@ type PreparedGpu struct {
 
 type PreparedMigDevice struct {
 	// Abstract, allocatable device
-	//Requested *MigInfo `json:"requested"`
+	//Requested *MigSpec `json:"requested"`
 	RequestedCanonicalName DeviceName `json:"requestedCanonicalName"`
 	// Specifc, created device. Detail needed for deletion and book-keeping.
 	Created *MigDeviceInfo        `json:"created"`

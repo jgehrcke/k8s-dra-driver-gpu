@@ -920,7 +920,7 @@ func (l deviceLib) DeviceGetHandleByUUIDCached(uuid string) (nvml.Device, nvml.R
 	return dev, ret
 }
 
-func (l deviceLib) createMigDevice(migpp *MigInfo) (*MigDeviceInfo, error) {
+func (l deviceLib) createMigDevice(migpp *MigSpec) (*MigDeviceInfo, error) {
 	gpu := migpp.Parent
 	profile := migpp.Profile
 	placement := &migpp.MemorySlices
@@ -1173,8 +1173,8 @@ func (l deviceLib) maybeDisableMigMode(uuid string, nvmldev nvml.Device) error {
 // Returns a flat list of all potentially possible incarnated MIG devices.
 // Specifically, it discovers all possible abstract profiles (device types),
 // then determines each specific placement for each profile.
-func (l deviceLib) inspectMigProfilesAndPlacements(gpuInfo *GpuInfo, device nvdev.Device) ([]*MigInfo, error) {
-	var infos []*MigInfo
+func (l deviceLib) inspectMigProfilesAndPlacements(gpuInfo *GpuInfo, device nvdev.Device) ([]*MigSpec, error) {
+	var infos []*MigSpec
 
 	maxCapacities := make(PartCapacityMap)
 	maxMemSlicesConsumed := 0
@@ -1211,7 +1211,7 @@ func (l deviceLib) inspectMigProfilesAndPlacements(gpuInfo *GpuInfo, device nvde
 		}
 
 		for _, giPlacement := range giPlacements {
-			mi := &MigInfo{
+			mi := &MigSpec{
 				Parent:        gpuInfo,
 				Profile:       migProfile,
 				GIProfileInfo: giProfileInfo,
