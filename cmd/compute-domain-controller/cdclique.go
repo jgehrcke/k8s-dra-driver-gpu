@@ -235,10 +235,16 @@ func (m *ComputeDomainCliqueManager) syncCDStatus(ctx context.Context) {
 		cliquesByCD[cdUID] = append(cliquesByCD[cdUID], clique)
 	}
 
-	// Sync each CD
+	// Sync each CD in parallel
+	var wg sync.WaitGroup
 	for _, cd := range cds {
-		m.syncCD(ctx, cd, cliquesByCD[string(cd.UID)])
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m.syncCD(ctx, cd, cliquesByCD[string(cd.UID)])
+		}()
 	}
+	wg.Wait()
 }
 
 // syncCD synchronizes clique information to a single ComputeDomain's status.
