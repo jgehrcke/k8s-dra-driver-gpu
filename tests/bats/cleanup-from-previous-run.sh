@@ -45,7 +45,14 @@ kubectl apply -f "${CRD_URL}"
 # up. Install _a_ version temporarily, towards best-effort. Install
 # to-be-tested-version for now, latest-on-GHCR might be smarter though. Again,
 # this command may fail and in best-effort fashion this cleanup script proceeds.
-iupgrade_wait "${TEST_CHART_REPO}" "${TEST_CHART_VERSION}" NOARGS
+
+set +o nounset
+if [[ -n "$TEST_CHART_VERSION" ]]; then
+    iupgrade_wait "${TEST_CHART_REPO}" "${TEST_CHART_VERSION}" NOARGS
+else
+    echo "TEST_CHART_VERSION is empty, assume one-off standalone execution"
+fi
+set -o nounset
 
 # Some effort to delete workloads potentially left-over from a previous
 # interrupted run. TODO: try to affect all-at-once, maybe with a special label.
