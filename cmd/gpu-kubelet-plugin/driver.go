@@ -126,7 +126,7 @@ func NewDriver(ctx context.Context, config *Config) (*driver, error) {
 }
 
 // GenerateDriverResources() returns the set of DRA ResourceSlices announced by
-// this DRA driver to the system.
+// this DRA driver to the system, using the Partitionable Devices paradigm.
 func (d *driver) GenerateDriverResources(nodeName string) resourceslice.DriverResources {
 	// Note(JP): I first considered model 1, and then implemented model model 2.
 	//
@@ -135,41 +135,36 @@ func (d *driver) GenerateDriverResources(nodeName string) resourceslice.DriverRe
 	// with the full-GPU-device and all potential MIG profile/placement devices.
 	// That model is inspired by KEP 4815 which talks about "require that
 	// ResourceSlice objects can only contain either SharedCounters or Devices".
-	// In practice, that does not seem to be a requirement (yet?); in fact, it
-	// doesn't seem to work to consume from a shared counter _not_ specified in
-	// the same ResourceSlice. Which brings me to model 2.
+	// In practice, that does not work against k8s 1.34. Which brings us to
+	// model 2, for now.
 	//
 	// Model 2) Create G resource slices, given G physical GPUs. Each slice
-	// describes the abstract full device capacity by definining _one_ counter
-	// set as part of `SharedCounters` (there could be 8 counter sets in total,
-	// but try to get away using one). Then, in the same resource slice define
+	// describes the physical full device capacity by definining _one_ counter
+	// set as part of `SharedCounters`. Then, in the same resource slice define
 	// all devices allocatable for that physical GPU. That is, M possible MIG
 	// devices, and 1 device representing the full GPU. Hence:
 	//
 	// - G resource slices
 	// - Each resource slice:
-	//       - Defines `SharedCounters` with 1 counter set
-	//       - Defines M+1 devices
+	//   - Defines `SharedCounters` with 1 counter set
+	//   - Defines M+1 devices
 	//
-	//
-	//
-	// Specific quote from KEP 4815 does does not make sense to be right now:
-	// "The decision to require that ResourceSlice objects can only contain
-	// either SharedCounters or Devices was made to prevent having to enforce
-	// overly strict validation to make sure that ResourceSlice objects can't
-	// exceed the etcd limit."
-
+	// A relevant quote from KEP 4815 does not apply to k8s 1.34: "The decision
+	// to require that ResourceSlice objects can only contain either
+	// SharedCounters or Devices was made to prevent having to enforce overly
+	// strict validation to make sure that ResourceSlice objects can't exceed
+	// the etcd limit."
 	var gpuslices []resourceslice.Slice
 
-	// Iterate through map in predictable order, so that the slices get
-	// published in predictable order.
+	// Iterate through `perGPUAllocatable` map in predictable order so that the
+	// slices get published in predictable order.
 	for _, minor := range slices.Sorted(maps.Keys(d.state.perGPUAllocatable)) {
 		allocatable := d.state.perGPUAllocatable[minor]
 		var slice resourceslice.Slice
 		countersets := []resourceapi.CounterSet{}
 
 		// Stable sort order by devicename -- makes the order of devices
-		// presented in a resource slice predictable. Good for debuggability /
+		// presented in a resource slice reproducible. Good for debuggability /
 		// readability, and leads to a minimal slice diff during kubelet plugin
 		// restart (the slice diff is logged).
 		for _, devname := range slices.Sorted(maps.Keys(allocatable)) {
@@ -329,13 +324,14 @@ func (d *driver) nodeUnprepareResource(ctx context.Context, claimRef kubeletplug
 func (d *driver) publishResources(ctx context.Context, config *Config) error {
 
 	if featuregates.Enabled(featuregates.DynamicMIG) {
-		// Note(JP): from KEP 4815: "we will add client-side validation in the
-		// ResourceSlice controller helper, so that any errors in the ResourceSlices
-		// will be caught before they even are applied to the APIServer" -- the
-		// helper below is being referred to.
+		// From KEP 4815: "we will add client-side validation in the
+		// ResourceSlice controller helper, so that any errors in the
+		// ResourceSlices will be caught before they even are applied to the
+		// APIServer" -- the helper below is being referred to.
 		//
-		// This will be a TODO soon:
+		// TODO: implement error handler for bad slices:
 		// https://github.com/kubernetes/kubernetes/commit/a171795e313ee9f407fef4897c1a1e2052120991
+		klog.V(1).Infof("featuregates.DynamicMIG enabled: construct ResourceSlice objects according to KEP 4815 (partitionable devices)")
 		resources := d.GenerateDriverResources(config.flags.nodeName)
 		if err := d.pluginhelper.PublishResources(ctx, resources); err != nil {
 			return err
@@ -362,30 +358,8 @@ func (d *driver) publishResources(ctx context.Context, config *Config) error {
 
 	return nil
 
-	// Note(JP): below was added for vfio -- TODO: review, clarify
-	// return d.publishResources(ctx, d.state.config)
 }
 
-// This is a non-partitionable devices way of announcing resources.
-// func (d *driver) publishResources(ctx context.Context, config *Config) error {
-// 	// Enumerate the set of GPU, MIG and VFIO devices and publish them
-// 	var resourceSlice resourceslice.Slice
-// 	for _, device := range d.state.allocatable {
-// 		resourceSlice.Devices = append(resourceSlice.Devices, device.GetDevice())
-// 	}
-
-// 	resources := resourceslice.DriverResources{
-// 		Pools: map[string]resourceslice.Pool{
-// 			config.flags.nodeName: {Slices: []resourceslice.Slice{resourceSlice}},
-// 		},
-// 	}
-
-// 	if err := d.pluginhelper.PublishResources(ctx, resources); err != nil {
-// 		return err
-// 	}
-
-//		return nil
-//	}
 func (d *driver) deviceHealthEvents(ctx context.Context, nodeName string) {
 	klog.V(4).Info("Starting to watch for device health notifications")
 	for {
