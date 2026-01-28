@@ -10,7 +10,7 @@ rules:
   verbs: ["get", "list", "watch", "update", "patch"]
 - apiGroups: ["resource.nvidia.com"]
   resources: ["computedomaincliques"]
-  verbs: ["get", "list", "watch", "create", "patch"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
 - apiGroups: [""]
   resources: ["pods"]
   verbs: ["get", "list", "watch", "patch"]
