@@ -29,6 +29,7 @@ import (
 	"k8s.io/klog/v2"
 
 	nvapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
+	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
 )
 
 type DaemonSetPodManager struct {
@@ -42,6 +43,7 @@ type DaemonSetPodManager struct {
 
 	getComputeDomain          GetComputeDomainFunc
 	updateComputeDomainStatus UpdateComputeDomainStatusFunc
+	cliqueManager             *ComputeDomainCliqueManager
 }
 
 func NewDaemonSetPodManager(config *ManagerConfig, getComputeDomain GetComputeDomainFunc, updateComputeDomainStatus UpdateComputeDomainStatusFunc) *DaemonSetPodManager {
@@ -73,6 +75,10 @@ func NewDaemonSetPodManager(config *ManagerConfig, getComputeDomain GetComputeDo
 		lister:                    lister,
 		getComputeDomain:          getComputeDomain,
 		updateComputeDomainStatus: updateComputeDomainStatus,
+	}
+
+	if featuregates.Enabled(featuregates.ComputeDomainCliques) {
+		m.cliqueManager = NewComputeDomainCliqueManager(config, getComputeDomain, updateComputeDomainStatus)
 	}
 
 	return m
@@ -109,10 +115,21 @@ func (m *DaemonSetPodManager) Start(ctx context.Context) (rerr error) {
 		return fmt.Errorf("error syncing pod informer: %w", err)
 	}
 
+	if m.cliqueManager != nil {
+		if err := m.cliqueManager.Start(ctx); err != nil {
+			return fmt.Errorf("error starting ComputeDomainClique manager: %w", err)
+		}
+	}
+
 	return nil
 }
 
 func (m *DaemonSetPodManager) Stop() error {
+	if m.cliqueManager != nil {
+		if err := m.cliqueManager.Stop(); err != nil {
+			klog.Errorf("error stopping ComputeDomainClique manager: %v", err)
+		}
+	}
 	if m.cancelContext != nil {
 		m.cancelContext()
 	}
@@ -134,6 +151,24 @@ func (m *DaemonSetPodManager) onPodDelete(ctx context.Context, obj any) error {
 		return nil
 	}
 
+	// Always remove from status
+	if err := m.removeNodeFromComputeDomainStatus(ctx, p, cd); err != nil {
+		return fmt.Errorf("error removing node from ComputeDomain status: %w", err)
+	}
+
+	// Additionally remove from clique if feature gate is enabled
+	if m.cliqueManager != nil {
+		if err := m.removeDaemonInfoFromClique(ctx, p, cd); err != nil {
+			return fmt.Errorf("error removing daemon info from clique: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// removeNodeFromComputeDomainStatus removes a node from ComputeDomain.Status.Nodes
+// based on the pod's IP address.
+func (m *DaemonSetPodManager) removeNodeFromComputeDomainStatus(ctx context.Context, p *corev1.Pod, cd *nvapi.ComputeDomain) error {
 	newCD := cd.DeepCopy()
 
 	// Filter out the node with the current pod's IP address
@@ -156,6 +191,27 @@ func (m *DaemonSetPodManager) onPodDelete(ctx context.Context, obj any) error {
 	}
 
 	klog.Infof("Successfully removed node with IP %s from ComputeDomain %s/%s", p.Status.PodIP, newCD.Namespace, newCD.Name)
+	return nil
+}
 
+// removeDaemonInfoFromClique removes daemon info from the ComputeDomainClique
+// when a daemon pod is deleted.
+func (m *DaemonSetPodManager) removeDaemonInfoFromClique(ctx context.Context, p *corev1.Pod, cd *nvapi.ComputeDomain) error {
+	nodeName := p.Spec.NodeName
+	if nodeName == "" {
+		klog.V(4).Infof("Pod %s/%s has no nodeName, skipping clique cleanup", p.Namespace, p.Name)
+		return nil
+	}
+
+	cliqueID := p.Labels[computeDomainCliqueLabelKey]
+	if cliqueID == "" {
+		klog.V(4).Infof("Pod %s/%s has no cliqueID label, skipping clique cleanup", p.Namespace, p.Name)
+		return nil
+	}
+
+	err := m.cliqueManager.RemoveDaemonInfo(ctx, string(cd.UID), cliqueID, nodeName)
+	if err != nil {
+		return fmt.Errorf("error removing daemon info from clique: %w", err)
+	}
 	return nil
 }

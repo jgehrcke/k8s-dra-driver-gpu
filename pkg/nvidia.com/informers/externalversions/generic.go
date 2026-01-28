@@ -55,6 +55,8 @@ func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource
 	// Group=resource.nvidia.com, Version=v1beta1
 	case v1beta1.SchemeGroupVersion.WithResource("computedomains"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Resource().V1beta1().ComputeDomains().Informer()}, nil
+	case v1beta1.SchemeGroupVersion.WithResource("computedomaincliques"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Resource().V1beta1().ComputeDomainCliques().Informer()}, nil
 
 	}
 
