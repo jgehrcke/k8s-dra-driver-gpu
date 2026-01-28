@@ -523,7 +523,7 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 					return nil, fmt.Errorf("cannot apply GPU config to request: %v", result.Request)
 				}
 
-				if _, ok := c.Config.(*configapi.MigDeviceConfig); ok && device.IsStaticOrDynMigDevice() {
+				if _, ok := c.Config.(*configapi.MigDeviceConfig); ok && !device.IsStaticOrDynMigDevice() {
 					return nil, fmt.Errorf("cannot apply MIG device config to request: %v", result.Request)
 				}
 
@@ -537,7 +537,7 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 				if _, ok := c.Config.(*configapi.GpuConfig); ok && device.Type() != GpuDeviceType {
 					continue
 				}
-				if _, ok := c.Config.(*configapi.MigDeviceConfig); ok && device.IsStaticOrDynMigDevice() {
+				if _, ok := c.Config.(*configapi.MigDeviceConfig); ok && !device.IsStaticOrDynMigDevice() {
 					continue
 				}
 				if _, ok := c.Config.(*configapi.VfioDeviceConfig); ok && device.Type() != VfioDeviceType {
