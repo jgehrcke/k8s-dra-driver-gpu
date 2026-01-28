@@ -72,7 +72,7 @@ type DaemonSetManager struct {
 	cleanupManager               *CleanupManager[*appsv1.DaemonSet]
 }
 
-func NewDaemonSetManager(config *ManagerConfig, getComputeDomain GetComputeDomainFunc, updateComputeDomainStatus UpdateComputeDomainStatusFunc) *DaemonSetManager {
+func NewDaemonSetManager(config *ManagerConfig, getComputeDomain GetComputeDomainFunc, listComputeDomains ListComputeDomainsFunc, updateComputeDomainStatus UpdateComputeDomainStatusFunc) *DaemonSetManager {
 	labelSelector := &metav1.LabelSelector{
 		MatchExpressions: []metav1.LabelSelectorRequirement{
 			{
@@ -99,7 +99,7 @@ func NewDaemonSetManager(config *ManagerConfig, getComputeDomain GetComputeDomai
 		factory:          factory,
 		informer:         informer,
 	}
-	m.daemonsetPodManager = NewDaemonSetPodManager(config, getComputeDomain, updateComputeDomainStatus)
+	m.daemonsetPodManager = NewDaemonSetPodManager(config, getComputeDomain, listComputeDomains, updateComputeDomainStatus)
 	m.resourceClaimTemplateManager = NewDaemonSetResourceClaimTemplateManager(config, getComputeDomain)
 	m.cleanupManager = NewCleanupManager[*appsv1.DaemonSet](informer, getComputeDomain, m.cleanup)
 

@@ -20,9 +20,11 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/informers"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
@@ -30,6 +32,12 @@ import (
 
 	nvapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
 	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
+)
+
+const (
+	// cliqueCleanupInterval is how often to run the periodic cleanup
+	// that removes stale daemon entries from cliques.
+	cliqueCleanupInterval = 5 * time.Minute
 )
 
 type DaemonSetPodManager struct {
@@ -46,7 +54,7 @@ type DaemonSetPodManager struct {
 	cliqueManager             *ComputeDomainCliqueManager
 }
 
-func NewDaemonSetPodManager(config *ManagerConfig, getComputeDomain GetComputeDomainFunc, updateComputeDomainStatus UpdateComputeDomainStatusFunc) *DaemonSetPodManager {
+func NewDaemonSetPodManager(config *ManagerConfig, getComputeDomain GetComputeDomainFunc, listComputeDomains ListComputeDomainsFunc, updateComputeDomainStatus UpdateComputeDomainStatusFunc) *DaemonSetPodManager {
 	labelSelector := &metav1.LabelSelector{
 		MatchExpressions: []metav1.LabelSelectorRequirement{
 			{
@@ -78,7 +86,7 @@ func NewDaemonSetPodManager(config *ManagerConfig, getComputeDomain GetComputeDo
 	}
 
 	if featuregates.Enabled(featuregates.ComputeDomainCliques) {
-		m.cliqueManager = NewComputeDomainCliqueManager(config, getComputeDomain, updateComputeDomainStatus)
+		m.cliqueManager = NewComputeDomainCliqueManager(config, listComputeDomains, updateComputeDomainStatus)
 	}
 
 	return m
@@ -119,6 +127,16 @@ func (m *DaemonSetPodManager) Start(ctx context.Context) (rerr error) {
 		if err := m.cliqueManager.Start(ctx); err != nil {
 			return fmt.Errorf("error starting ComputeDomainClique manager: %w", err)
 		}
+
+		// Run cleanup once at startup
+		m.cleanup(ctx)
+
+		// Start periodic cleanup loop
+		m.waitGroup.Add(1)
+		go func() {
+			defer m.waitGroup.Done()
+			m.startPeriodicCleanup(ctx)
+		}()
 	}
 
 	return nil
@@ -137,6 +155,86 @@ func (m *DaemonSetPodManager) Stop() error {
 	return nil
 }
 
+// List returns all daemon pods from the informer cache.
+func (m *DaemonSetPodManager) List() ([]*corev1.Pod, error) {
+	return m.lister.Pods(m.config.driverNamespace).List(labels.Everything())
+}
+
+// startPeriodicCleanup runs the cleanup every cliqueCleanupInterval.
+func (m *DaemonSetPodManager) startPeriodicCleanup(ctx context.Context) {
+	ticker := time.NewTicker(cliqueCleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			klog.V(6).Infof("Running periodic cleanup for orphaned daemon entries in cliques")
+			m.cleanup(ctx)
+		}
+	}
+}
+
+// cleanup removes daemon entries from cliques for pods that no longer exist.
+func (m *DaemonSetPodManager) cleanup(ctx context.Context) {
+	pods, err := m.List()
+	if err != nil {
+		klog.Errorf("CliqueCleanup: error listing pods: %v", err)
+		return
+	}
+
+	// Build set of node names that have running daemon pods
+	daemons := make(map[string]struct{})
+	for _, pod := range pods {
+		if pod.Spec.NodeName != "" {
+			daemons[pod.Spec.NodeName] = struct{}{}
+		}
+	}
+
+	cliques, err := m.cliqueManager.List()
+	if err != nil {
+		klog.Errorf("CliqueCleanup: error listing cliques: %v", err)
+		return
+	}
+
+	for _, clique := range cliques {
+		m.cleanupClique(ctx, clique, daemons)
+	}
+}
+
+// cleanupClique removes stale daemon entries from a single clique.
+func (m *DaemonSetPodManager) cleanupClique(ctx context.Context, clique *nvapi.ComputeDomainClique, daemons map[string]struct{}) {
+	var updatedDaemons []*nvapi.ComputeDomainDaemonInfo
+	var removedNodes []string
+
+	for _, daemon := range clique.Daemons {
+		if _, exists := daemons[daemon.NodeName]; exists {
+			updatedDaemons = append(updatedDaemons, daemon)
+		} else {
+			removedNodes = append(removedNodes, daemon.NodeName)
+		}
+	}
+
+	// Nothing to clean up
+	if len(removedNodes) == 0 {
+		return
+	}
+
+	klog.Infof("CliqueCleanup: removing stale daemon entries from clique %s/%s: %v", clique.Namespace, clique.Name, removedNodes)
+
+	// Update the clique with the filtered daemon list
+	newClique := clique.DeepCopy()
+	newClique.Daemons = updatedDaemons
+
+	if _, err := m.cliqueManager.Update(ctx, newClique); err != nil {
+		klog.Errorf("CliqueCleanup: error updating ComputeDomainClique %s/%s: %v", clique.Namespace, clique.Name, err)
+		return
+	}
+
+	klog.Infof("CliqueCleanup: successfully removed %d stale daemon entries from clique %s/%s", len(removedNodes), clique.Namespace, clique.Name)
+}
+
 func (m *DaemonSetPodManager) onPodDelete(ctx context.Context, obj any) error {
 	p, ok := obj.(*corev1.Pod)
 	if !ok {
@@ -151,15 +249,16 @@ func (m *DaemonSetPodManager) onPodDelete(ctx context.Context, obj any) error {
 		return nil
 	}
 
-	// Always remove from status
-	if err := m.removeNodeFromComputeDomainStatus(ctx, p, cd); err != nil {
-		return fmt.Errorf("error removing node from ComputeDomain status: %w", err)
-	}
-
-	// Additionally remove from clique if feature gate is enabled
 	if m.cliqueManager != nil {
+		// When ComputeDomainCliques feature gate is enabled, remove from clique
+		// and let the periodic sync update the CD status.
 		if err := m.removeDaemonInfoFromClique(ctx, p, cd); err != nil {
 			return fmt.Errorf("error removing daemon info from clique: %w", err)
+		}
+	} else {
+		// When feature gate is disabled, directly update CD status.
+		if err := m.removeNodeFromComputeDomainStatus(ctx, p, cd); err != nil {
+			return fmt.Errorf("error removing node from ComputeDomain status: %w", err)
 		}
 	}
 
