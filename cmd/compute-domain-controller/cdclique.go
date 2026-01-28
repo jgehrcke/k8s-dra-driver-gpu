@@ -24,11 +24,13 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
 	nvapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
 	nvinformers "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/nvidia.com/informers/externalversions"
+	nvlisters "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/nvidia.com/listers/resource/v1beta1"
 )
 
 // ComputeDomainCliqueManager manages ComputeDomainClique objects, providing
@@ -40,26 +42,31 @@ type ComputeDomainCliqueManager struct {
 
 	factory       nvinformers.SharedInformerFactory
 	informer      cache.SharedIndexInformer
+	lister        nvlisters.ComputeDomainCliqueLister
 	mutationCache cache.MutationCache
 
 	getComputeDomain          GetComputeDomainFunc
+	listComputeDomains        ListComputeDomainsFunc
 	updateComputeDomainStatus UpdateComputeDomainStatusFunc
 }
 
 // NewComputeDomainCliqueManager creates a new ComputeDomainCliqueManager.
-func NewComputeDomainCliqueManager(config *ManagerConfig, getComputeDomain GetComputeDomainFunc, updateComputeDomainStatus UpdateComputeDomainStatusFunc) *ComputeDomainCliqueManager {
+func NewComputeDomainCliqueManager(config *ManagerConfig, getComputeDomain GetComputeDomainFunc, listComputeDomains ListComputeDomainsFunc, updateComputeDomainStatus UpdateComputeDomainStatusFunc) *ComputeDomainCliqueManager {
 	factory := nvinformers.NewSharedInformerFactoryWithOptions(
 		config.clientsets.Nvidia,
 		informerResyncPeriod,
 		nvinformers.WithNamespace(config.driverNamespace),
 	)
 	informer := factory.Resource().V1beta1().ComputeDomainCliques().Informer()
+	lister := nvlisters.NewComputeDomainCliqueLister(informer.GetIndexer())
 
 	m := &ComputeDomainCliqueManager{
 		config:                    config,
 		factory:                   factory,
 		informer:                  informer,
+		lister:                    lister,
 		getComputeDomain:          getComputeDomain,
+		listComputeDomains:        listComputeDomains,
 		updateComputeDomainStatus: updateComputeDomainStatus,
 	}
 
@@ -263,6 +270,11 @@ func (m *ComputeDomainCliqueManager) Get(cdUID, cliqueID string) *nvapi.ComputeD
 	return clique
 }
 
+// List returns all ComputeDomainCliques from the informer cache.
+func (m *ComputeDomainCliqueManager) List() ([]*nvapi.ComputeDomainClique, error) {
+	return m.lister.ComputeDomainCliques(m.config.driverNamespace).List(labels.Everything())
+}
+
 // Update updates a ComputeDomainClique and caches the result in the mutation cache.
 func (m *ComputeDomainCliqueManager) Update(ctx context.Context, clique *nvapi.ComputeDomainClique) (*nvapi.ComputeDomainClique, error) {
 	updatedClique, err := m.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomainCliques(clique.Namespace).Update(ctx, clique, metav1.UpdateOptions{})
@@ -346,14 +358,14 @@ func (m *ComputeDomainCliqueManager) getDaemonsByCD(ctx context.Context) (map[st
 }
 
 // getCliquesByCD returns a map of cliques grouped by ComputeDomain UID.
-func (m *ComputeDomainCliqueManager) getCliquesByCD() map[string]map[string]*nvapi.ComputeDomainClique {
-	cliques := make(map[string]map[string]*nvapi.ComputeDomainClique)
-	for _, obj := range m.informer.GetStore().List() {
-		clique, ok := obj.(*nvapi.ComputeDomainClique)
-		if !ok {
-			continue
-		}
+func (m *ComputeDomainCliqueManager) getCliquesByCD() (map[string]map[string]*nvapi.ComputeDomainClique, error) {
+	cliqueList, err := m.List()
+	if err != nil {
+		return nil, err
+	}
 
+	cliques := make(map[string]map[string]*nvapi.ComputeDomainClique)
+	for _, clique := range cliqueList {
 		cdUID := clique.Labels[computeDomainLabelKey]
 		cliqueID := clique.Labels[computeDomainCliqueLabelKey]
 		if cdUID == "" || cliqueID == "" {
@@ -365,18 +377,18 @@ func (m *ComputeDomainCliqueManager) getCliquesByCD() map[string]map[string]*nva
 		}
 		cliques[cdUID][cliqueID] = clique
 	}
-	return cliques
+	return cliques, nil
 }
 
 // getNodesByCD returns a map of clique IDs that have nodes in each CD's Status.Nodes.
-func (m *ComputeDomainCliqueManager) getNodesByCD(ctx context.Context) (map[string]map[string]struct{}, error) {
-	cds, err := m.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomains(m.config.driverNamespace).List(ctx, metav1.ListOptions{})
+func (m *ComputeDomainCliqueManager) getNodesByCD() (map[string]map[string]struct{}, error) {
+	cds, err := m.listComputeDomains()
 	if err != nil {
 		return nil, err
 	}
 
 	nodes := make(map[string]map[string]struct{})
-	for _, cd := range cds.Items {
+	for _, cd := range cds {
 		cdUID := string(cd.UID)
 		for _, node := range cd.Status.Nodes {
 			if nodes[cdUID] == nil {
@@ -390,7 +402,11 @@ func (m *ComputeDomainCliqueManager) getNodesByCD(ctx context.Context) (map[stri
 
 // cleanup reconciles clique entries against running pods and removes stale CD status entries.
 func (m *ComputeDomainCliqueManager) cleanup(ctx context.Context) {
-	cliques := m.getCliquesByCD()
+	cliques, err := m.getCliquesByCD()
+	if err != nil {
+		klog.Errorf("CliqueCleanup: error getting cliques: %v", err)
+		return
+	}
 
 	daemons, err := m.getDaemonsByCD(ctx)
 	if err != nil {
@@ -398,7 +414,7 @@ func (m *ComputeDomainCliqueManager) cleanup(ctx context.Context) {
 		return
 	}
 
-	nodes, err := m.getNodesByCD(ctx)
+	nodes, err := m.getNodesByCD()
 	if err != nil {
 		klog.Errorf("CliqueCleanup: error getting nodes: %v", err)
 		return

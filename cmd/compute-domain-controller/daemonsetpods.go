@@ -23,6 +23,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/informers"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
@@ -46,7 +47,7 @@ type DaemonSetPodManager struct {
 	cliqueManager             *ComputeDomainCliqueManager
 }
 
-func NewDaemonSetPodManager(config *ManagerConfig, getComputeDomain GetComputeDomainFunc, updateComputeDomainStatus UpdateComputeDomainStatusFunc) *DaemonSetPodManager {
+func NewDaemonSetPodManager(config *ManagerConfig, getComputeDomain GetComputeDomainFunc, listComputeDomains ListComputeDomainsFunc, updateComputeDomainStatus UpdateComputeDomainStatusFunc) *DaemonSetPodManager {
 	labelSelector := &metav1.LabelSelector{
 		MatchExpressions: []metav1.LabelSelectorRequirement{
 			{
@@ -78,7 +79,7 @@ func NewDaemonSetPodManager(config *ManagerConfig, getComputeDomain GetComputeDo
 	}
 
 	if featuregates.Enabled(featuregates.ComputeDomainCliques) {
-		m.cliqueManager = NewComputeDomainCliqueManager(config, getComputeDomain, updateComputeDomainStatus)
+		m.cliqueManager = NewComputeDomainCliqueManager(config, getComputeDomain, listComputeDomains, updateComputeDomainStatus)
 	}
 
 	return m
@@ -135,6 +136,11 @@ func (m *DaemonSetPodManager) Stop() error {
 	}
 	m.waitGroup.Wait()
 	return nil
+}
+
+// List returns all daemon pods from the informer cache.
+func (m *DaemonSetPodManager) List() ([]*corev1.Pod, error) {
+	return m.lister.Pods(m.config.driverNamespace).List(labels.Everything())
 }
 
 func (m *DaemonSetPodManager) onPodDelete(ctx context.Context, obj any) error {

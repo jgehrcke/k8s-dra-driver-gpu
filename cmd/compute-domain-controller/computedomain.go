@@ -23,14 +23,17 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
 	nvapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
 	nvinformers "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/nvidia.com/informers/externalversions"
+	nvlisters "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/nvidia.com/listers/resource/v1beta1"
 )
 
 type GetComputeDomainFunc func(uid string) (*nvapi.ComputeDomain, error)
+type ListComputeDomainsFunc func() ([]*nvapi.ComputeDomain, error)
 type UpdateComputeDomainStatusFunc func(ctx context.Context, cd *nvapi.ComputeDomain) (*nvapi.ComputeDomain, error)
 
 const (
@@ -63,6 +66,7 @@ type ComputeDomainManager struct {
 
 	factory       nvinformers.SharedInformerFactory
 	informer      cache.SharedIndexInformer
+	lister        nvlisters.ComputeDomainLister
 	mutationCache cache.MutationCache
 
 	daemonSetManager             *MultiNamespaceDaemonSetManager
@@ -74,14 +78,16 @@ type ComputeDomainManager struct {
 func NewComputeDomainManager(config *ManagerConfig) *ComputeDomainManager {
 	factory := nvinformers.NewSharedInformerFactory(config.clientsets.Nvidia, informerResyncPeriod)
 	informer := factory.Resource().V1beta1().ComputeDomains().Informer()
+	lister := nvlisters.NewComputeDomainLister(informer.GetIndexer())
 
 	m := &ComputeDomainManager{
 		config:   config,
 		factory:  factory,
 		informer: informer,
+		lister:   lister,
 	}
 
-	m.daemonSetManager = NewMultiNamespaceDaemonSetManager(config, m.Get, m.UpdateStatus)
+	m.daemonSetManager = NewMultiNamespaceDaemonSetManager(config, m.Get, m.List, m.UpdateStatus)
 	m.resourceClaimTemplateManager = NewWorkloadResourceClaimTemplateManager(config, m.Get)
 	m.nodeManager = NewNodeManager(config, m.Get)
 
@@ -189,6 +195,11 @@ func (m *ComputeDomainManager) Get(uid string) (*nvapi.ComputeDomain, error) {
 		return nil, fmt.Errorf("failed to cast to ComputeDomain")
 	}
 	return cd, nil
+}
+
+// List returns all ComputeDomains from the informer cache.
+func (m *ComputeDomainManager) List() ([]*nvapi.ComputeDomain, error) {
+	return m.lister.List(labels.Everything())
 }
 
 // UpdateStatus updates a ComputeDomain's status and caches the result in the mutation cache.
