@@ -33,11 +33,12 @@ bats::on_failure() {
   echo -e "\n\nFAILURE HOOK START"
   log_objects
   show_kubelet_plugin_error_logs
+  show_kubelet_plugin_log_tails
   kubectl describe pods | grep -A20 "Events:"
   echo -e "FAILURE HOOK END\n\n"
 }
 
-
+# bats test_tags=XXbats:focus
 # bats test_tags=fastfeedback
 @test "static MIG: allocate (1 cnt)" {
   # Pick a node to work on for the remainder of the test.
