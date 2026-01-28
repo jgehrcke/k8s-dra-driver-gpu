@@ -339,24 +339,6 @@ func (m *ComputeDomainCliqueManager) periodicCleanup(ctx context.Context) {
 	}
 }
 
-// getDaemonsByCD returns a set of node names that have running daemon pods.
-func (m *ComputeDomainCliqueManager) getDaemonsByCD(ctx context.Context) (map[string]struct{}, error) {
-	podList, err := m.config.clientsets.Core.CoreV1().Pods(m.config.driverNamespace).List(ctx, metav1.ListOptions{
-		LabelSelector: computeDomainLabelKey,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	daemons := make(map[string]struct{})
-	for _, pod := range podList.Items {
-		if pod.Spec.NodeName != "" {
-			daemons[pod.Spec.NodeName] = struct{}{}
-		}
-	}
-	return daemons, nil
-}
-
 // getCliquesByCD returns a map of cliques grouped by ComputeDomain UID.
 func (m *ComputeDomainCliqueManager) getCliquesByCD() (map[string]map[string]*nvapi.ComputeDomainClique, error) {
 	cliqueList, err := m.List()
@@ -400,17 +382,11 @@ func (m *ComputeDomainCliqueManager) getNodesByCD() (map[string]map[string]struc
 	return nodes, nil
 }
 
-// cleanup reconciles clique entries against running pods and removes stale CD status entries.
+// cleanup removes stale CD status entries for cliques that no longer exist.
 func (m *ComputeDomainCliqueManager) cleanup(ctx context.Context) {
 	cliques, err := m.getCliquesByCD()
 	if err != nil {
 		klog.Errorf("CliqueCleanup: error getting cliques: %v", err)
-		return
-	}
-
-	daemons, err := m.getDaemonsByCD(ctx)
-	if err != nil {
-		klog.Errorf("CliqueCleanup: error getting daemons: %v", err)
 		return
 	}
 
@@ -420,17 +396,7 @@ func (m *ComputeDomainCliqueManager) cleanup(ctx context.Context) {
 		return
 	}
 
-	m.cleanupOrphanedDaemonsInCliques(ctx, daemons, cliques)
 	m.cleanupOrphanedCliquesInNodes(ctx, cliques, nodes)
-}
-
-// cleanupOrphanedDaemonsInCliques removes stale daemon entries from cliques.
-func (m *ComputeDomainCliqueManager) cleanupOrphanedDaemonsInCliques(ctx context.Context, daemons map[string]struct{}, cliques map[string]map[string]*nvapi.ComputeDomainClique) {
-	for _, cliquesForCD := range cliques {
-		for _, clique := range cliquesForCD {
-			m.cleanupClique(ctx, clique, daemons)
-		}
-	}
 }
 
 // cleanupOrphanedCliquesInNodes removes Status.Nodes entries whose cliques no longer exist.
@@ -445,36 +411,4 @@ func (m *ComputeDomainCliqueManager) cleanupOrphanedCliquesInNodes(ctx context.C
 			}
 		}
 	}
-}
-
-// cleanupClique removes stale daemon entries from a single clique.
-func (m *ComputeDomainCliqueManager) cleanupClique(ctx context.Context, clique *nvapi.ComputeDomainClique, daemons map[string]struct{}) {
-	var updatedDaemons []*nvapi.ComputeDomainDaemonInfo
-	var removedNodes []string
-
-	for _, daemon := range clique.Daemons {
-		if _, exists := daemons[daemon.NodeName]; exists {
-			updatedDaemons = append(updatedDaemons, daemon)
-		} else {
-			removedNodes = append(removedNodes, daemon.NodeName)
-		}
-	}
-
-	// Nothing to clean up
-	if len(removedNodes) == 0 {
-		return
-	}
-
-	klog.Infof("CliqueCleanup: removing stale daemon entries from clique %s/%s: %v", clique.Namespace, clique.Name, removedNodes)
-
-	// Update the clique with the filtered daemon list
-	newClique := clique.DeepCopy()
-	newClique.Daemons = updatedDaemons
-
-	if _, err := m.Update(ctx, newClique); err != nil {
-		klog.Errorf("CliqueCleanup: error updating ComputeDomainClique %s/%s: %v", clique.Namespace, clique.Name, err)
-		return
-	}
-
-	klog.Infof("CliqueCleanup: successfully removed %d stale daemon entries from clique %s/%s", len(removedNodes), clique.Namespace, clique.Name)
 }
