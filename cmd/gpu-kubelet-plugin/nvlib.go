@@ -308,7 +308,7 @@ func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (PerGPUMinorAlloc
 			// placements. This enriches `gpuInfo` with additional properties (such
 			// as the memory slice count, and the maximum capacities as reported by
 			// individual MIG profiles).
-			migpps, err := l.inspectMigProfilesAndPlacements(gpuInfo, d)
+			migspecs, err := l.inspectMigProfilesAndPlacements(gpuInfo, d)
 			if err != nil {
 				return fmt.Errorf("error getting MIG info for GPU %v: %w", i, err)
 			}
@@ -316,11 +316,11 @@ func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (PerGPUMinorAlloc
 			// Announce the full physical GPU.
 			thisGPUAllocatable[gpuInfo.CanonicalName()] = parentdev
 
-			for _, migpp := range migpps {
+			for _, migspec := range migspecs {
 				dev := &AllocatableDevice{
-					Mig: migpp,
+					Mig: migspec,
 				}
-				thisGPUAllocatable[migpp.CanonicalName()] = dev
+				thisGPUAllocatable[migspec.CanonicalName()] = dev
 			}
 
 			perGPUAllocatable[gpuInfo.minor] = thisGPUAllocatable
@@ -920,10 +920,10 @@ func (l deviceLib) DeviceGetHandleByUUIDCached(uuid string) (nvml.Device, nvml.R
 	return dev, ret
 }
 
-func (l deviceLib) createMigDevice(migpp *MigSpec) (*MigDeviceInfo, error) {
-	gpu := migpp.Parent
-	profile := migpp.Profile
-	placement := &migpp.MemorySlices
+func (l deviceLib) createMigDevice(migspec *MigSpec) (*MigDeviceInfo, error) {
+	gpu := migspec.Parent
+	profile := migspec.Profile
+	placement := &migspec.MemorySlices
 
 	// tcmigdev0 := time.Now()
 	// if err := l.Init(); err != nil {
@@ -960,7 +960,7 @@ func (l deviceLib) createMigDevice(migpp *MigSpec) (*MigDeviceInfo, error) {
 	}
 	klog.V(6).Infof("t_prep_create_mig_dev_check_mig_enabled %.3f s", time.Since(tcme0).Seconds())
 
-	logpfx := fmt.Sprintf("Create %s", migpp.CanonicalName())
+	logpfx := fmt.Sprintf("Create %s", migspec.CanonicalName())
 
 	if !migEnabled {
 		klog.V(6).Infof("%s: Attempting to enable MIG mode for to-be parent %s", logpfx, gpu.String())
@@ -987,12 +987,12 @@ func (l deviceLib) createMigDevice(migpp *MigSpec) (*MigDeviceInfo, error) {
 
 	gi, ret := device.CreateGpuInstanceWithPlacement(&giProfileInfo, placement)
 	if ret != nvml.SUCCESS {
-		return nil, fmt.Errorf("error creating GPU instance for '%s': %v", migpp.CanonicalName(), ret)
+		return nil, fmt.Errorf("error creating GPU instance for '%s': %v", migspec.CanonicalName(), ret)
 	}
 
 	giInfo, ret := gi.GetInfo()
 	if ret != nvml.SUCCESS {
-		return nil, fmt.Errorf("error getting GPU instance info for '%s': %v", migpp.CanonicalName(), ret)
+		return nil, fmt.Errorf("error getting GPU instance info for '%s': %v", migspec.CanonicalName(), ret)
 	}
 
 	ciProfileInfo, ret := gi.GetComputeInstanceProfileInfo(profileInfo.CIProfileID, profileInfo.CIEngProfileID)
