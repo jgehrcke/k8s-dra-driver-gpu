@@ -611,21 +611,23 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 				CDIDeviceIDs: cdiDevices,
 			}
 
+			adev := s.allocatable[result.Device]
 			var preparedDevice PreparedDevice
-			switch s.allocatable[result.Device].Type() {
+
+			switch adev.Type() {
 			case GpuDeviceType:
 				preparedDevice.Gpu = &PreparedGpu{
-					Info:   s.allocatable[result.Device].Gpu,
+					Info:   adev.Gpu,
 					Device: device,
 				}
 			case MigStaticDeviceType:
 				preparedDevice.Mig = &PreparedMigDevice{
-					Created: s.allocatable[result.Device].MigStatic,
-					Device:  device,
+					RequestedCanonicalName: adev.MigStatic.CanonicalName(), //  Expected to be the same as `device.DeviceName``
+					Created:                adev.MigStatic,
+					Device:                 device,
 				}
 			case MigDynamicDeviceType:
-				devinfo := s.allocatable[result.Device]
-				migspec := devinfo.MigDynamic
+				migspec := adev.MigDynamic
 				// Maybe: persist anything to disk that may be useful for
 				// cleaning up a partial prepare. Here, we have valuable
 				// information: claim UID, mig device placement (also encoded by
