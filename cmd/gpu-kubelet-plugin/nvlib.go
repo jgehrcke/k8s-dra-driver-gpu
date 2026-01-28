@@ -346,6 +346,7 @@ func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (PerGPUMinorAlloc
 			// physical GPU to be allocatable, and terminate discovery for this
 			// phyical GPU.
 			thisGPUAllocatable[gpuInfo.CanonicalName()] = parentdev
+			perGPUAllocatable[gpuInfo.minor] = thisGPUAllocatable
 			return nil
 		}
 
