@@ -1,11 +1,7 @@
 .dockerignore
 deployments/container
 *.tar
-*.tar.gz
 *.tgz
 demo
 .git
 tests-out
-copy-images*.sh
-*.log
-
