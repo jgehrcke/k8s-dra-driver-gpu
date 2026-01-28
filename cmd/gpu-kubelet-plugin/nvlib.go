@@ -318,7 +318,7 @@ func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (PerGPUMinorAlloc
 
 			for _, migspec := range migspecs {
 				dev := &AllocatableDevice{
-					Mig: migspec,
+					MigDynamic: migspec,
 				}
 				thisGPUAllocatable[migspec.CanonicalName()] = dev
 			}
@@ -383,9 +383,7 @@ func (l deviceLib) discoverMigDevicesByGPU(gpuInfo *GpuInfo) (AllocatableDeviceL
 
 	for _, migDeviceInfo := range migs {
 		mig := &AllocatableDevice{
-			// TODO: distinguish abstract and specific MIG device.
-			//Mig: migDeviceInfo,
-			MigConcrete: migDeviceInfo,
+			MigStatic: migDeviceInfo,
 		}
 		devices = append(devices, mig)
 	}

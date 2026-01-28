@@ -282,7 +282,7 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 				}
 			}
 
-			if dev.Type() == MigDeviceType {
+			if dev.Type() == MigStaticDeviceType || dev.Type() == MigDynamicDeviceType {
 				// Goal: inject parent dev node. Other dev nodes specific to this
 				// MIG device are injected 'manually' further below. That is because
 				// currently `nvcdiDevice.GetDeviceSpecsByID()` may yield an

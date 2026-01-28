@@ -522,9 +522,11 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 				if _, ok := c.Config.(*configapi.GpuConfig); ok && device.Type() != GpuDeviceType {
 					return nil, fmt.Errorf("cannot apply GPU config to request: %v", result.Request)
 				}
-				if _, ok := c.Config.(*configapi.MigDeviceConfig); ok && device.Type() != MigDeviceType {
+
+				if _, ok := c.Config.(*configapi.MigDeviceConfig); ok && device.IsStaticOrDynMigDevice() {
 					return nil, fmt.Errorf("cannot apply MIG device config to request: %v", result.Request)
 				}
+
 				if _, ok := c.Config.(*configapi.VfioDeviceConfig); ok && device.Type() != VfioDeviceType {
 					return nil, fmt.Errorf("cannot apply VFIO device config to request: %v", result.Request)
 				}
@@ -535,7 +537,7 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 				if _, ok := c.Config.(*configapi.GpuConfig); ok && device.Type() != GpuDeviceType {
 					continue
 				}
-				if _, ok := c.Config.(*configapi.MigDeviceConfig); ok && device.Type() != MigDeviceType {
+				if _, ok := c.Config.(*configapi.MigDeviceConfig); ok && device.IsStaticOrDynMigDevice() {
 					continue
 				}
 				if _, ok := c.Config.(*configapi.VfioDeviceConfig); ok && device.Type() != VfioDeviceType {
@@ -616,8 +618,14 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 					Info:   s.allocatable[result.Device].Gpu,
 					Device: device,
 				}
-			case MigDeviceType:
+			case MigStaticDeviceType:
+				preparedDevice.Mig = &PreparedMigDevice{
+					Created: s.allocatable[result.Device].MigStatic,
+					Device:  device,
+				}
+			case MigDynamicDeviceType:
 				devinfo := s.allocatable[result.Device]
+				migspec := devinfo.MigDynamic
 				// Maybe: persist anything to disk that may be useful for
 				// cleaning up a partial prepare. Here, we have valuable
 				// information: claim UID, mig device placement (also encoded by
@@ -629,7 +637,7 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 				// GI ID. Those are 'hard' (not impossible) to reconstruct based
 				// on just that name.
 				tcmig0 := time.Now()
-				migdev, err := s.nvdevlib.createMigDevice(devinfo.Mig)
+				migdev, err := s.nvdevlib.createMigDevice(migspec)
 				klog.V(6).Infof("t_prep_create_mig_dev %.3f s (claim %s)", time.Since(tcmig0).Seconds(), ResourceClaimToString(claim))
 				if err != nil {
 					return nil, fmt.Errorf("error creating MIG device: %w", err)
@@ -638,7 +646,7 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 				preparedDevice.Mig = &PreparedMigDevice{
 					// Abstract, allocatable device
 					// encodes a specific mig/profile/placement combination.
-					RequestedCanonicalName: devinfo.Mig.CanonicalName(),
+					RequestedCanonicalName: migspec.CanonicalName(),
 					// Specifc, created device
 					Created: migdev,
 					// DRA device object
@@ -683,24 +691,26 @@ func (s *DeviceState) unprepareDevices(ctx context.Context, claimUID string, dev
 			}
 		}
 
-		// Dynamically delete MIG devices, if applicable.
-		// Do this before or after MPS/TimeSlicing primitive teardown?
-		// EDIT: must be done after (TODO)
+		// TODO: do this after MPS/TimeSlicing primitive teardown!
 		for _, device := range group.Devices {
 			switch device.Type() {
 			case GpuDeviceType:
 				klog.V(4).Infof("Unprepare: regular GPU: noop (GPU %s)", device.Gpu.Info.String())
-			case MigDeviceType:
-				mig := device.Mig.Created
-				klog.V(4).Infof("Unprepare: tear down MIG device '%s' for claim '%s'", mig.UUID, claimUID)
-				err := s.nvdevlib.deleteMigDevice(mig.ParentUUID, mig.GIID, mig.CIID)
-				if err != nil {
-					// Such errors are expected, but they also are somewhat
-					// worrisome. This may for example be 'error destroying GPU
-					// Instance: In use by another client' and resolve itself
-					// soon. Log an explicit warning, at least.
-					klog.Warningf("Error deleting MIG device %s: %s", device.Mig.Created.CanonicalName(), err)
-					return fmt.Errorf("error deleting MIG device %s: %w", device.Mig.Created.CanonicalName(), err)
+			case PreparedMigDeviceType:
+				if featuregates.Enabled(featuregates.DynamicMIG) {
+					mig := device.Mig.Created
+					klog.V(4).Infof("Unprepare: tear down MIG device '%s' for claim '%s'", mig.UUID, claimUID)
+					err := s.nvdevlib.deleteMigDevice(mig.ParentUUID, mig.GIID, mig.CIID)
+					if err != nil {
+						// Such errors are expected, but they also are somewhat
+						// worrisome. This may for example be 'error destroying
+						// GPU Instance: In use by another client' and resolve
+						// itself soon. Log an explicit warning, at least.
+						klog.Warningf("Error deleting MIG device %s: %s", device.Mig.Created.CanonicalName(), err)
+						return fmt.Errorf("error deleting MIG device %s: %w", device.Mig.Created.CanonicalName(), err)
+					}
+				} else {
+					klog.V(4).Infof("Unprepare: static MIG: noop (MIG %s)", device.Gpu.Info.String())
 				}
 			}
 		}
@@ -750,6 +760,8 @@ func (s *DeviceState) unprepareVfioDevices(ctx context.Context, devices Prepared
 	return nil
 }
 
+// TODO: this needs a code comment -- what's the primary purpose, and how should
+// this relate to MIG devices?
 func (s *DeviceState) discoverSiblingAllocatables(device *AllocatableDevice) error {
 	switch device.Type() {
 	case GpuDeviceType:
@@ -771,7 +783,10 @@ func (s *DeviceState) discoverSiblingAllocatables(device *AllocatableDevice) err
 		for _, mig := range migs {
 			s.allocatable[mig.CanonicalName()] = mig
 		}
-	case MigDeviceType:
+	case MigStaticDeviceType:
+		// TODO: Implement once dynamic MIG is supported.
+		return nil
+	case MigDynamicDeviceType:
 		// TODO: Implement once dynamic MIG is supported.
 		return nil
 	}
@@ -925,6 +940,7 @@ func GetOpaqueDeviceConfigs(
 	return resultConfigs, nil
 }
 
+// TODO: this needs a code comment.
 func (s *DeviceState) UpdateDeviceHealthStatus(d *AllocatableDevice, hs HealthStatus) {
 	s.Lock()
 	defer s.Unlock()
@@ -932,10 +948,16 @@ func (s *DeviceState) UpdateDeviceHealthStatus(d *AllocatableDevice, hs HealthSt
 	switch d.Type() {
 	case GpuDeviceType:
 		d.Gpu.Health = hs
-	case MigDeviceType:
-		//TODO-mig: fix
-		//d.Mig.Health = hs
-		klog.Warningf("fixme")
+	case MigDynamicDeviceType:
+		// Here we do not have access to a concrete MIG device. The
+		// 'allocatable' MIG device is an abstract representation to a specific
+		// MIG device.
+		klog.Warningf("UpdateDeviceHealthStatus() called for abstract, dynamic MIG device %s: %s", d.MigDynamic.CanonicalName(), hs)
+	case MigStaticDeviceType:
+		// Does it make sense to update the health for a MIG device? Do we
+		// receive health events that are specific to individual MIG devices? If
+		// yes: does this allow for making conclusions about the parent device?
+		d.MigStatic.Health = hs
 	default:
 		klog.V(6).Infof("Cannot update health status for unknown device type: %s", d.Type())
 		return

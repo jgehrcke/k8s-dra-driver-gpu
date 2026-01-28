@@ -234,6 +234,7 @@ func (m *nvmlDeviceHealthMonitor) markAllMigDevicesUnhealthy(giMap map[uint32]ma
 	}
 }
 
+// What is the significance of this function? Why is it important?
 func getDevicePlacementMap(allocatable AllocatableDevices) devicePlacementMap {
 	placementMap := make(devicePlacementMap)
 
@@ -250,8 +251,10 @@ func getDevicePlacementMap(allocatable AllocatableDevices) devicePlacementMap {
 			giID = FullGPUInstanceID
 			ciID = FullGPUInstanceID
 
-		case MigDeviceType:
-			parentUUID = d.Mig.Parent.UUID
+		case MigStaticDeviceType:
+			parentUUID = d.MigStatic.parent.UUID
+
+			// What does this mean?
 			if parentUUID == "" {
 				continue
 			}

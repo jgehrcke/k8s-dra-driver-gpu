@@ -22,11 +22,19 @@ import (
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 )
 
+// Reflects a prepared MIG device, regardless of its origin (static MIG, or
+// dynamic MIG). This string may(?) be exposed in the API (is it, though?).
+// Before the dynamic MIG capatbility, we used "mig", so keep using it for now.
+// May just be an implementation detail.
+const PreparedMigDeviceType = "mig"
+
 type PreparedDeviceList []PreparedDevice
 type PreparedDevices []*PreparedDeviceGroup
 
 type PreparedDevice struct {
-	Gpu  *PreparedGpu        `json:"gpu"`
+	Gpu *PreparedGpu `json:"gpu"`
+	// A prepared MIG device, regardless of whether this was created via the
+	// 'static MIG' for 'dynamic MIG' flow.
 	Mig  *PreparedMigDevice  `json:"mig"`
 	Vfio *PreparedVfioDevice `json:"vfio"`
 }
@@ -37,10 +45,14 @@ type PreparedGpu struct {
 }
 
 type PreparedMigDevice struct {
-	// Abstract, allocatable device
-	//Requested *MigSpec `json:"requested"`
+	// Captures the canonical name used to request this device in the first
+	// place.
 	RequestedCanonicalName DeviceName `json:"requestedCanonicalName"`
+
 	// Specifc, created device. Detail needed for deletion and book-keeping.
+	// Note that this is either created via the 'static MIG' flow or the
+	// 'dynamic MIG' flow -- in any case, it represents a MIG device that
+	// currently exists (incarnated, concrete). Maybe rename to `Concrete`
 	Created *MigDeviceInfo        `json:"created"`
 	Device  *kubeletplugin.Device `json:"device"`
 }
@@ -60,7 +72,7 @@ func (d PreparedDevice) Type() string {
 		return GpuDeviceType
 	}
 	if d.Mig != nil {
-		return MigDeviceType
+		return PreparedMigDeviceType
 	}
 	if d.Vfio != nil {
 		return VfioDeviceType
@@ -72,8 +84,8 @@ func (d *PreparedDevice) CanonicalName() string {
 	switch d.Type() {
 	case GpuDeviceType:
 		return d.Gpu.Info.CanonicalName()
-	case MigDeviceType:
-		return d.Mig.RequestedCanonicalName //.CanonicalName()
+	case PreparedMigDeviceType:
+		return d.Mig.RequestedCanonicalName
 	case VfioDeviceType:
 		return d.Vfio.Info.CanonicalName()
 	}
@@ -93,7 +105,7 @@ func (l PreparedDeviceList) Gpus() PreparedDeviceList {
 func (l PreparedDeviceList) MigDevices() PreparedDeviceList {
 	var devices PreparedDeviceList
 	for _, device := range l {
-		if device.Type() == MigDeviceType {
+		if device.Type() == PreparedMigDeviceType {
 			devices = append(devices, device)
 		}
 	}
@@ -132,7 +144,7 @@ func (g *PreparedDeviceGroup) GetDevices() []kubeletplugin.Device {
 		switch device.Type() {
 		case GpuDeviceType:
 			devices = append(devices, *device.Gpu.Device)
-		case MigDeviceType:
+		case PreparedMigDeviceType:
 			devices = append(devices, *device.Mig.Device)
 		case VfioDeviceType:
 			devices = append(devices, *device.Vfio.Device)
@@ -147,7 +159,7 @@ func (g *PreparedDeviceGroup) GetDeviceNames() []DeviceName {
 		switch device.Type() {
 		case GpuDeviceType:
 			names = append(names, device.Gpu.Info.CanonicalName())
-		case MigDeviceType:
+		case PreparedMigDeviceType:
 			names = append(names, device.Mig.RequestedCanonicalName)
 		}
 	}

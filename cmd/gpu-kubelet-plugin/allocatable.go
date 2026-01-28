@@ -23,7 +23,6 @@ import (
 	"strings"
 
 	"github.com/Masterminds/semver"
-	nvdev "github.com/NVIDIA/go-nvlib/pkg/nvlib/device"
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -45,42 +44,10 @@ type AllocatableDevices map[DeviceName]*AllocatableDevice
 // AllocatableDevice represents an individual device that can be allocated.
 // This can either be a full GPU or MIG device, but not both.
 type AllocatableDevice struct {
-	Gpu         *GpuInfo
-	Mig         *MigSpec
-	MigConcrete *MigDeviceInfo
-	Vfio        *VfioDeviceInfo
-}
-
-// MigSpec describes an abstract MIG device with precise specification of parent
-// GPU, MIG profile and physcical placement on the parent GPU.
-//
-// Does not necessarily encode a _concrete_ (materialized / created /
-// incarnated) device. In terms of abstract MIG device descriptions, there are
-// many useful levels of precision / abstraction / refinement. For example:
-//
-// 1) specify MIG profile; do not specify parent, placement 2) specify MIG
-// profile, parent; do not specify placement 3) specify MIG profile, parent,
-// placement.
-//
-// This type is case (3); it leaves no degrees of freedom.
-//
-// TODO(JP): maybe rename to AbstractMigSpec or AbstractMigDevice or MigPP.
-// TODO2(JP): clarify how CI id and GI id are not orthogonal to placement. Maybe
-// add a method that translates between the two. I don't think we need to wait
-// for creation to then know the CI ID and GI ID. TODO3(JP): clarify the
-// relevance of the three-tuple of parent,ciid,giid for precisely describing a
-// MIG device, and how that's a fundamental data structure. Maybe define its own
-// type for it, and use it elsewhere.
-type MigSpec struct {
-	Parent        *GpuInfo
-	Profile       nvdev.MigProfile
-	GIProfileInfo nvml.GpuInstanceProfileInfo
-	// TODO(JP): rename to Placement?
-	MemorySlices nvml.GpuInstancePlacement
-}
-
-func (i *MigSpec) CanonicalName() DeviceName {
-	return migppCanonicalName(i.Parent.minor, i.Profile.String(), &i.MemorySlices)
+	Gpu        *GpuInfo
+	MigDynamic *MigSpec
+	MigStatic  *MigDeviceInfo
+	Vfio       *VfioDeviceInfo
 }
 
 // TODO(JP): add memory slices?
@@ -148,7 +115,8 @@ func (i MigSpec) PartCapacities() PartCapacityMap {
 func (i MigSpec) PartAttributes() map[resourceapi.QualifiedName]resourceapi.DeviceAttribute {
 	return map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 		"type": {
-			StringValue: ptr.To(MigDeviceType),
+			// TODO: make "mig" dynamic again? This is exposed in the public API
+			StringValue: ptr.To("mig"),
 		},
 		"parentUUID": {
 			StringValue: &i.Parent.UUID,
@@ -245,8 +213,11 @@ func (d AllocatableDevice) Type() string {
 	if d.Gpu != nil {
 		return GpuDeviceType
 	}
-	if d.Mig != nil {
-		return MigDeviceType
+	if d.MigDynamic != nil {
+		return MigDynamicDeviceType
+	}
+	if d.MigStatic != nil {
+		return MigStaticDeviceType
 	}
 	if d.Vfio != nil {
 		return VfioDeviceType
@@ -254,14 +225,23 @@ func (d AllocatableDevice) Type() string {
 	return UnknownDeviceType
 }
 
+func (d AllocatableDevice) IsStaticOrDynMigDevice() bool {
+	switch d.Type() {
+	case MigStaticDeviceType, MigDynamicDeviceType:
+		return true
+	default:
+		return false
+	}
+}
+
 func (d *AllocatableDevice) CanonicalName() string {
 	switch d.Type() {
 	case GpuDeviceType:
 		return d.Gpu.CanonicalName()
 	case MigStaticDeviceType:
-		return d.Mig.CanonicalName()
+		return d.MigStatic.CanonicalName()
 	case MigDynamicDeviceType:
-		return d.Mig.CanonicalName()
+		return d.MigDynamic.CanonicalName()
 	case VfioDeviceType:
 		return d.Vfio.CanonicalName()
 	}
@@ -274,7 +254,7 @@ func (d *AllocatableDevice) GetDevice() resourceapi.Device {
 		return d.Gpu.GetDevice()
 	// Concrete MIG device, pre-created (not managed by dynamic MIG feature)
 	case MigStaticDeviceType:
-		return d.MigConcrete.GetDevice()
+		return d.MigStatic.GetDevice()
 	case VfioDeviceType:
 		return d.Vfio.GetDevice()
 	}
@@ -289,9 +269,7 @@ func (d *AllocatableDevice) PartGetDevice() resourceapi.Device {
 	case MigStaticDeviceType:
 		panic("PartGetDevice() called for MigStaticDeviceType")
 	case MigDynamicDeviceType:
-		// TODO: this lookup should not be `d.Mig` but `d.MigAbstract` or
-		// something like that.
-		return d.Mig.PartGetDevice()
+		return d.MigDynamic.PartGetDevice()
 	case VfioDeviceType:
 		panic("not yet implemented")
 	}
@@ -306,10 +284,13 @@ func (d AllocatableDevice) UUID() string {
 	if d.Gpu != nil {
 		return d.Gpu.UUID
 	}
-	if d.Mig != nil {
+	if d.MigStatic != nil {
+		return d.MigStatic.UUID
+	}
+	if d.MigDynamic != nil {
 		// Review: this can only be done after dynamic MIG device creation, once
 		// this ID exists.
-		return "foo"
+		panic("UUID() called on MigDynamic")
 	}
 	if d.Vfio != nil {
 		return d.Vfio.UUID
@@ -328,12 +309,13 @@ func (d AllocatableDevices) getDevicesByGPUPCIBusID(pcieBusID string) Allocatabl
 				devices = append(devices, device)
 			}
 		case MigStaticDeviceType:
-			if device.Mig.Parent.pcieBusID == pcieBusID {
+			if device.MigStatic.parent.pcieBusID == pcieBusID {
 				devices = append(devices, device)
 			}
 		case MigDynamicDeviceType:
-			// TODO: also inspect parent
-			continue
+			if device.MigDynamic.Parent.pcieBusID == pcieBusID {
+				devices = append(devices, device)
+			}
 		case VfioDeviceType:
 			if device.Vfio.pcieBusID == pcieBusID {
 				devices = append(devices, device)
@@ -401,8 +383,11 @@ func (d AllocatableDevices) GpuUUIDs() []string {
 func (d AllocatableDevices) PossibleMigDeviceNames() []string {
 	var names []string
 	for _, device := range d {
-		if device.Type() == MigStaticDeviceType || device.Type() == MigDynamicDeviceType {
-			names = append(names, device.Mig.CanonicalName())
+		if device.Type() == MigStaticDeviceType {
+			names = append(names, device.MigStatic.CanonicalName())
+		}
+		if device.Type() == MigDynamicDeviceType {
+			names = append(names, device.MigDynamic.CanonicalName())
 		}
 	}
 	slices.Sort(names)
@@ -521,7 +506,7 @@ func (d *AllocatableDevice) IsHealthy() bool {
 		return d.Gpu.Health == Healthy
 	case MigStaticDeviceType:
 		// TODO: review -- what about the parent?
-		return d.Mig.Health == Healthy
+		return d.MigStatic.Health == Healthy
 	case MigDynamicDeviceType:
 		// TODO. For now, pretend health -- this device maybe hasn't manifested
 		// yet. Or has it? We could adopt the health status of the parent, but

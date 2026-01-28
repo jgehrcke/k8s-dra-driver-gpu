@@ -131,6 +131,8 @@ func (d *GpuInfo) String() string {
 	return fmt.Sprintf("%s-%s", d.CanonicalName(), d.UUID)
 }
 
+// User-facing name for a specific (concrete) MIG device. Must encode especially
+// three Ps: parent, profile, placement.
 func (d *MigDeviceInfo) CanonicalName() string {
 	return migppCanonicalName(d.ParentMinor, d.Profile, &d.Placement.GpuInstancePlacement)
 }
@@ -260,7 +262,13 @@ func (d *MigDeviceInfo) GetDevice() resourceapi.Device {
 		Name: d.CanonicalName(),
 		Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 			"type": {
-				StringValue: ptr.To(MigDeviceType),
+				// Note: for API stability, it's critical we use the string
+				// "mig" here. In order to not confuse this with implementation
+				// details, I've now hard-coded it here. Replace again with a
+				// constant when we make sure that this constant is used wisely
+				// across the codebase. This was const `MigDeviceType` before
+				// introduction of the dyn MIG feature.
+				StringValue: ptr.To("mig"),
 			},
 			"uuid": {
 				StringValue: &d.UUID,
