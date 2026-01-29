@@ -45,12 +45,13 @@ type DeviceConfigState struct {
 
 type DeviceState struct {
 	sync.Mutex
-	cdi            *CDIHandler
-	tsManager      *TimeSlicingManager
-	mpsManager     *MpsManager
-	vfioPciManager *VfioPciManager
-	allocatable    AllocatableDevices
-	config         *Config
+	cdi                      *CDIHandler
+	tsManager                *TimeSlicingManager
+	mpsManager               *MpsManager
+	vfioPciManager           *VfioPciManager
+	checkpointCleanupManager *CheckpointCleanupManager
+	allocatable              AllocatableDevices
+	config                   *Config
 
 	nvdevlib          *deviceLib
 	checkpointManager checkpointmanager.CheckpointManager
@@ -122,11 +123,12 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 		tsManager:         tsManager,
 		mpsManager:        mpsManager,
 		vfioPciManager:    vfioPciManager,
+		allocatable:       allocatable,
 		config:            config,
 		nvdevlib:          nvdevlib,
 		checkpointManager: checkpointManager,
 	}
-	state.allocatable = allocatable
+	state.checkpointCleanupManager = NewCheckpointCleanupManager(state, config.clientsets.Resource)
 
 	checkpoints, err := state.checkpointManager.ListCheckpoints()
 	if err != nil {
@@ -185,6 +187,8 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 		checkpoint.V2.PreparedClaims[claimUID] = PreparedClaim{
 			CheckpointState: ClaimCheckpointStatePrepareStarted,
 			Status:          claim.Status,
+			Name:            claim.Name,
+			Namespace:       claim.Namespace,
 		}
 	})
 	if err != nil {
@@ -248,8 +252,10 @@ func (s *DeviceState) Unprepare(ctx context.Context, claimUID string) error {
 
 	switch pc.CheckpointState {
 	case ClaimCheckpointStatePrepareStarted:
-		klog.Infof("unprepare noop: claim preparation started but not completed: %v", claimUID)
-		return nil
+		// Preparation was started but not completed. There are no devices to unprepare
+		// since preparation didn't complete successfully, but we still need to continue
+		// to ensure the claim gets deleted from the checkpoint.
+		klog.Infof("unprepare: claim preparation started but not completed: %v", claimUID)
 	case ClaimCheckpointStatePrepareCompleted:
 		if err := s.unprepareDevices(ctx, claimUID, pc.PreparedDevices); err != nil {
 			return fmt.Errorf("unprepare devices failed: %w", err)
