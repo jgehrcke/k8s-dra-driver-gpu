@@ -88,9 +88,9 @@ confirm_mig_mode_disabled_all_nodes() {
   confirm_mig_mode_disabled_all_nodes
 }
 
-# bats test_tags=bats:focus
+# bats test_tags=bats:XXfocus
 @test "1 pod, 1 MIG + TimeSlicing config" {
-  local _iargs=("--set" "logVerbosity=6" "--set" "featureGates.DynamicMIG=true" "--set" "featuregates.TimeSlicingSettings=true")
+  local _iargs=("--set" "logVerbosity=6" "--set" "featureGates.DynamicMIG=true" "--set" "featureGates.TimeSlicingSettings=true")
   iupgrade_wait "${TEST_CHART_REPO}" "${TEST_CHART_VERSION}" _iargs
 
   confirm_mig_mode_disabled_all_nodes
