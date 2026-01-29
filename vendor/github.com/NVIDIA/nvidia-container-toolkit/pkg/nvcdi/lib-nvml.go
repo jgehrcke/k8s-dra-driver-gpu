@@ -18,7 +18,6 @@ package nvcdi
 
 import (
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 
@@ -57,7 +56,6 @@ func (l *nvmllib) DeviceSpecGenerators(ids ...string) (DeviceSpecGenerator, erro
 	}
 	defer l.tryShutdown()
 
-	fmt.Fprintf(os.Stderr, "l.getDeviceSpecGeneratorsForIDs(ids): %v\n", ids)
 	dsgs, err := l.getDeviceSpecGeneratorsForIDs(ids...)
 	if err != nil {
 		return nil, err
@@ -84,7 +82,6 @@ func (l *nvmllib) getDeviceSpecGeneratorsForIDs(ids ...string) (DeviceSpecGenera
 
 	var DeviceSpecGenerators DeviceSpecGenerators
 	for _, uuid := range uuids {
-		fmt.Fprintf(os.Stderr, "l.nvmllib.DeviceGetHandleByUUID: %v\n", uuid)
 		device, ret := l.nvmllib.DeviceGetHandleByUUID(string(uuid))
 		if ret != nvml.SUCCESS {
 			return nil, fmt.Errorf("failed to get device handle from UUID: %v", ret)
@@ -100,17 +97,14 @@ func (l *nvmllib) getDeviceSpecGeneratorsForIDs(ids ...string) (DeviceSpecGenera
 }
 
 func (l *nvmllib) newDeviceSpecGeneratorFromNVMLDevice(id string, nvmlDevice nvml.Device) (DeviceSpecGenerator, error) {
-	fmt.Fprintf(os.Stderr, "newDeviceSpecGeneratorFromNVMLDevice id: %v\n", id)
 	isMig, ret := nvmlDevice.IsMigDeviceHandle()
 	if ret != nvml.SUCCESS {
 		return nil, fmt.Errorf("%v", ret)
 	}
 	if isMig {
-		fmt.Fprintf(os.Stderr, "newDeviceSpecGeneratorFromNVMLDevice id is MIG\n")
 		return l.newMIGDeviceSpecGeneratorFromNVMLDevice(id, nvmlDevice)
 	}
 
-	fmt.Fprintf(os.Stderr, "newDeviceSpecGeneratorFromNVMLDevice id is NOT MIG\n")
 	return l.newFullGPUDeviceSpecGeneratorFromNVMLDevice(id, nvmlDevice, l.featureFlags)
 }
 

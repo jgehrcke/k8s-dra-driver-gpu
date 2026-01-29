@@ -18,11 +18,9 @@ package dgpu
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/NVIDIA/go-nvlib/pkg/nvlib/device"
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
-	"github.com/davecgh/go-spew/spew"
 
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/discover"
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/info/drm"
@@ -105,11 +103,6 @@ func (o *options) newNvmlMigDiscoverer(d requiredMigInfo) (discover.Discover, er
 	if err != nil {
 		return nil, err
 	}
-
-	fmt.Fprintf(os.Stderr, "newNvmlMigDiscoverer:\n")
-	spew.Printf("%s=%#v\n", "parentPath", parentPath)
-	spew.Printf("%s=%#v\n", "ciCapDevicePath", ciCapDevicePath)
-	spew.Printf("%s=%#v\n", "giCapDevicePath", giCapDevicePath)
 
 	deviceNodes := discover.NewCharDeviceDiscoverer(
 		o.logger,
