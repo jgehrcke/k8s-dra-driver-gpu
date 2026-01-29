@@ -67,8 +67,8 @@ type DaemonSetManager struct {
 	informer      cache.SharedIndexInformer
 	mutationCache cache.MutationCache
 
-	daemonsetPodManager          *DaemonSetPodManager
 	resourceClaimTemplateManager *DaemonSetResourceClaimTemplateManager
+	cdStatusManager              *ComputeDomainStatusManager
 	cleanupManager               *CleanupManager[*appsv1.DaemonSet]
 }
 
@@ -99,8 +99,13 @@ func NewDaemonSetManager(config *ManagerConfig, getComputeDomain GetComputeDomai
 		factory:          factory,
 		informer:         informer,
 	}
-	m.daemonsetPodManager = NewDaemonSetPodManager(config, getComputeDomain, listComputeDomains, updateComputeDomainStatus)
 	m.resourceClaimTemplateManager = NewDaemonSetResourceClaimTemplateManager(config, getComputeDomain)
+
+	// Create ComputeDomainStatusManager to sync node info to CD status
+	// - When feature gate ON: syncs from CDCliques + non-fabric-attached pods
+	// - When feature gate OFF: syncs from non-fabric-attached pods + handles deletions
+	m.cdStatusManager = NewComputeDomainStatusManager(config, listComputeDomains, updateComputeDomainStatus)
+
 	m.cleanupManager = NewCleanupManager[*appsv1.DaemonSet](informer, getComputeDomain, m.cleanup)
 
 	return m
@@ -152,12 +157,12 @@ func (m *DaemonSetManager) Start(ctx context.Context) (rerr error) {
 		return fmt.Errorf("informer cache sync for DaemonSet failed")
 	}
 
-	if err := m.daemonsetPodManager.Start(ctx); err != nil {
+	if err := m.resourceClaimTemplateManager.Start(ctx); err != nil {
 		return fmt.Errorf("error starting ResourceClaimTemplate manager: %w", err)
 	}
 
-	if err := m.resourceClaimTemplateManager.Start(ctx); err != nil {
-		return fmt.Errorf("error starting ResourceClaimTemplate manager: %w", err)
+	if err := m.cdStatusManager.Start(ctx); err != nil {
+		return fmt.Errorf("error starting ComputeDomain status manager: %w", err)
 	}
 
 	if err := m.cleanupManager.Start(ctx); err != nil {
@@ -168,8 +173,8 @@ func (m *DaemonSetManager) Start(ctx context.Context) (rerr error) {
 }
 
 func (m *DaemonSetManager) Stop() error {
-	if err := m.daemonsetPodManager.Stop(); err != nil {
-		return fmt.Errorf("error stopping daemonset Pod manager: %w", err)
+	if err := m.cdStatusManager.Stop(); err != nil {
+		klog.Errorf("error stopping ComputeDomain status manager: %v", err)
 	}
 	if err := m.resourceClaimTemplateManager.Stop(); err != nil {
 		return fmt.Errorf("error stopping ResourceClaimTemplate manager: %w", err)
