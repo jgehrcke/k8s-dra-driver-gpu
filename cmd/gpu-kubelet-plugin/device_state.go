@@ -525,15 +525,15 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 		for _, c := range slices.Backward(configs) {
 			if slices.Contains(c.Requests, result.Request) {
 				if _, ok := c.Config.(*configapi.GpuConfig); ok && device.Type() != GpuDeviceType {
-					return nil, fmt.Errorf("cannot apply GPU config to request: %v", result.Request)
+					return nil, fmt.Errorf("cannot apply GpuConfig to device type %s (request: %v)", device.Type(), result.Request)
 				}
 
 				if _, ok := c.Config.(*configapi.MigDeviceConfig); ok && !device.IsStaticOrDynMigDevice() {
-					return nil, fmt.Errorf("cannot apply MIG device config to request: %v", result.Request)
+					return nil, fmt.Errorf("cannot apply MigDeviceConfig to device type %s (request: %v)", device.Type(), result.Request)
 				}
 
 				if _, ok := c.Config.(*configapi.VfioDeviceConfig); ok && device.Type() != VfioDeviceType {
-					return nil, fmt.Errorf("cannot apply VFIO device config to request: %v", result.Request)
+					return nil, fmt.Errorf("cannot apply VfioDeviceConfig to device type %s (request: %v)", device.Type(), result.Request)
 				}
 				configResultsMap[c.Config] = append(configResultsMap[c.Config], &result)
 				break
@@ -831,7 +831,6 @@ func (s *DeviceState) applySharingConfig(ctx context.Context, config configapi.S
 
 	// Apply time-slicing settings (if available and feature gate enabled).
 	if featuregates.Enabled(featuregates.TimeSlicingSettings) && config.IsTimeSlicing() {
-		//TODOMIG: re-enable!
 		// tsc, err := config.GetTimeSlicingConfig()
 		// if err != nil {
 		// 	return nil, fmt.Errorf("error getting timeslice config for requests '%v' in claim '%v': %w", requests, claim.UID, err)
