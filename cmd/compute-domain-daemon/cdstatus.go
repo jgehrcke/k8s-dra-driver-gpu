@@ -341,24 +341,17 @@ func (m *ComputeDomainStatusManager) maybePushNodesUpdate(cd *nvapi.ComputeDomai
 		}
 	}
 
-	newIPs := m.getIPSet(cd.Status.Nodes)
-	previousIPs := m.getIPSet(m.previousNodes)
+	newIPs := m.getIPSetForClique(cd.Status.Nodes)
+	previousIPs := m.getIPSetForClique(m.previousNodes)
 
-	// Compare sets (i.e., without paying attention to order). Note: the order
-	// of IP addresses written to the IMEX daemon's config file might matter (in
-	// the sense that if across config files the set is equal but the order is
-	// not: that may lead to an IMEX daemon startup error). Maybe we should
-	// perform a stable sort of IP addresses before writing them to the nodes
-	// config file. Note/TODO: we probably want to limit this check to IP
-	// addresses relevant to _this_ clique.
+	// Compare sets (without paying attention to order).
 	if !maps.Equal(newIPs, previousIPs) {
-		klog.V(2).Infof("IP set changed")
-		// This log message gets large for large node numbers
-		klog.V(6).Infof("previous: %v; new: %v", previousIPs, newIPs)
+		added, removed := previousIPs.Diff(newIPs)
+		klog.V(2).Infof("IP set for clique changed.\nAdded: %v\nRemoved: %v", added, removed)
 		m.previousNodes = cd.Status.Nodes
 		m.updatedDaemonsChan <- m.nodesToDaemonInfos(cd.Status.Nodes)
 	} else {
-		klog.V(6).Infof("IP set did not change")
+		klog.V(6).Infof("IP set for clique did not change")
 	}
 }
 
@@ -473,10 +466,12 @@ func (m *ComputeDomainStatusManager) updateNodeStatus(ctx context.Context, ready
 	return nil
 }
 
-func (m *ComputeDomainStatusManager) getIPSet(nodeInfos []*nvapi.ComputeDomainNode) IPSet {
+func (m *ComputeDomainStatusManager) getIPSetForClique(nodeInfos []*nvapi.ComputeDomainNode) IPSet {
 	set := make(IPSet)
 	for _, n := range nodeInfos {
-		set[n.IPAddress] = struct{}{}
+		if n.CliqueID == m.config.cliqueID {
+			set[n.IPAddress] = struct{}{}
+		}
 	}
 	return set
 }
