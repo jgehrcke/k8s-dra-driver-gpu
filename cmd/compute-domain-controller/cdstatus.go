@@ -183,12 +183,12 @@ func (m *ComputeDomainStatusManager) sync(ctx context.Context) {
 
 		// Separate pods based on cliqueID label
 		cliqueID, exists := pod.Labels[computeDomainCliqueLabelKey]
-		if !exists || cliqueID == "" {
-			// Non-fabric-attached node (empty cliqueID)
-			nonFabricPodsByCD[cdUID] = append(nonFabricPodsByCD[cdUID], pod)
-		} else {
-			// Fabric-attached node (non-empty cliqueID)
+		if !exists || cliqueID != "" {
+			// Unlabeled or fabric-attached: treat as fabric pods
 			fabricPodsByCD[cdUID] = append(fabricPodsByCD[cdUID], pod)
+		} else {
+			// Explicitly empty cliqueID: non-fabric pods
+			nonFabricPodsByCD[cdUID] = append(nonFabricPodsByCD[cdUID], pod)
 		}
 	}
 
@@ -214,9 +214,9 @@ func (m *ComputeDomainStatusManager) syncCD(ctx context.Context, cd *nvapi.Compu
 		nonFabricNodes = m.buildNodesFromPods(nonFabricPods)
 		newNodes = slices.Concat(fabricNodes, nonFabricNodes)
 	} else {
-		// Feature gate disabled: build from filtered fabric nodes + non-fabric pods
+		// Feature gate disabled: filter stale fabric nodes + rebuild non-fabric nodes
+		fabricNodes = m.getNonStaleFabricNodes(cd.Status.Nodes, fabricPods)
 		nonFabricNodes = m.buildNodesFromPods(nonFabricPods)
-		fabricNodes = m.filterStaleNodes(cd.Status.Nodes, fabricPods)
 		newNodes = slices.Concat(fabricNodes, nonFabricNodes)
 	}
 
@@ -324,19 +324,26 @@ func (m *ComputeDomainStatusManager) cleanupClique(ctx context.Context, clique *
 
 // filterStaleNodes removes nodes from CD status if their pod no longer exists.
 // It filters the existing nodes list to only keep those with a corresponding pod in the pods list.
-func (m *ComputeDomainStatusManager) filterStaleNodes(existingNodes []*nvapi.ComputeDomainNode, pods []*corev1.Pod) []*nvapi.ComputeDomainNode {
-	// Build set of pod IPs
-	podIPs := make(map[string]struct{})
-	for _, pod := range pods {
+// getNonStaleFabricNodes returns fabric-attached nodes from existingNodes that still have running pods.
+// Non-fabric nodes are filtered out (they'll be rebuilt from nonFabricPods).
+func (m *ComputeDomainStatusManager) getNonStaleFabricNodes(existingNodes []*nvapi.ComputeDomainNode, fabricPods []*corev1.Pod) []*nvapi.ComputeDomainNode {
+	// Build set of fabric pod IPs
+	fabricPodIPs := make(map[string]struct{})
+	for _, pod := range fabricPods {
 		if pod.Status.PodIP != "" {
-			podIPs[pod.Status.PodIP] = struct{}{}
+			fabricPodIPs[pod.Status.PodIP] = struct{}{}
 		}
 	}
 
-	// Keep only nodes that have corresponding pods
+	// Keep only fabric nodes (CliqueID != "") that still have pods
 	var result []*nvapi.ComputeDomainNode
 	for _, node := range existingNodes {
-		if _, exists := podIPs[node.IPAddress]; exists {
+		// Skip non-fabric nodes (they're rebuilt fresh)
+		if node.CliqueID == "" {
+			continue
+		}
+		// Keep fabric node if its pod still exists
+		if _, exists := fabricPodIPs[node.IPAddress]; exists {
 			result = append(result, node)
 		}
 	}
