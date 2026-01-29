@@ -248,7 +248,8 @@ func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (PerGPUMinorAlloc
 				return fmt.Errorf("error getting MIG info for GPU %v: %w", i, err)
 			}
 
-			// Announce the full physical GPU.
+			// Announce the full physical GPU. Announce it using
+			// `CanonicalName()` -- which is based on its device minor.
 			thisGPUAllocatable[gpuInfo.CanonicalName()] = parentdev
 
 			for _, migspec := range migspecs {

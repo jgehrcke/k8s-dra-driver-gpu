@@ -92,6 +92,7 @@ func (d *PreparedDevice) CanonicalName() string {
 	panic("unexpected type for AllocatableDevice")
 }
 
+// Return only devices representing full, physical GPUs
 func (l PreparedDeviceList) Gpus() PreparedDeviceList {
 	var devices PreparedDeviceList
 	for _, device := range l {
@@ -166,6 +167,7 @@ func (g *PreparedDeviceGroup) GetDeviceNames() []DeviceName {
 	return names
 }
 
+// UUIDs for full GPUs, MIG devices, and Vfio devices
 func (l PreparedDeviceList) UUIDs() []string {
 	uuids := append(l.GpuUUIDs(), l.MigDeviceUUIDs()...)
 	uuids = append(uuids, l.VfioDeviceUUIDs()...)
@@ -173,6 +175,7 @@ func (l PreparedDeviceList) UUIDs() []string {
 	return uuids
 }
 
+// UUIDs for full GPUs, MIG devices, and Vfio devices
 func (g *PreparedDeviceGroup) UUIDs() []string {
 	uuids := append(g.GpuUUIDs(), g.MigDeviceUUIDs()...)
 	uuids = append(uuids, g.VfioDeviceUUIDs()...)
@@ -180,6 +183,7 @@ func (g *PreparedDeviceGroup) UUIDs() []string {
 	return uuids
 }
 
+// UUIDs for full GPUs, MIG devices, and Vfio devices
 func (d PreparedDevices) UUIDs() []string {
 	uuids := append(d.GpuUUIDs(), d.MigDeviceUUIDs()...)
 	uuids = append(uuids, d.VfioDeviceUUIDs()...)
@@ -187,6 +191,7 @@ func (d PreparedDevices) UUIDs() []string {
 	return uuids
 }
 
+// UUIDs only for full GPUs.
 func (l PreparedDeviceList) GpuUUIDs() []string {
 	var uuids []string
 	for _, device := range l.Gpus() {

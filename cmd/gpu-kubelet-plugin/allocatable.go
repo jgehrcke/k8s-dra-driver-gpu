@@ -50,6 +50,8 @@ type AllocatableDevice struct {
 	Vfio       *VfioDeviceInfo
 }
 
+type AllocatableDeviceList []*AllocatableDevice
+
 // TODOMIG(JP): add memory slices or not?
 //
 // Note(JP): for now, I feel like we may want to keep capacity agnostic to
@@ -276,10 +278,9 @@ func (d *AllocatableDevice) PartGetDevice() resourceapi.Device {
 	panic("unexpected type for AllocatableDevice")
 }
 
-// Used for announcing / describing a device, possibly pre-allocation. That is,
-// for dynamic MIG devices, we may not want to describe such devices with a UUID
-// (This concept will have to change for abstract allocatable devices that do
-// not have a UUID before actualization).
+// Note: the UUID is not used for announcing a device. Note that since
+// introduction of DynamicMIG, some allocatable devices are abstract devices
+// that do not have a UUID before actualization anyway.
 func (d AllocatableDevice) UUID() string {
 	if d.Gpu != nil {
 		return d.Gpu.UUID
@@ -288,9 +289,12 @@ func (d AllocatableDevice) UUID() string {
 		return d.MigStatic.UUID
 	}
 	if d.MigDynamic != nil {
-		// Review: this can only be done after dynamic MIG device creation, once
-		// this ID exists.
-		panic("UUID() called on MigDynamic")
+		// Calling code must make sure that we never get here. First, an
+		// abstract MIG device must be prepared (created). Only then, its UUID
+		// can be determined. This method still exists because when the
+		// DynamicMIG feature gate is disabled, `AllocatableDevices` _can_
+		// implement UUIDProvider.
+		panic("unexpected call to UUID for AllocatableDevice type MigDynamic")
 	}
 	if d.Vfio != nil {
 		return d.Vfio.UUID
@@ -298,7 +302,39 @@ func (d AllocatableDevice) UUID() string {
 	panic("unexpected type for AllocatableDevice")
 }
 
-type AllocatableDeviceList []*AllocatableDevice
+// Required for implementing UUIDProvider. Meant to return full GPU UUIDs and
+// MIG device UUIDs. Must not be used when the DynamicMIG featuregate is
+// enabled. Unsure what it's supposed to return for VFIO devices.
+func (d AllocatableDevices) UUIDs() []string {
+	var uuids []string
+	for _, dev := range d {
+		uuids = append(uuids, dev.UUID())
+	}
+	return uuids
+}
+
+// Required for implementing UUIDProvider. Meant to return (only) full GPU UUIDs.
+func (d AllocatableDevices) GpuUUIDs() []string {
+	var uuids []string
+	for _, dev := range d {
+		if dev.Type() == GpuDeviceType {
+			uuids = append(uuids, dev.UUID())
+		}
+	}
+	return uuids
+}
+
+// Required for implementing UUIDProvider. Meant to return MIG device GPU UUIDs.
+// Must not be called when the DynamicMIG featuregate is enabled.
+func (d AllocatableDevices) MigDeviceUUIDs() []string {
+	var uuids []string
+	for _, dev := range d {
+		if dev.Type() == MigStaticDeviceType {
+			uuids = append(uuids, dev.UUID())
+		}
+	}
+	return uuids
+}
 
 func (d AllocatableDevices) getDevicesByGPUPCIBusID(pcieBusID string) AllocatableDeviceList {
 	var devices AllocatableDeviceList
@@ -357,17 +393,6 @@ func (d AllocatableDevices) GetVfioDevices() AllocatableDeviceList {
 	return devices
 }
 
-func (d AllocatableDevices) GpuUUIDs() []string {
-	var uuids []string
-	for _, device := range d {
-		if device.Type() == GpuDeviceType {
-			uuids = append(uuids, device.Gpu.UUID)
-		}
-	}
-	slices.Sort(uuids)
-	return uuids
-}
-
 // TODO: document the relevance of this method -- where are these names used,
 // what are guarantees about them? How does this relate to the UUID concept?
 func (d AllocatableDevices) PossibleMigDeviceNames() []string {
@@ -395,9 +420,16 @@ func (d AllocatableDevices) VfioDeviceUUIDs() []string {
 	return uuids
 }
 
+// Returns the names of all allocatable devices, by calling into CanonicalName()
+// for each device. Before the introduction of dynamic MIG this returned the
+// UUID, but we made the transition to first-classing minor numbers a while ago.
+// Also see https://github.com/NVIDIA/k8s-dra-driver-gpu/pull/428 and
+// https://github.com/NVIDIA/k8s-dra-driver-gpu/issues/427#issuecomment-3069573022
 func (d AllocatableDevices) Names() []string {
-	names := append(d.GpuUUIDs(), d.PossibleMigDeviceNames()...)
-	names = append(names, d.VfioDeviceUUIDs()...)
+	var names []string
+	for _, device := range d {
+		names = append(names, device.CanonicalName())
+	}
 	slices.Sort(names)
 	return names
 }

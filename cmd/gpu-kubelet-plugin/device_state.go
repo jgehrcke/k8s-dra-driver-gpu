@@ -582,10 +582,13 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 			return nil, fmt.Errorf("error validating GPU config: %w", err)
 		}
 
-		// Apply the config to the list of results associated with it.
+		// Apply the config to the list of results associated with it. Note(JP):
+		// if this applies to a MIG device then note that this happens before
+		// MIG device creation, i.e. the UUID of the MIG device is not yet
+		// known.
 		configState, err := s.applyConfig(ctx, config, claim, results)
 		if err != nil {
-			return nil, fmt.Errorf("error applying GPU config: %w", err)
+			return nil, fmt.Errorf("error applying config: %w", err)
 		}
 
 		// Capture the prepared device group config in the map.
@@ -698,7 +701,7 @@ func (s *DeviceState) unprepareDevices(ctx context.Context, claimUID string, dev
 			}
 		}
 
-		// TODO: do this after MPS/TimeSlicing primitive teardown!
+		// TODO: do this after MPS/TimeSlicing primitive teardown?
 		for _, device := range group.Devices {
 			switch device.Type() {
 			case GpuDeviceType:
@@ -733,7 +736,7 @@ func (s *DeviceState) unprepareDevices(ctx context.Context, claimUID string, dev
 		// Go back to default time-slicing for all full GPUs.
 		if featuregates.Enabled(featuregates.TimeSlicingSettings) {
 			tsc := configapi.DefaultGpuConfig().Sharing.TimeSlicingConfig
-			if err := s.tsManager.SetTimeSlice(group.Devices.Gpus(), tsc); err != nil {
+			if err := s.tsManager.SetTimeSlice(group.Devices.GpuUUIDs(), tsc); err != nil {
 				return fmt.Errorf("error setting timeslice for devices: %w", err)
 			}
 		}
@@ -803,10 +806,13 @@ func (s *DeviceState) discoverSiblingAllocatables(device *AllocatableDevice) err
 func (s *DeviceState) applyConfig(ctx context.Context, config configapi.Interface, claim *resourceapi.ResourceClaim, results []*resourceapi.DeviceRequestAllocationResult) (*DeviceConfigState, error) {
 	switch castConfig := config.(type) {
 	case *configapi.GpuConfig:
+		klog.V(6).Infof("applySharingConfig() for GpuConfig")
 		return s.applySharingConfig(ctx, castConfig.Sharing, claim, results)
 	case *configapi.MigDeviceConfig:
+		klog.V(6).Infof("applySharingConfig() for MigDeviceConfig")
 		return s.applySharingConfig(ctx, castConfig.Sharing, claim, results)
 	case *configapi.VfioDeviceConfig:
+		klog.V(6).Infof("applySharingConfig() for VfioDeviceConfig")
 		return s.applyVfioDeviceConfig(ctx, castConfig, claim, results)
 	default:
 		return nil, fmt.Errorf("unknown config type: %T", castConfig)
@@ -821,9 +827,9 @@ func (s *DeviceState) applySharingConfig(ctx context.Context, config configapi.S
 	}
 
 	// Get the list of allocatable devices this config is being applied over.
-	allocatableDevices := make(AllocatableDevices)
+	requestedDevices := make(AllocatableDevices)
 	for _, r := range results {
-		allocatableDevices[r.Device] = s.allocatable[r.Device]
+		requestedDevices[r.Device] = s.allocatable[r.Device]
 	}
 
 	// Declare a device group state object to populate.
@@ -831,33 +837,53 @@ func (s *DeviceState) applySharingConfig(ctx context.Context, config configapi.S
 
 	// Apply time-slicing settings (if available and feature gate enabled).
 	if featuregates.Enabled(featuregates.TimeSlicingSettings) && config.IsTimeSlicing() {
-		// tsc, err := config.GetTimeSlicingConfig()
-		// if err != nil {
-		// 	return nil, fmt.Errorf("error getting timeslice config for requests '%v' in claim '%v': %w", requests, claim.UID, err)
-		// }
-		// if tsc != nil {
-		// 	err = s.tsManager.SetTimeSlice(allocatableDevices, tsc)
-		// 	if err != nil {
-		// 		return nil, fmt.Errorf("error setting timeslice config for requests '%v' in claim '%v': %w", requests, claim.UID, err)
-		// 	}
-		// }
+		tsc, err := config.GetTimeSlicingConfig()
+		if err != nil {
+			return nil, fmt.Errorf("error getting timeslice config for requests '%v' in claim '%v': %w", requests, claim.UID, err)
+		}
+		if tsc != nil {
+			// Get UUIDs of physical GPUs for which to change the timeslicing
+			// settings. Do this only for any requested full GPUs. Note:
+			// timeslicing settings cannot be set on MIG devices directly; so if
+			// we wanted to apply a timeslicing setting "for a MIG device" we
+			// would have to do it to its parent -- and hence it would affect
+			// other MIG devices running on the same physical GPU; hence we do
+			// not ally for setting `timeSlicingConfig` on a `MigDeviceConfig`.
+			// TODO: should we do this for passthrough devices?
+			uuids := requestedDevices.GpuUUIDs()
+			klog.V(6).Infof("SetTimeSlice() for full GPUs with UUIDs: %s", uuids)
+			err = s.tsManager.SetTimeSlice(uuids, tsc)
+			if err != nil {
+				return nil, fmt.Errorf("error setting timeslice config for requests '%v' in claim '%v': %w", requests, claim.UID, err)
+			}
+		}
 	}
 
 	// Apply MPS settings (if available and feature gate enabled).
 	if featuregates.Enabled(featuregates.MPSSupport) && config.IsMps() {
-		// mpsc, err := config.GetMpsConfig()
-		// if err != nil {
-		// 	return nil, fmt.Errorf("error getting MPS configuration: %w", err)
-		// }
-		// mpsControlDaemon := s.mpsManager.NewMpsControlDaemon(string(claim.UID), allocatableDevices)
-		// if err := mpsControlDaemon.Start(ctx, mpsc); err != nil {
-		// 	return nil, fmt.Errorf("error starting MPS control daemon: %w", err)
-		// }
-		// if err := mpsControlDaemon.AssertReady(ctx); err != nil {
-		// 	return nil, fmt.Errorf("MPS control daemon is not yet ready: %w", err)
-		// }
-		// configState.MpsControlDaemonID = mpsControlDaemon.GetID()
-		// configState.containerEdits = mpsControlDaemon.GetCDIContainerEdits()
+		if featuregates.Enabled(featuregates.DynamicMIG) {
+			// TODO: create MIG device first, get its UUID, and then enable MPS
+			// for that device -- probably based on a `PreparedDevicesList`, and
+			// not based on `AllocatableDevices`.
+			return nil, fmt.Errorf("MPS is not yet supported when using featureGates.DynamicMIG=true")
+		}
+		mpsc, err := config.GetMpsConfig()
+		if err != nil {
+			return nil, fmt.Errorf("error getting MPS configuration: %w", err)
+		}
+
+		// Note(JP): `AllocatableDevices` cannot be a reliable UUIDProvider
+		// anymore because non-concrete MIG devices do not have a UUID yet.
+		// Hence the check above.
+		mpsControlDaemon := s.mpsManager.NewMpsControlDaemon(string(claim.UID), requestedDevices)
+		if err := mpsControlDaemon.Start(ctx, mpsc); err != nil {
+			return nil, fmt.Errorf("error starting MPS control daemon: %w", err)
+		}
+		if err := mpsControlDaemon.AssertReady(ctx); err != nil {
+			return nil, fmt.Errorf("MPS control daemon is not yet ready: %w", err)
+		}
+		configState.MpsControlDaemonID = mpsControlDaemon.GetID()
+		configState.containerEdits = mpsControlDaemon.GetCDIContainerEdits()
 	}
 
 	return &configState, nil

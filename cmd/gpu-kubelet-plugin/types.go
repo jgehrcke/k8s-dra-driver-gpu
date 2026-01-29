@@ -38,8 +38,11 @@ const (
 )
 
 type UUIDProvider interface {
+	// Both, full GPUs and MIG devices
 	UUIDs() []string
+	// Only full GPUs
 	GpuUUIDs() []string
+	// Only MIG devices
 	MigDeviceUUIDs() []string
 }
 

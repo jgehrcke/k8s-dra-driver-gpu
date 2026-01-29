@@ -121,6 +121,8 @@ func (p MigProfileInfo) String() string {
 	return p.profile.String()
 }
 
+// There's quite a bit of history to using the minor number for device announcement.
+// Some context can be found at https://github.com/NVIDIA/k8s-dra-driver-gpu/issues/563#issuecomment-3345631087.
 func (d *GpuInfo) CanonicalName() DeviceName {
 	return fmt.Sprintf("gpu-%d", d.minor)
 }
