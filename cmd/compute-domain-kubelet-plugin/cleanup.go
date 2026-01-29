@@ -96,6 +96,18 @@ func (m *CheckpointCleanupManager) Stop() error {
 // invocation of `cleanup()` and each invocation of `unprepareIfStale()` is
 // best-effort: errors do not need to be propagated (but are expected to be
 // properly logged).
+//
+// Note: This function does not acquire DeviceState lock when reading the checkpoint.
+// The lock is not needed because:
+//  1. This initial checkpoint read is just discovering candidate claims to check - it
+//     doesn't need strong consistency. Missing a claim due to concurrent write just
+//     means we catch it on the next periodic iteration.
+//  2. We validate each candidate against the API server (the authoritative source of
+//     truth for whether a claim is truly stale), not the local checkpoint state.
+//  3. The actual checkpoint mutation happens in nodeUnprepareResource(), which properly
+//     acquires the pulock (process-level file lock) for atomic read-modify-write.
+//  4. Holding DeviceState lock during the entire cleanup (which could take seconds with
+//     multiple API calls) would unnecessarily block normal Prepare/Unprepare operations.
 func (m *CheckpointCleanupManager) cleanup(ctx context.Context) {
 	cp, err := m.devicestate.getCheckpoint()
 	if err != nil {
