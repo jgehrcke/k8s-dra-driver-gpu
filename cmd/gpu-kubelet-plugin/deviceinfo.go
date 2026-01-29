@@ -28,7 +28,6 @@ import (
 	"k8s.io/utils/ptr"
 )
 
-// Represents a specific, full, physical GPU device.
 // Defined similarly as https://pkg.go.dev/k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1#Healthy.
 type HealthStatus string
 
@@ -38,9 +37,9 @@ const (
 	Unhealthy HealthStatus = "Unhealthy"
 )
 
+// Represents a specific, full, physical GPU device.
 type GpuInfo struct {
-	UUID string `json:"uuid"`
-	//index                 int
+	UUID                  string `json:"uuid"`
 	minor                 int
 	migEnabled            bool
 	vfioEnabled           bool
@@ -58,7 +57,8 @@ type GpuInfo struct {
 	addressingMode        *string
 	Health                HealthStatus
 
-	// Properties that can only be known after inspecting MIG profiles
+	// The following properties that can only be known after inspecting MIG
+	// profiles.
 	maxCapacities PartCapacityMap
 	memSliceCount int
 }
@@ -70,18 +70,19 @@ type MigDeviceInfo struct {
 	UUID    string `json:"uuid"`
 	Profile string `json:"profile"`
 
-	// Selectively serialize details to checkpoint JSON file, needed mainly
-	// for controlled deletion.
+	// Selectively serialize these (public) properties to the checkpoint JSON
+	// file (needed mainly for controlled deletion in the unprepare flow).
 	ParentUUID  string `json:"parentUUID"`
 	ParentMinor int    `json:"parentMinor"`
 	CIID        int    `json:"ciId"`
 	GIID        int    `json:"giId"`
 
-	// Is the placement encoded already in CIID and GIID? In any case, for now,
-	// store this in the JSON checkpoint because in CanonicalName() we rely on
-	// this -- and this must work after JSON deserialization. TODO: introduce
-	// cleaner data type carrying precisely (and just) what we want to store
-	// about a created MIG device in the checkpoint JSON.
+	// Is the placement implicitly encoded already in CIID and GIID? In any
+	// case, for now, store this in the JSON checkpoint because in
+	// CanonicalName() we rely on this -- and this must work after JSON
+	// deserialization. TODO: introduce cleaner data type carrying precisely
+	// (and just) what we want to store about a created MIG device in the
+	// checkpoint JSON.
 	Placement *MigDevicePlacement `json:"placement"`
 
 	gIInfo        *nvml.GpuInstanceInfo
@@ -121,14 +122,16 @@ func (p MigProfileInfo) String() string {
 	return p.profile.String()
 }
 
-// There's quite a bit of history to using the minor number for device announcement.
-// Some context can be found at https://github.com/NVIDIA/k8s-dra-driver-gpu/issues/563#issuecomment-3345631087.
+// CanonicalName() is used for device announcement (in ResourceSlice objects).
+// There is quite a bit of history to using the minor number for device
+// announcement. Some context can be found at
+// https://github.com/NVIDIA/k8s-dra-driver-gpu/issues/563#issuecomment-3345631087.
 func (d *GpuInfo) CanonicalName() DeviceName {
 	return fmt.Sprintf("gpu-%d", d.minor)
 }
 
-// String() contains both the GPU index/minor for easy recognizability, but also
-// the UUID for precision. It is intended for usage in log messages.
+// String() contains both the GPU minor for easy recognizability, but also the
+// UUID for precision. It is intended for usage in log messages.
 func (d *GpuInfo) String() string {
 	return fmt.Sprintf("%s-%s", d.CanonicalName(), d.UUID)
 }
@@ -143,6 +146,8 @@ func (d *VfioDeviceInfo) CanonicalName() string {
 	return fmt.Sprintf("gpu-vfio-%d", d.index)
 }
 
+// KEP 4815 device announcement: return announce device attributes for this
+// physical/full GPU.
 func (d *GpuInfo) PartDevAttributes() map[resourceapi.QualifiedName]resourceapi.DeviceAttribute {
 	pciBusIDAttrName := resourceapi.QualifiedName(deviceattribute.StandardDeviceAttributePrefix + "pciBusID")
 	return map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
@@ -179,20 +184,23 @@ func (d *GpuInfo) PartDevAttributes() map[resourceapi.QualifiedName]resourceapi.
 	}
 }
 
-// Full device capacity, based on looking at all MIG profiles.
+// KEP 4815 device announcement: return the full (physical) device capacity for
+// this devices (this also uses information from looking at all MIG profiles
+// beforehand).
 func (d *GpuInfo) PartCapacities() PartCapacityMap {
 	return d.maxCapacities
 }
 
+// KEP 4815 device announcement: return the name for the shared counter
+// representing this full device.
 func (d *GpuInfo) GetSharedCounterSetName() string {
-	return toRFC1123Compliant(fmt.Sprintf("gpu-%d-counter-set", d.minor))
+	return toRFC1123Compliant(fmt.Sprintf("%s-counter-set", d.CanonicalName()))
 }
 
-// For now, define exactly one counter set per full GPU device. Individual
-// partitions consume from that.
-//
-// In that counter set, define one counter per device capacity dimension, and
-// add one counter (capacity 1) per memory slice.
+// KEP 4815 device announcement: for now, define exactly one CounterSet per full
+// GPU device. Individual partitions consume from that. In that CounterSet,
+// define one counter per device capacity dimension, and add one counter
+// (capacity 1) per memory slice.
 func (d *GpuInfo) PartSharedCounterSets() []resourceapi.CounterSet {
 	return []resourceapi.CounterSet{{
 		Name:     d.GetSharedCounterSetName(),
@@ -200,17 +208,18 @@ func (d *GpuInfo) PartSharedCounterSets() []resourceapi.CounterSet {
 	}}
 }
 
+// KEP 4815 device announcement: define what this full GPU consumes when allocated.
+// Let the full device consume everything. Goals: 1) when the full device is
+// allocated, all available counters drop to zero. 2) when the smallest
+// partition gets allocated, the full device cannot be allocated anymore.
 func (d *GpuInfo) PartConsumesCounters() []resourceapi.DeviceCounterConsumption {
-	// Let the full device consume everything. Goals: 1) when the full device is
-	// allocated, all available counters drop to zero. 2) when the smallest
-	// partition gets allocated, the full device cannot be allocated anymore.
 	return []resourceapi.DeviceCounterConsumption{{
 		CounterSet: d.GetSharedCounterSetName(),
 		Counters:   addCountersForMemSlices(capacitiesToCounters(d.maxCapacities), 0, d.memSliceCount),
 	}}
 }
 
-// For the new partitionable devices API, return the 'full' device announcement.
+// KEP 4815 device announcement: return the 'full' device description.
 func (d *GpuInfo) PartGetDevice() resourceapi.Device {
 	dev := resourceapi.Device{
 		Name:             d.CanonicalName(),
@@ -228,7 +237,8 @@ func (d *GpuInfo) PartGetDevice() resourceapi.Device {
 	return dev
 }
 
-// Add detail that is only known after inspecting the individual MIG profiles.
+// Populate internal data structures -- detail that is only known after
+// inspecting all individual MIG profiles associated with this physical GPU.
 func (d *GpuInfo) AddDetailAfterWalkingMigProfiles(maxcap PartCapacityMap, memSliceCount int) {
 	d.maxCapacities = maxcap
 	d.memSliceCount = memSliceCount
@@ -236,7 +246,6 @@ func (d *GpuInfo) AddDetailAfterWalkingMigProfiles(maxcap PartCapacityMap, memSl
 
 func (d *GpuInfo) GetDevice() resourceapi.Device {
 	// TODO: Consume GetPCIBusIDAttribute from https://github.com/kubernetes/kubernetes/blob/4c5746c0bc529439f78af458f8131b5def4dbe5d/staging/src/k8s.io/dynamic-resource-allocation/deviceattribute/attribute.go#L39
-
 	device := resourceapi.Device{
 		Name:       d.CanonicalName(),
 		Attributes: d.PartDevAttributes(),
@@ -312,9 +321,11 @@ func (d *MigDeviceInfo) GetDevice() resourceapi.Device {
 			"encoders":    {Value: *resource.NewQuantity(int64(d.giProfileInfo.EncoderCount), resource.BinarySI)},
 			"jpegEngines": {Value: *resource.NewQuantity(int64(d.giProfileInfo.JpegCount), resource.BinarySI)},
 			"ofaEngines":  {Value: *resource.NewQuantity(int64(d.giProfileInfo.OfaCount), resource.BinarySI)},
-			// Should we expose this as memoryBytes instead? Seemingly, in the
-			// k8s landscape, that ship has long saileed: container limits for
-			// example also use `memory`.
+			// `memoryBytes` would be more expressive -- but in the k8s
+			// landscape, that ship has long sailed: container limits for
+			// example also use `memory`. Note that giProfileInfo.MemorySizeMB
+			// has a misleading name -- think of it as MemorySizeMiB (that's
+			// documented in the NVML source).
 			"memory": {Value: *resource.NewQuantity(int64(d.giProfileInfo.MemorySizeMB*1024*1024), resource.BinarySI)},
 		},
 	}

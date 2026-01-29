@@ -254,13 +254,11 @@ func getDevicePlacementMap(allocatable AllocatableDevices) devicePlacementMap {
 		case MigStaticDeviceType:
 			parentUUID = d.MigStatic.parent.UUID
 
-			// What does this mean?
+			// Note(JP): it's unclear why we handle this case here (and why do
+			// we think this can be empty?)
 			if parentUUID == "" {
 				continue
 			}
-
-			// TODO: make this work for concrete vs. abstract MIG device
-			// for the abstract MIG device, gi and ci ID are unknown.
 			giID = d.MigStatic.gIInfo.Id
 			ciID = d.MigStatic.gIInfo.Id
 

@@ -218,6 +218,7 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 func (s *DeviceState) Unprepare(ctx context.Context, claimRef kubeletplugin.NamespacedObject) error {
 	s.Lock()
 	defer s.Unlock()
+
 	klog.V(6).Infof("Unprepare() for claim '%s'", claimRef.String())
 
 	// Rely on local checkpoint state for ability to clean up.
