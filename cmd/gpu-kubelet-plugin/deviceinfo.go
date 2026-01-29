@@ -20,7 +20,6 @@ import (
 	"fmt"
 
 	"github.com/Masterminds/semver"
-	nvdev "github.com/NVIDIA/go-nvlib/pkg/nvlib/device"
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -62,8 +61,6 @@ type GpuInfo struct {
 	maxCapacities PartCapacityMap
 	memSliceCount int
 }
-
-type PartCapacityMap map[resourceapi.QualifiedName]resourceapi.DeviceCapacity
 
 // Represents a specific (concrete, incarnated, created) MIG device.
 type MigDeviceInfo struct {
@@ -109,19 +106,6 @@ type VfioDeviceInfo struct {
 	addressableMemoryBytes uint64
 }
 
-type MigProfileInfo struct {
-	profile    nvdev.MigProfile
-	placements []*MigDevicePlacement
-}
-
-type MigDevicePlacement struct {
-	nvml.GpuInstancePlacement
-}
-
-func (p MigProfileInfo) String() string {
-	return p.profile.String()
-}
-
 // CanonicalName() is used for device announcement (in ResourceSlice objects).
 // There is quite a bit of history to using the minor number for device
 // announcement. Some context can be found at
@@ -144,97 +128,6 @@ func (d *MigDeviceInfo) CanonicalName() string {
 
 func (d *VfioDeviceInfo) CanonicalName() string {
 	return fmt.Sprintf("gpu-vfio-%d", d.index)
-}
-
-// KEP 4815 device announcement: return announce device attributes for this
-// physical/full GPU.
-func (d *GpuInfo) PartDevAttributes() map[resourceapi.QualifiedName]resourceapi.DeviceAttribute {
-	pciBusIDAttrName := resourceapi.QualifiedName(deviceattribute.StandardDeviceAttributePrefix + "pciBusID")
-	return map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-		"type": {
-			StringValue: ptr.To(GpuDeviceType),
-		},
-		"uuid": {
-			StringValue: &d.UUID,
-		},
-		"productName": {
-			StringValue: &d.productName,
-		},
-		"brand": {
-			StringValue: &d.brand,
-		},
-		"architecture": {
-			StringValue: &d.architecture,
-		},
-		"cudaComputeCapability": {
-			VersionValue: ptr.To(semver.MustParse(d.cudaComputeCapability).String()),
-		},
-		"driverVersion": {
-			VersionValue: ptr.To(semver.MustParse(d.driverVersion).String()),
-		},
-		"cudaDriverVersion": {
-			VersionValue: ptr.To(semver.MustParse(d.cudaDriverVersion).String()),
-		},
-		"pcieBusID": {
-			StringValue: &d.pcieBusID,
-		},
-		pciBusIDAttrName: {
-			StringValue: &d.pcieBusID,
-		},
-	}
-}
-
-// KEP 4815 device announcement: return the full (physical) device capacity for
-// this devices (this also uses information from looking at all MIG profiles
-// beforehand).
-func (d *GpuInfo) PartCapacities() PartCapacityMap {
-	return d.maxCapacities
-}
-
-// KEP 4815 device announcement: return the name for the shared counter
-// representing this full device.
-func (d *GpuInfo) GetSharedCounterSetName() string {
-	return toRFC1123Compliant(fmt.Sprintf("%s-counter-set", d.CanonicalName()))
-}
-
-// KEP 4815 device announcement: for now, define exactly one CounterSet per full
-// GPU device. Individual partitions consume from that. In that CounterSet,
-// define one counter per device capacity dimension, and add one counter
-// (capacity 1) per memory slice.
-func (d *GpuInfo) PartSharedCounterSets() []resourceapi.CounterSet {
-	return []resourceapi.CounterSet{{
-		Name:     d.GetSharedCounterSetName(),
-		Counters: addCountersForMemSlices(capacitiesToCounters(d.maxCapacities), 0, d.memSliceCount),
-	}}
-}
-
-// KEP 4815 device announcement: define what this full GPU consumes when allocated.
-// Let the full device consume everything. Goals: 1) when the full device is
-// allocated, all available counters drop to zero. 2) when the smallest
-// partition gets allocated, the full device cannot be allocated anymore.
-func (d *GpuInfo) PartConsumesCounters() []resourceapi.DeviceCounterConsumption {
-	return []resourceapi.DeviceCounterConsumption{{
-		CounterSet: d.GetSharedCounterSetName(),
-		Counters:   addCountersForMemSlices(capacitiesToCounters(d.maxCapacities), 0, d.memSliceCount),
-	}}
-}
-
-// KEP 4815 device announcement: return the 'full' device description.
-func (d *GpuInfo) PartGetDevice() resourceapi.Device {
-	dev := resourceapi.Device{
-		Name:             d.CanonicalName(),
-		Attributes:       d.PartDevAttributes(),
-		Capacity:         d.PartCapacities(),
-		ConsumesCounters: d.PartConsumesCounters(),
-	}
-
-	// Not available in all environments, enrich advertised device only
-	// conditionally.
-	if d.pcieRootAttr != nil {
-		dev.Attributes[d.pcieRootAttr.Name] = d.pcieRootAttr.Value
-	}
-
-	return dev
 }
 
 // Populate internal data structures -- detail that is only known after

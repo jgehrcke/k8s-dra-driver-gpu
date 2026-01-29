@@ -56,3 +56,16 @@ type MigSpec struct {
 func (m *MigSpec) CanonicalName() DeviceName {
 	return migppCanonicalName(m.Parent.minor, m.Profile.String(), &m.MemorySlices)
 }
+
+type MigProfileInfo struct {
+	profile    nvdev.MigProfile
+	placements []*MigDevicePlacement
+}
+
+func (p MigProfileInfo) String() string {
+	return p.profile.String()
+}
+
+type MigDevicePlacement struct {
+	nvml.GpuInstancePlacement
+}
