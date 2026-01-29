@@ -30,7 +30,7 @@ bats::on_failure() {
   echo -e "FAILURE HOOK END\n\n"
 }
 
-confirm_mod_mode_disabled_all_nodes() {
+confirm_mig_mode_disabled_all_nodes() {
   # Confirm that MIG mode is disabled for all GPUs on all nodes.
   for node in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
      nvmm "$node" sh -c 'nvidia-smi --query-gpu=index,mig.mode.current --format=csv'
@@ -40,7 +40,7 @@ confirm_mod_mode_disabled_all_nodes() {
 }
 
 @test "1 pod, 1 MIG" {
-  confirm_mod_mode_disabled_all_nodes
+  confirm_mig_mode_disabled_all_nodes
   kubectl apply -f tests/bats/specs/gpu-simple-mig.yaml
   kubectl wait --for=condition=READY pods pod-mig1g --timeout=10s
   run kubectl logs pod-mig1g
@@ -57,11 +57,11 @@ confirm_mod_mode_disabled_all_nodes() {
 
   kubectl delete -f tests/bats/specs/gpu-simple-mig.yaml
   kubectl wait --for=delete pods pod-mig1g --timeout=10s
-  confirm_mod_mode_disabled_all_nodes
+  confirm_mig_mode_disabled_all_nodes
 }
 
 @test "1 pod, 2 containers (1 MIG each)" {
-  confirm_mod_mode_disabled_all_nodes
+  confirm_mig_mode_disabled_all_nodes
 
   local _specpath="tests/bats/specs/gpu-multiple-mig.yaml"
   local _podname="pod-2mig"
@@ -85,5 +85,30 @@ confirm_mod_mode_disabled_all_nodes() {
 
   kubectl delete -f  "${_specpath}"
   kubectl wait --for=delete pods "${_podname}" --timeout=10s
-  confirm_mod_mode_disabled_all_nodes
+  confirm_mig_mode_disabled_all_nodes
+}
+
+# bats test_tags=bats:focus
+@test "1 pod, 1 MIG + TimeSlicing config" {
+  local _iargs=("--set" "logVerbosity=6" "--set" "featureGates.DynamicMIG=true" "--set" "featuregates.TimeSlicingSettings=true")
+  iupgrade_wait "${TEST_CHART_REPO}" "${TEST_CHART_VERSION}" _iargs
+
+  confirm_mig_mode_disabled_all_nodes
+  kubectl apply -f tests/bats/specs/gpu-simple-mig-ts.yaml
+  kubectl wait --for=condition=READY pods pod-mig1g --timeout=10s
+  run kubectl logs pod-mig1g
+
+  # Confirm the following pattern:
+  # GPU 0: NVIDIA GB200 (UUID: GPU-7277883e-ce1e-3b6e-6cc1-6d52e80cdb86)
+  #   MIG 1g.24gb     Device  0: (UUID: MIG-5b696ac1-c323-589e-a082-e6045e980bf4)
+  assert_output --partial "UUID: MIG-"
+  assert_output --partial "UUID: GPU-"
+
+  # Make sure the output contains two lines (first wc -l for debuggability)
+  echo "${output}" | wc -l
+  echo "${output}" | wc -l | grep 2
+
+  kubectl delete -f tests/bats/specs/gpu-simple-mig-ts.yaml
+  kubectl wait --for=delete pods pod-mig1g --timeout=10s
+  confirm_mig_mode_disabled_all_nodes
 }
