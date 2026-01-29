@@ -16,7 +16,10 @@
 
 package main
 
-import "time"
+import (
+	"sort"
+	"time"
+)
 
 const (
 	// Detecting when a CD daemon transitions from NotReady to Ready (based on
@@ -32,3 +35,29 @@ const (
 
 // IPSet is a set of IP addresses.
 type IPSet map[string]struct{}
+
+// Diff compares two IP sets. It returns a list of IPs that were added and a
+// list of IPs that were removed. `s` is the reference set.
+func (s IPSet) Diff(cmp IPSet) ([]string, []string) {
+	var added []string
+	var removed []string
+
+	// Find IPs in `s` (reference) that are not in `cmp` (removed).
+	for ip := range s {
+		if _, exists := cmp[ip]; !exists {
+			removed = append(removed, ip)
+		}
+	}
+
+	// Find IPs in `cmp` that are not in `s` (added).
+	for ip := range cmp {
+		if _, exists := s[ip]; !exists {
+			added = append(added, ip)
+		}
+	}
+
+	// Sort, for logging purposes.
+	sort.Strings(added)
+	sort.Strings(removed)
+	return added, removed
+}
