@@ -199,25 +199,41 @@ func (l deviceLib) getCliqueID() (string, error) {
 			return fmt.Errorf("failed to read device uuid (%d): %w", i, ret)
 		}
 
-		isFabricAttached, err := d.IsFabricAttached()
-		if err != nil {
-			return fmt.Errorf("error checking if fabric is attached (device %d/%s): %w", i, duid, err)
-		}
-
-		if !isFabricAttached {
-			klog.Infof("no-clique fallback: fabric not attached (device %d/%s)", i, duid)
-			return nil
-		}
-
+		// Check if platform supports NVLink fabric using GetGpuFabricInfo
 		// TODO: explore using GetGpuFabricInfoV() which can return
 		// nvmlGpuFabricInfo_v3_t which contains `state`, `status`, and
 		// `healthSummary`. The latter we may at least want to log (may be
 		// "unhealthy"). See
 		// https://docs.nvidia.com/deploy/nvml-api/group__nvmlFabricDefs.html
 		info, ret := d.GetGpuFabricInfo()
-		if ret != nvml.SUCCESS {
-			return fmt.Errorf("failed to get GPU fabric info (device %d/%s): %w", i, duid, ret)
+		if ret == nvml.ERROR_NOT_SUPPORTED {
+			klog.Infof("no-clique fallback: NVLink fabric not supported by driver (device %d/%s, error: ERROR_NOT_SUPPORTED)", i, duid)
+			return nil
 		}
+		if ret != nvml.SUCCESS {
+			return fmt.Errorf("failed to get GPU fabric info (device %d/%s): %v", i, duid, ret)
+		}
+		if info.State == nvml.GPU_FABRIC_STATE_NOT_SUPPORTED {
+			klog.Infof("no-clique fallback: NVLink fabric not supported by device (device %d/%s, error: GPU_FABRIC_STATE_NOT_SUPPORTED)", i, duid)
+			return nil
+		}
+
+		// NVLink fabric is supported - check if registration completed
+		if info.State != nvml.GPU_FABRIC_STATE_COMPLETED {
+			return fmt.Errorf("NVLink fabric not attached (device %d/%s): state=%d, refusing to start", i, duid, info.State)
+		}
+
+		// Registration completed - check Status field for errors (only valid when State == COMPLETED)
+		if nvml.Return(info.Status) != nvml.SUCCESS {
+			return fmt.Errorf("NVLink fabric registration error (device %d/%s): status=%v, refusing to start", i, duid, nvml.Return(info.Status))
+		}
+
+		// Check for valid cluster UUID
+		if info.ClusterUuid == [16]uint8{} {
+			return fmt.Errorf("NVLink fabric not attached (device %d/%s): empty cluster UUID, refusing to start", i, duid)
+		}
+
+		klog.V(6).Infof("NVLink fabric attached (device %d/%s)", i, duid)
 
 		clusterUUID, err := uuid.FromBytes(info.ClusterUuid[:])
 		if err != nil {
