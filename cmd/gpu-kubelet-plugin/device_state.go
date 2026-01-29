@@ -80,7 +80,7 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 		return nil, fmt.Errorf("failed to create device library: %w", err)
 	}
 
-	allocatable, perGPUAllocatable, err := nvdevlib.enumerateAllPossibleDevices(config)
+	allocatable, perGPUAllocatable, err := nvdevlib.enumerateAllPossibleDevices()
 	if err != nil {
 		return nil, fmt.Errorf("error enumerating all possible devices: %w", err)
 	}
@@ -289,8 +289,10 @@ func (s *DeviceState) DestroyUnknownMIGDevices(ctx context.Context) {
 		return
 	}
 
-	// Get checkpointed claims in PrepareCompleted state (explicitly not
-	// `PrepareStarted` -- we want to think about those separately (TODOMIG)).
+	// Get checkpointed claims in PrepareCompleted state. Only MIG devices
+	// mentioned in there will survive. The below's logic tears down MIG devices
+	// that correspond to claims in a PrepareStarted limbo state -- is that a
+	// correct decision?
 	filtered := make(PreparedClaimsByUIDV2)
 	for uid, claim := range cp.V2.PreparedClaims {
 		if claim.CheckpointState == ClaimCheckpointStatePrepareCompleted {

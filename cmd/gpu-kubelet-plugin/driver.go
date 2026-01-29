@@ -64,9 +64,35 @@ func NewDriver(ctx context.Context, config *Config) (*driver, error) {
 		return nil, err
 	}
 
-	// Could be done in NewDeviceState, but I want to make sure that the
-	// checkpoint machinery is ready to use -- that's more obvious here.
 	if featuregates.Enabled(featuregates.DynamicMIG) {
+		// Could be done in NewDeviceState, but I want to make sure that the
+		// checkpoint machinery is ready to use -- that's more obvious here.
+		//
+		// Generally, when `featuregates.DynamicMIG` is enabled, we have to make
+		// difficult but good decisions about incarnated MIG devices found
+		// during program startup. We could
+		//
+		// 1) assume they are under control of an external entity, and not
+		// announce them. That's likely not true. As hard as we try, as part of
+		// dynamic MIG device management, given enough time and circumstances,
+		// we might actually leave a MIG device behind where we shouldn't (as of
+		// bugs, as of aggressive operations / admin intervention, ...).
+		//
+		// 2) not do anythin special: not good; we would still announce the
+		// corresponding abstract MIG device and once the scheduler assigns a
+		// job, a relevant NodePrepareResources() call will try to create that
+		// specific MIG device. And that will fail, because that MIG device
+		// already exists -- users see something like "prepare devices failed:
+		// error creating MIG device: error creating GPU instance for
+		// 'gpu-0-mig-1g24gb-0': Insufficient Resources.
+		//
+		// 3) Use the node-local checkpoint as the source of truth. Any MIG
+		// device that corresponds to "partially prepared" claims should be
+		// destroyed, and any MIG device that is not mentioned in the checkpoint
+		// at all must be destroyed). Both is done below. Only those of
+		// completely prepared claims can stay; assuming that the central
+		// scheduler state is equivalent. TODO: review if this logic is correct;
+		// or if it potentially is too invasive for certain edge cases.
 		state.DestroyUnknownMIGDevices(ctx)
 	}
 

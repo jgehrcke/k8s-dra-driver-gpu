@@ -18,6 +18,7 @@ package main
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -60,6 +61,9 @@ type nvcapDeviceInfo struct {
 	modify int
 	path   string
 }
+
+type GPUMinor = int
+type PerGPUMinorAllocatableDevices map[GPUMinor]AllocatableDevices
 
 func newDeviceLib(driverRoot root) (*deviceLib, error) {
 	driverLibraryPath, err := driverRoot.getDriverLibraryPath()
@@ -119,8 +123,8 @@ func setOrOverrideEnvvar(envvars []string, key, value string) []string {
 	return append(updated, fmt.Sprintf("%s=%s", key, value))
 }
 
-// New paradigm, for faster device managemen (getting device handles by UUID can
-// take (10 seconds) when done concurrently. Try something slightly more
+// New paradigm, for faster device management (getting device handles by UUID
+// can take (10 seconds) when done concurrently. Try something slightly more
 // difficult instead: maintain long-term state: initialize once at startup,
 // cache handles, serialize NVML calls, and implement a clear re-init path on
 // NVML errors; this hopefully balances performance and robustness for this
@@ -142,64 +146,35 @@ func (l deviceLib) alwaysShutdown() {
 	}
 }
 
-// Yield the devices that are allocatable, on this node.
-func (l deviceLib) enumerateAllPossibleDevices(config *Config) (AllocatableDevices, PerGPUMinorAllocatableDevices, error) {
-	//alldevices := make(AllocatableDevices)
-
-	// TODO: make good decisions about incarnated MIG devices found during
-	// program startup. We could
-	//
-	// 1) assume they are under control of an external  entity, and not announce
-	// them. That's likely not true. As hard as we try, _we_ might actually
-	// leave a MIG device behind where there should be no more (as of bugs, as
-	// of aggressive ops, ...).
-	//
-	// 2) not do anything: bad idea, we announce availability and the scheduler
-	// will assign a job, and prepare() will try to create a specific MIG device
-	// (incl placement) and that will fail because that MIG device already
-	// exists -- users see something like "prepare devices failed: error
-	// creating MIG device: error creating GPU instance for
-	// 'gpu-0-mig-1g24gb-0': Insufficient Resources
-	//
-	// 3) Use the node-local checkpoint as the source of truth. Any MIG device
-	// that corresponds to "partially prepared" claims must be destroyed, any
-	// MIG device that is not mentioned must be destroyed (only those of
-	// completely prepared claims can stay; assuming that the central scheduler
-	// state is equivalent).
-
-	// Get the full list of allocatable devices from GPU 0 in this machine
-	// (development state, iterate over full GPU devices later)
-
-	//allocatable, err := l.GetPerGpuAllocatableDevices(0)
-
+// Discover devices that are allocatable, on this node.
+func (l deviceLib) enumerateAllPossibleDevices() (AllocatableDevices, PerGPUMinorAllocatableDevices, error) {
 	perGPUAllocatable, err := l.GetPerGpuAllocatableDevices()
 	if err != nil {
 		return nil, nil, fmt.Errorf("error enumerating allocatable devices: %w", err)
 	}
 
-	//TODOMIG -- fix code below, and un-outcomment!
-	// if featuregates.Enabled(featuregates.PassthroughSupport) {
-	// 	passthroughDevices, err := l.enumerateGpuPciDevices(config, gms)
-	// 	if err != nil {
-	// 		return nil, fmt.Errorf("error enumerating GPU PCI devices: %w", err)
-	// 	}
-	// 	for k, v := range passthroughDevices {
-	// 		alldevices[k] = v
-	// 	}
-	// }
+	if featuregates.Enabled(featuregates.PassthroughSupport) {
+		// Construct `passtrhoughDevices` and insert them into
+		// `perGPUAllocatable` map from above.
+		passthroughDevices, err := l.enumerateGpuPciDevices(perGPUAllocatable)
+		if err != nil {
+			return nil, nil, fmt.Errorf("error enumerating GPU PCI devices: %w", err)
+		}
+		for minor, ptdevs := range passthroughDevices {
+			for name, adev := range ptdevs {
+				perGPUAllocatable[minor][name] = adev
+			}
+		}
+	}
 
+	// Flatten `perGPUAllocatable`.
 	all := make(AllocatableDevices)
 	for _, devices := range perGPUAllocatable {
-		for name, dev := range devices {
-			all[name] = dev
-		}
+		maps.Copy(all, devices)
 	}
 
 	return all, perGPUAllocatable, nil
 }
-
-type GPUMinor = int
-type PerGPUMinorAllocatableDevices map[GPUMinor]AllocatableDevices
 
 // GetPerGpuAllocatableDevices is called once upon driver startup. It gets the
 // set of allocatable devices using NVDeviceLib.  A list of GPU indices can be
@@ -570,27 +545,46 @@ func (l deviceLib) getGpuInfo(index int, device nvdev.Device) (*GpuInfo, error) 
 	return gpuInfo, nil
 }
 
-func (l deviceLib) enumerateGpuPciDevices(config *Config, gms AllocatableDevices) (AllocatableDevices, error) {
-	devices := make(AllocatableDevices)
+func (l deviceLib) enumerateGpuPciDevices(devs PerGPUMinorAllocatableDevices) (PerGPUMinorAllocatableDevices, error) {
+	perGPUAllocatable := make(PerGPUMinorAllocatableDevices)
+
+	// Input `devs` contains all devices discovered for announcement so far,
+	// grouped by GPU minor. Flatten input (`devs`) into a list.
+	all := make(AllocatableDevices)
+	for _, devices := range perGPUAllocatable {
+		maps.Copy(all, devices)
+	}
+
+	// Discover PCI devices.
 	gpuPciDevices, err := l.nvpci.GetGPUs()
 	if err != nil {
 		return nil, fmt.Errorf("error getting GPU PCI devices: %w", err)
 	}
+
+	// For each discovered PCI device, look up the corresponding full-GPU-device
+	// from `adevs`. Construct a corresponding new `AllocatableDevice` object.
 	for idx, pci := range gpuPciDevices {
-		parent := gms.GetGPUByPCIeBusID(pci.Address)
+		thisGPUAllocatable := make(AllocatableDevices)
+		parent := all.GetGPUByPCIeBusID(pci.Address)
+
 		if parent == nil || !parent.Gpu.vfioEnabled {
 			continue
 		}
+
 		vfioDeviceInfo, err := l.getVfioDeviceInfo(idx, pci)
 		if err != nil {
 			return nil, fmt.Errorf("error getting GPU info from PCI device: %w", err)
 		}
 		vfioDeviceInfo.parent = parent.Gpu
-		devices[vfioDeviceInfo.CanonicalName()] = &AllocatableDevice{
+
+		thisGPUAllocatable[vfioDeviceInfo.CanonicalName()] = &AllocatableDevice{
 			Vfio: vfioDeviceInfo,
 		}
+
+		perGPUAllocatable[parent.Gpu.minor] = thisGPUAllocatable
 	}
-	return devices, nil
+
+	return perGPUAllocatable, nil
 }
 
 func (l deviceLib) getVfioDeviceInfo(idx int, device *nvpci.NvidiaPCIDevice) (*VfioDeviceInfo, error) {
