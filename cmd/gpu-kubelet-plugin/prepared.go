@@ -32,6 +32,7 @@ type PreparedDeviceList []PreparedDevice
 type PreparedDevices []*PreparedDeviceGroup
 
 type PreparedDevice struct {
+	// Represents a prepared full GPU.
 	Gpu *PreparedGpu `json:"gpu"`
 	// Represents a prepared MIG device, regardless of whether this was created
 	// via the 'dynamic MIG' flow or if it a pre-created (static) MIG device.
@@ -92,7 +93,7 @@ func (d *PreparedDevice) CanonicalName() string {
 	panic("unexpected type for AllocatableDevice")
 }
 
-// Return only devices representing full, physical GPUs
+// Return only devices representing full, physical GPUs.
 func (l PreparedDeviceList) Gpus() PreparedDeviceList {
 	var devices PreparedDeviceList
 	for _, device := range l {
@@ -167,7 +168,7 @@ func (g *PreparedDeviceGroup) GetDeviceNames() []DeviceName {
 	return names
 }
 
-// UUIDs for full GPUs, MIG devices, and Vfio devices
+// UUIDs for full GPUs, MIG devices, and Vfio devices.
 func (l PreparedDeviceList) UUIDs() []string {
 	uuids := append(l.GpuUUIDs(), l.MigDeviceUUIDs()...)
 	uuids = append(uuids, l.VfioDeviceUUIDs()...)
@@ -175,7 +176,7 @@ func (l PreparedDeviceList) UUIDs() []string {
 	return uuids
 }
 
-// UUIDs for full GPUs, MIG devices, and Vfio devices
+// UUIDs for full GPUs, MIG devices, and Vfio devices.
 func (g *PreparedDeviceGroup) UUIDs() []string {
 	uuids := append(g.GpuUUIDs(), g.MigDeviceUUIDs()...)
 	uuids = append(uuids, g.VfioDeviceUUIDs()...)
@@ -183,7 +184,7 @@ func (g *PreparedDeviceGroup) UUIDs() []string {
 	return uuids
 }
 
-// UUIDs for full GPUs, MIG devices, and Vfio devices
+// UUIDs for full GPUs, MIG devices, and Vfio devices.
 func (d PreparedDevices) UUIDs() []string {
 	uuids := append(d.GpuUUIDs(), d.MigDeviceUUIDs()...)
 	uuids = append(uuids, d.VfioDeviceUUIDs()...)
