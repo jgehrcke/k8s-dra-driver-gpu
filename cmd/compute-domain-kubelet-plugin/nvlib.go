@@ -32,6 +32,7 @@ import (
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 
 	"github.com/NVIDIA/k8s-dra-driver-gpu/internal/common"
+	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
 )
 
 const (
@@ -190,6 +191,83 @@ func (l deviceLib) getCliqueID() (string, error) {
 	}
 	defer l.alwaysShutdown()
 
+	if featuregates.Enabled(featuregates.CrashOnNVLinkFabricErrors) {
+		return l.getCliqueIDStrict()
+	}
+	return l.getCliqueIDLegacy()
+}
+
+// getCliqueIDLegacy uses IsFabricAttached() and falls back gracefully on errors.
+func (l deviceLib) getCliqueIDLegacy() (string, error) {
+	uniqueClusterUUIDs := make(map[string]struct{})
+	uniqueCliqueIDs := make(map[string]struct{})
+
+	err := l.VisitDevices(func(i int, d nvdev.Device) error {
+		duid, ret := d.GetUUID()
+		if ret != nvml.SUCCESS {
+			return fmt.Errorf("failed to read device uuid (%d): %w", i, ret)
+		}
+
+		isFabricAttached, err := d.IsFabricAttached()
+		if err != nil {
+			return fmt.Errorf("error checking if fabric is attached (device %d/%s): %w", i, duid, err)
+		}
+
+		if !isFabricAttached {
+			klog.Infof("no-clique fallback: fabric not attached (device %d/%s)", i, duid)
+			return nil
+		}
+
+		// TODO: explore using GetGpuFabricInfoV() which can return
+		// nvmlGpuFabricInfo_v3_t which contains `state`, `status`, and
+		// `healthSummary`. The latter we may at least want to log (may be
+		// "unhealthy"). See
+		// https://docs.nvidia.com/deploy/nvml-api/group__nvmlFabricDefs.html
+		info, ret := d.GetGpuFabricInfo()
+		if ret != nvml.SUCCESS {
+			return fmt.Errorf("failed to get GPU fabric info (device %d/%s): %w", i, duid, ret)
+		}
+
+		clusterUUID, err := uuid.FromBytes(info.ClusterUuid[:])
+		if err != nil {
+			return fmt.Errorf("invalid cluster UUID (device %d/%s): %w", i, duid, err)
+		}
+
+		cliqueID := fmt.Sprintf("%d", info.CliqueId)
+
+		uniqueClusterUUIDs[clusterUUID.String()] = struct{}{}
+		uniqueCliqueIDs[cliqueID] = struct{}{}
+		klog.Infof("identified fabric clique UUID/ID (device %d/%s): %s/%s", i, duid, clusterUUID.String(), cliqueID)
+
+		return nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("error getting fabric information from one or more devices: %w", err)
+	}
+
+	if len(uniqueClusterUUIDs) == 0 && len(uniqueCliqueIDs) == 0 {
+		return "", nil
+	}
+
+	if len(uniqueClusterUUIDs) != 1 {
+		return "", fmt.Errorf("unexpected number of unique ClusterUUIDs found on devices")
+	}
+
+	if len(uniqueCliqueIDs) != 1 {
+		return "", fmt.Errorf("unexpected number of unique CliqueIDs found on devices")
+	}
+
+	for clusterUUID := range uniqueClusterUUIDs {
+		for cliqueID := range uniqueCliqueIDs {
+			return fmt.Sprintf("%s.%s", clusterUUID, cliqueID), nil
+		}
+	}
+
+	return "", fmt.Errorf("unexpected return")
+}
+
+// getCliqueIDStrict performs strict validation of NVLink fabric state and crashes on errors.
+func (l deviceLib) getCliqueIDStrict() (string, error) {
 	uniqueClusterUUIDs := make(map[string]struct{})
 	uniqueCliqueIDs := make(map[string]struct{})
 
