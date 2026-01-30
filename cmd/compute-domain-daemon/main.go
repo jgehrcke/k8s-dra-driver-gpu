@@ -206,6 +206,11 @@ func newApp() *cli.App {
 func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 	common.StartDebugSignalHandlers()
 
+	// Validate feature gate dependencies
+	if err := featuregates.ValidateFeatureGates(); err != nil {
+		return fmt.Errorf("feature gate validation failed: %w", err)
+	}
+
 	// Create clientsets for Kubernetes API access
 	kubeConfig := &pkgflags.KubeClientConfig{}
 	clientsets, err := kubeConfig.NewClientSets()
@@ -216,6 +221,18 @@ func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 	// Add compute domain clique label to this pod
 	if err := addComputeDomainCliqueLabel(ctx, clientsets, flags); err != nil {
 		return fmt.Errorf("failed to add compute domain clique label to pod: %w", err)
+	}
+
+	// When cliqueID is empty, skip starting the controller and IMEX daemon management entirely.
+	// The compute-domain-controller will watch this pod's label and sync its node info to the
+	// ComputeDomain status. There's no clique to manage, no DNS indices to determine, and no
+	// IMEX daemon to run.
+	if flags.cliqueID == "" {
+		klog.Infof("no cliqueID: skipping controller and IMEX daemon management")
+		// Just wait for shutdown signal
+		<-ctx.Done()
+		klog.Infof("Exiting")
+		return nil
 	}
 
 	config := &ControllerConfig{
@@ -230,16 +247,6 @@ func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 		podName:                flags.podName,
 		podNamespace:           flags.podNamespace,
 		maxNodesPerIMEXDomain:  flags.maxNodesPerIMEXDomain,
-	}
-
-	// Support heterogeneous ComputeDomains. That means that a CD may contain
-	// nodes that do not take part in Multi-Node NVLink communication. On such
-	// nodes, this program is started with an empty NVLink clique ID
-	// configuration parameter. In this mode, do not start the IMEX daemon but
-	// otherwise keep business logic intact. In particular, continuously update
-	// this node's state in the CD object.
-	if flags.cliqueID == "" {
-		klog.Infof("no cliqueID: register with ComputeDomain, but do not run IMEX daemon")
 	}
 
 	// Render and write the IMEX daemon config with the current pod IP

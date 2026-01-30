@@ -34,6 +34,7 @@ import (
 
 	"github.com/NVIDIA/k8s-dra-driver-gpu/internal/common"
 	"github.com/NVIDIA/k8s-dra-driver-gpu/internal/info"
+	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
 	pkgflags "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/flags"
 )
 
@@ -169,6 +170,11 @@ func newApp() *cli.App {
 			return err
 		},
 		Action: func(c *cli.Context) error {
+			// Validate feature gate dependencies
+			if err := featuregates.ValidateFeatureGates(); err != nil {
+				return fmt.Errorf("feature gate validation failed: %w", err)
+			}
+
 			clientSets, err := flags.kubeClientConfig.NewClientSets()
 			if err != nil {
 				return fmt.Errorf("create client: %w", err)

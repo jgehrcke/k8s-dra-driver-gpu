@@ -36,7 +36,7 @@ const (
 	ResourceClaimCleanupInterval = 10 * time.Minute
 )
 
-type TypeUnprepCallable = func(ctx context.Context, claimRef kubeletplugin.NamespacedObject) (bool, error)
+type TypeUnprepCallable = func(ctx context.Context, claimRef kubeletplugin.NamespacedObject) error
 
 type CheckpointCleanupManager struct {
 	waitGroup     sync.WaitGroup
@@ -109,7 +109,7 @@ func (m *CheckpointCleanupManager) Stop() error {
 //  4. Holding DeviceState lock during the entire cleanup (which could take seconds with
 //     multiple API calls) would unnecessarily block normal Prepare/Unprepare operations.
 func (m *CheckpointCleanupManager) cleanup(ctx context.Context) {
-	cp, err := m.devicestate.getCheckpoint()
+	cp, err := m.devicestate.getCheckpoint(ctx)
 	if err != nil {
 		klog.Errorf("Checkpointed RC cleanup: unable to get checkpoint: %s", err)
 		return
@@ -203,7 +203,7 @@ func (m *CheckpointCleanupManager) unprepare(ctx context.Context, uid string, cl
 	// checkpoint (upon success). TODO: review `Unprepare()` for code paths that
 	// allow for this claim never to be dropped from the checkpoint (resulting
 	// in infinite periodic cleanup attempts for this claim).
-	_, err := m.unprepfunc(ctx, claimRef)
+	err := m.unprepfunc(ctx, claimRef)
 	if err != nil {
 		klog.Warningf("Checkpointed RC cleanup: error during unprepare for %s (retried later): %s", claimRef.String(), err)
 		return

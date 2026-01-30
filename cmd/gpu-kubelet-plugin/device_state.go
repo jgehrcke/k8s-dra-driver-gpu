@@ -51,12 +51,13 @@ type DeviceConfigState struct {
 
 type DeviceState struct {
 	sync.Mutex
-	cdi            *CDIHandler
-	tsManager      *TimeSlicingManager
-	mpsManager     *MpsManager
-	vfioPciManager *VfioPciManager
-	allocatable    AllocatableDevices
-	config         *Config
+	cdi                      *CDIHandler
+	tsManager                *TimeSlicingManager
+	mpsManager               *MpsManager
+	vfioPciManager           *VfioPciManager
+	checkpointCleanupManager *CheckpointCleanupManager
+	allocatable              AllocatableDevices
+	config                   *Config
 
 	// Same set of allocatable devices as stored in `allocatable` (abovee), but
 	// grouped by physical GPU. This is useful for grouped announcement (e.g.,
@@ -162,7 +163,7 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 		checkpointManager: checkpointManager,
 		cplock:            flock.NewFlock(cpLockPath),
 	}
-	state.allocatable = allocatable
+	state.checkpointCleanupManager = NewCheckpointCleanupManager(state, config.clientsets.Resource)
 
 	checkpoints, err := state.checkpointManager.ListCheckpoints()
 	if err != nil {
@@ -226,6 +227,8 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 		cp.V2.PreparedClaims[claimUID] = PreparedClaim{
 			CheckpointState: ClaimCheckpointStatePrepareStarted,
 			Status:          claim.Status,
+			Name:            claim.Name,
+			Namespace:       claim.Namespace,
 		}
 	})
 	if err != nil {
@@ -338,10 +341,12 @@ func (s *DeviceState) Unprepare(ctx context.Context, claimRef kubeletplugin.Name
 
 	switch pc.CheckpointState {
 	case ClaimCheckpointStatePrepareStarted:
-		// TODO: revert potential state mutations -- e.g. disable MIG mode,
-		// destroy any potential MIG device -- (but: only by MIG UUID
-		// identification -- deletion by just CI and GI id may attempt
-		// destruction underneath another claim)
+		// TODOMIG: revert potential previous MIG device creation; it may have
+		// succeeded without us pulling through. Can we safely revert that based
+		// on the information in checkpoint? Since we didn't pull through with
+		// creation, we certainly don't have a MIG device UUID. If we were to
+		// encode the MigSpecTriplet reliably in the device name below, maybe
+		// there'd be a way to reliably try-to-teardown the _right_ MIG device.
 		//
 		// Currently, we only store this:
 		//
@@ -358,8 +363,8 @@ func (s *DeviceState) Unprepare(ctx context.Context, claimRef kubeletplugin.Name
 		//       ]
 		//     },
 		//
-		// `gpu-0-mig-1g24gb-0` does uniquely identify a profile/placement that
-		// we could attempt to delete here -- but that doesn't seem safe.
+		// `gpu-0-mig-1g24gb-0` does -- in theory -- uniquely identify a
+		// profile/placement, but it's not quite ergonomic.
 		klog.Infof("unprepare noop: claim preparation started but not completed for claim '%s' (devices: %v)", claimRef.String(), pc.Status.Allocation.Devices.Results)
 		return nil
 	case ClaimCheckpointStatePrepareCompleted:

@@ -17,6 +17,7 @@
 package featuregates
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 
@@ -50,6 +51,10 @@ const (
 	// ComputeDomainCliques enables using ComputeDomainClique CRD objects instead of
 	// storing daemon info directly in ComputeDomainStatus.Nodes.
 	ComputeDomainCliques featuregate.Feature = "ComputeDomainCliques"
+
+	// CrashOnNVLinkFabricErrors causes the kubelet plugin to crash instead of
+	// falling back to non-fabric mode when NVLink fabric errors are detected.
+	CrashOnNVLinkFabricErrors featuregate.Feature = "CrashOnNVLinkFabricErrors"
 )
 
 // defaultFeatureGates contains the default settings for all project-specific feature gates.
@@ -101,8 +106,15 @@ var defaultFeatureGates = map[featuregate.Feature]featuregate.VersionedSpecs{
 	},
 	ComputeDomainCliques: {
 		{
-			Default:    false,
-			PreRelease: featuregate.Alpha,
+			Default:    true,
+			PreRelease: featuregate.Beta,
+			Version:    version.MajorMinor(25, 12),
+		},
+	},
+	CrashOnNVLinkFabricErrors: {
+		{
+			Default:    true,
+			PreRelease: featuregate.Beta,
 			Version:    version.MajorMinor(25, 12),
 		},
 	},
@@ -153,6 +165,16 @@ func newFeatureGates(version *version.Version) featuregate.MutableVersionedFeatu
 	utilruntime.Must(fg.SetFromMap(loggingOverrides))
 
 	return fg
+}
+
+// ValidateFeatureGates validates feature gate dependencies and returns an error if
+// any dependencies are not satisfied.
+func ValidateFeatureGates() error {
+	// ComputeDomainCliques requires IMEXDaemonsWithDNSNames
+	if Enabled(ComputeDomainCliques) && !Enabled(IMEXDaemonsWithDNSNames) {
+		return fmt.Errorf("feature gate %s requires %s to also be enabled", ComputeDomainCliques, IMEXDaemonsWithDNSNames)
+	}
+	return nil
 }
 
 // Enabled returns true if the specified feature gate is enabled in the global FeatureGates singleton.
