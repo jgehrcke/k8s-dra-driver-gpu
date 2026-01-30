@@ -94,8 +94,8 @@ var defaultFeatureGates = map[featuregate.Feature]featuregate.VersionedSpecs{
 	},
 	ComputeDomainCliques: {
 		{
-			Default:    false,
-			PreRelease: featuregate.Alpha,
+			Default:    true,
+			PreRelease: featuregate.Beta,
 			Version:    version.MajorMinor(25, 12),
 		},
 	},
