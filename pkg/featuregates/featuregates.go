@@ -17,6 +17,7 @@
 package featuregates
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 
@@ -153,6 +154,16 @@ func newFeatureGates(version *version.Version) featuregate.MutableVersionedFeatu
 	utilruntime.Must(fg.SetFromMap(loggingOverrides))
 
 	return fg
+}
+
+// ValidateFeatureGates validates feature gate dependencies and returns an error if
+// any dependencies are not satisfied.
+func ValidateFeatureGates() error {
+	// ComputeDomainCliques requires IMEXDaemonsWithDNSNames
+	if Enabled(ComputeDomainCliques) && !Enabled(IMEXDaemonsWithDNSNames) {
+		return fmt.Errorf("feature gate %s requires %s to also be enabled", ComputeDomainCliques, IMEXDaemonsWithDNSNames)
+	}
+	return nil
 }
 
 // Enabled returns true if the specified feature gate is enabled in the global FeatureGates singleton.
