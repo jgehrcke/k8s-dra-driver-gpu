@@ -200,6 +200,11 @@ func newApp() *cli.App {
 func run(ctx context.Context, cancel context.CancelFunc, flags *Flags) error {
 	common.StartDebugSignalHandlers()
 
+	// Validate feature gate dependencies
+	if err := featuregates.ValidateFeatureGates(); err != nil {
+		return fmt.Errorf("feature gate validation failed: %w", err)
+	}
+
 	// Create clientsets for Kubernetes API access
 	kubeConfig := &pkgflags.KubeClientConfig{}
 	clientsets, err := kubeConfig.NewClientSets()

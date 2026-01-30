@@ -415,3 +415,74 @@ func TestFeatureGateErrorHandling(t *testing.T) {
 		require.False(t, fg.Enabled(TestAlphaFeature1), "Feature state should be unchanged after failed mixed operation")
 	})
 }
+
+// =============================================================================
+// Feature Gate Validation Tests
+// =============================================================================
+
+func TestValidateFeatureGates(t *testing.T) {
+	tests := []struct {
+		name                    string
+		computeDomainCliques    bool
+		imexDaemonsWithDNSNames bool
+		expectError             bool
+		description             string
+	}{
+		{
+			name:                    "CDCliques enabled with DNSNames enabled",
+			computeDomainCliques:    true,
+			imexDaemonsWithDNSNames: true,
+			expectError:             false,
+			description:             "should be valid when both features are enabled",
+		},
+		{
+			name:                    "CDCliques enabled without DNSNames",
+			computeDomainCliques:    true,
+			imexDaemonsWithDNSNames: false,
+			expectError:             true,
+			description:             "should fail when ComputeDomainCliques is enabled but IMEXDaemonsWithDNSNames is not",
+		},
+		{
+			name:                    "DNSNames enabled without CDCliques",
+			computeDomainCliques:    false,
+			imexDaemonsWithDNSNames: true,
+			expectError:             false,
+			description:             "should be valid when only IMEXDaemonsWithDNSNames is enabled",
+		},
+		{
+			name:                    "CDCliques disabled with DNSNames disabled",
+			computeDomainCliques:    false,
+			imexDaemonsWithDNSNames: false,
+			expectError:             false,
+			description:             "should be valid when both features are disabled",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create feature gates with test configuration
+			fg := newFeatureGates(TestVersion)
+			err := fg.SetFromMap(map[string]bool{
+				string(ComputeDomainCliques):    tt.computeDomainCliques,
+				string(IMEXDaemonsWithDNSNames): tt.imexDaemonsWithDNSNames,
+			})
+			require.NoError(t, err, "SetFromMap should not fail")
+
+			// Temporarily replace global feature gates for validation
+			oldGates := featureGates
+			featureGates = fg
+			defer func() { featureGates = oldGates }()
+
+			// Validate feature gates
+			err = ValidateFeatureGates()
+
+			if tt.expectError {
+				require.Error(t, err, tt.description)
+				require.Contains(t, err.Error(), "ComputeDomainCliques", "error should mention ComputeDomainCliques")
+				require.Contains(t, err.Error(), "IMEXDaemonsWithDNSNames", "error should mention IMEXDaemonsWithDNSNames")
+			} else {
+				require.NoError(t, err, tt.description)
+			}
+		})
+	}
+}

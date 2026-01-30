@@ -41,6 +41,7 @@ import (
 
 	"github.com/NVIDIA/k8s-dra-driver-gpu/internal/common"
 	"github.com/NVIDIA/k8s-dra-driver-gpu/internal/info"
+	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
 	pkgflags "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/flags"
 )
 
@@ -176,6 +177,12 @@ func newApp() *cli.App {
 		},
 		Action: func(c *cli.Context) error {
 			common.StartDebugSignalHandlers()
+
+			// Validate feature gate dependencies
+			if err := featuregates.ValidateFeatureGates(); err != nil {
+				return fmt.Errorf("feature gate validation failed: %w", err)
+			}
+
 			mux := http.NewServeMux()
 
 			clientsets, err := flags.kubeClientConfig.NewClientSets()
