@@ -47,6 +47,10 @@ const (
 	// ComputeDomainCliques enables using ComputeDomainClique CRD objects instead of
 	// storing daemon info directly in ComputeDomainStatus.Nodes.
 	ComputeDomainCliques featuregate.Feature = "ComputeDomainCliques"
+
+	// CrashOnNVLinkFabricErrors causes the kubelet plugin to crash instead of
+	// falling back to non-fabric mode when NVLink fabric errors are detected.
+	CrashOnNVLinkFabricErrors featuregate.Feature = "CrashOnNVLinkFabricErrors"
 )
 
 // defaultFeatureGates contains the default settings for all project-specific feature gates.
@@ -92,6 +96,13 @@ var defaultFeatureGates = map[featuregate.Feature]featuregate.VersionedSpecs{
 		{
 			Default:    false,
 			PreRelease: featuregate.Alpha,
+			Version:    version.MajorMinor(25, 12),
+		},
+	},
+	CrashOnNVLinkFabricErrors: {
+		{
+			Default:    true,
+			PreRelease: featuregate.Beta,
 			Version:    version.MajorMinor(25, 12),
 		},
 	},
