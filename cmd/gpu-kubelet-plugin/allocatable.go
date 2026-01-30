@@ -88,26 +88,11 @@ func (d *AllocatableDevice) GetDevice() resourceapi.Device {
 	switch d.Type() {
 	case GpuDeviceType:
 		return d.Gpu.GetDevice()
-	// Concrete MIG device, pre-created (not managed by dynamic MIG feature)
+
 	case MigStaticDeviceType:
 		return d.MigStatic.GetDevice()
 	case VfioDeviceType:
 		return d.Vfio.GetDevice()
-	}
-	panic("unexpected type for AllocatableDevice")
-}
-
-// A variant of the legacy `GetDevice()`, for the Partitionable Devices paradigm.
-func (d *AllocatableDevice) PartGetDevice() resourceapi.Device {
-	switch d.Type() {
-	case GpuDeviceType:
-		return d.Gpu.PartGetDevice()
-	case MigStaticDeviceType:
-		panic("PartGetDevice() called for MigStaticDeviceType")
-	case MigDynamicDeviceType:
-		return d.MigDynamic.PartGetDevice()
-	case VfioDeviceType:
-		panic("not yet implemented")
 	}
 	panic("unexpected type for AllocatableDevice")
 }
@@ -123,12 +108,13 @@ func (d AllocatableDevice) UUID() string {
 		return d.MigStatic.UUID
 	}
 	if d.MigDynamic != nil {
-		// Calling code must make sure that we never get here. First, an
-		// abstract MIG device must be prepared (created). Only then, its UUID
+		// The caller must sure to never call UUID() hat we never get here. An
+		// abstract MIG device must be prepared (created) -- only then, its UUID
 		// can be determined. This method still exists because when the
 		// DynamicMIG feature gate is disabled, `AllocatableDevices` _can_
-		// implement UUIDProvider.
+		// implement UUIDProvider. This needs restructuring, to be safer.
 		panic("unexpected call to UUID for AllocatableDevice type MigDynamic")
+		//return ""
 	}
 	if d.Vfio != nil {
 		return d.Vfio.UUID

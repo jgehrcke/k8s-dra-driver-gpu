@@ -25,13 +25,13 @@ import (
 
 const (
 	GpuDeviceType = "gpu"
-	// Allocatable MIG device which is managed out-of-band. Note(JP): I think
-	// this is exposed as part of the API, and was so far always "mig",
-	// referring to the "static MIG" use case. Upon introducing "migdyn" below,
-	// I felt inclined to rename this to "migstatic", but I think we cannot do
-	// that.
+	// Concrete MIG device, pre-created (not managed by the DynamicMIG
+	// capability). Managed out-of-band. Note(JP): I think this is exposed as
+	// part of the API, and was so far always "mig", referring to the "static
+	// MIG" use case. Upon introducing "migdyn" below, I felt inclined to rename
+	// this to "migstatic", but I think we cannot do that.
 	MigStaticDeviceType = "mig"
-	// Allocatable MIG device which is manged by us.
+	// Abstract allocatable MIG device is manged by us (DynamicMIG).
 	MigDynamicDeviceType = "migdyn"
 	VfioDeviceType       = "vfio"
 	UnknownDeviceType    = "unknown"
