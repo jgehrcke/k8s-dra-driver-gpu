@@ -399,7 +399,7 @@ func (m *ComputeDomainCliqueManager) removeDaemonInfoFromClique(ctx context.Cont
 	}
 	m.mutationCache.Mutation(newClique)
 
-	klog.Infof("Successfully removed daemon with IP %s from CDClique %s", m.config.podIP, m.cliqueName())
+	klog.Infof("Successfully removed daemon with IP %s from CDClique %s (from ComputeDomain %s/%s)", m.config.podIP, m.cliqueName(), m.config.computeDomainNamespace, m.config.computeDomainName)
 	return nil
 }
 
