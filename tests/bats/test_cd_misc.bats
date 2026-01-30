@@ -69,7 +69,13 @@ bats::on_failure() {
   # Note: the log follower child process terminates when the pod terminates.
   kubectl wait --for=delete pods imex-channel-injection --timeout=10s
 
-  # Expect `nodes` key to not be be present (single-node CD).
+  # Expect `nodes` key to not be be present (single-node CD). Note that with
+  # `ComputeDomainCliques=true` (new default), the node status removal is not
+  # done anymore by the CD daemons, but asynchronously by the CD controller.
+  # Hence, the update expectedly takes "a moment" (at most ~two seconds, though,
+  # expectedlyt. Ideally, we check periodically up until a deadline. Quick&dirty
+  # and to-be-fixed (TODO): sleep a brief moment.
+  sleep 3
   run bats_pipe kubectl get computedomain imex-channel-injection -o json \| jq '.status'
   refute_output --partial 'nodes'
 
@@ -77,7 +83,7 @@ bats::on_failure() {
   cat "$LOGPATH" | tail -n 50
 
   # Explicitly confirm cleanup-on-shutdown behavior by inspecting CD log.
-  cat "$LOGPATH" | grep "Successfully removed node" | \
+  cat "$LOGPATH" | grep "Successfully removed daemon" | \
     grep "from ComputeDomain default/imex-channel-injection"
 
   # Delete CD.
