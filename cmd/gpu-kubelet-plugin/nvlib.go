@@ -49,19 +49,6 @@ type deviceLib struct {
 	devhandleByUUID   map[string]nvml.Device
 }
 
-const (
-	procDevicesPath      = "/proc/devices"
-	nvidiaCapsDeviceName = "nvidia-caps"
-)
-
-type nvcapDeviceInfo struct {
-	major  int
-	minor  int
-	mode   int
-	modify int
-	path   string
-}
-
 type GPUMinor = int
 type PerGPUMinorAllocatableDevices map[GPUMinor]AllocatableDevices
 
@@ -686,21 +673,23 @@ func (l deviceLib) getMigDevices(gpuInfo *GpuInfo) (map[string]*MigDeviceInfo, e
 		}
 
 		infos[uuid] = &MigDeviceInfo{
-			UUID:          uuid,
-			Profile:       migProfile.String(),
-			ParentMinor:   gpuInfo.minor,
-			ParentUUID:    gpuInfo.UUID,
-			CIID:          int(ciInfo.Id),
-			GIID:          int(giInfo.Id),
-			Placement:     &placement,
-			parent:        gpuInfo,
-			giProfileInfo: giProfileInfo,
-			gIInfo:        &giInfo,
-			ciProfileInfo: ciProfileInfo,
-			cIInfo:        &ciInfo,
-			pcieBusID:     gpuInfo.pcieBusID,
-			pcieRootAttr:  gpuInfo.pcieRootAttr,
-			Health:        Healthy,
+			UUID:           uuid,
+			Profile:        migProfile.String(),
+			ParentMinor:    gpuInfo.minor,
+			ParentUUID:     gpuInfo.UUID,
+			CIID:           int(ciInfo.Id),
+			GIID:           int(giInfo.Id),
+			PlacementStart: int(placement.Start),
+			PlacementSize:  int(placement.Size),
+			GiProfileID:    int(giProfileInfo.Id),
+			parent:         gpuInfo,
+			giProfileInfo:  giProfileInfo,
+			gIInfo:         &giInfo,
+			ciProfileInfo:  ciProfileInfo,
+			cIInfo:         &ciInfo,
+			pcieBusID:      gpuInfo.pcieBusID,
+			pcieRootAttr:   gpuInfo.pcieRootAttr,
+			Health:         Healthy,
 		}
 		return nil
 	})
@@ -807,7 +796,7 @@ func (l deviceLib) DeviceGetHandleByUUIDCached(uuid string) (nvml.Device, nvml.R
 func (l deviceLib) createMigDevice(migspec *MigSpec) (*MigDeviceInfo, error) {
 	gpu := migspec.Parent
 	profile := migspec.Profile
-	placement := &migspec.MemorySlices
+	placement := &migspec.Placement
 
 	// tcmigdev0 := time.Now()
 	// if err := l.Init(); err != nil {
@@ -911,17 +900,17 @@ func (l deviceLib) createMigDevice(migspec *MigSpec) (*MigDeviceInfo, error) {
 	// Should use two types here, one just for the 3-tuple, and then the rest of
 	// the info. Things get confusing.
 	migDevInfo := &MigDeviceInfo{
-		UUID:       uuid,
-		CIID:       int(ciInfo.Id),
-		GIID:       int(giInfo.Id),
-		ParentUUID: gpu.UUID,
-		Profile:    profile.String(),
-		Placement: &MigDevicePlacement{
-			GpuInstancePlacement: *placement,
-		},
-		gIInfo: &giInfo,
-		cIInfo: &ciInfo,
-		parent: gpu,
+		UUID:           uuid,
+		CIID:           int(ciInfo.Id),
+		GIID:           int(giInfo.Id),
+		ParentUUID:     gpu.UUID,
+		Profile:        profile.String(),
+		PlacementStart: int(placement.Start),
+		PlacementSize:  int(placement.Size),
+		GiProfileID:    int(giProfileInfo.Id),
+		gIInfo:         &giInfo,
+		cIInfo:         &ciInfo,
+		parent:         gpu,
 	}
 
 	klog.V(6).Infof("%s: MIG device created on %s: %s (%s)", logpfx, gpu.String(), migDevInfo.CanonicalName(), migDevInfo.UUID)
@@ -932,9 +921,10 @@ func (l deviceLib) createMigDevice(migspec *MigSpec) (*MigDeviceInfo, error) {
 // 3-tuple for precisely describing a concrete MIG device. Introduce a data type
 // for just that, and pass it into the function. Notably, the MIG device's UUID
 // does not need to be known here (I hope -- should the MIG device UUID from the
-// allocated claim be checked against the to-be-deleted MIG dqevice? Is there
+// allocated claim be checked against the to-be-deleted MIG device? Is there
 // _any_ chance that the "same" MIG device was re-created in the meantime? In
-// that case it might have the same 3-tuple, but a different UUID. Further
+// that case it might have the same 3-tuple, but a different UUID (is that true?
+// Are MIG device UUIDs stable or 'random'? Looked it up: they change). Further
 // questions: are MIG UUIDs random? Can a MIG UUID be looked up given the
 // 3-tuple?
 func (l deviceLib) deleteMigDevice(parentUUID string, giId int, ciId int) error {
@@ -984,6 +974,21 @@ func (l deviceLib) deleteMigDevice(parentUUID string, giId int, ciId int) error 
 	// Remainder, with `gi` actually being valid.
 	ci, cires := gi.GetComputeInstanceById(ciId)
 
+	// Here we could compare the actual MIG UUID with an expected MIG UUID,
+	// to be extra sure that this we want to proceed with deletion.
+	// ciInfo, res := ci.GetInfo()
+	// if res != nvml.SUCCESS {
+	// 	return fmt.Errorf("error calling ci.GetInfo(): %v", ret)
+	// }
+
+	// actualMigUUID, res := nvml.DeviceGetUUID(ciInfo.Device)
+	// if res != nvml.SUCCESS {
+	// 	return fmt.Errorf("nvml.DeviceGetUUID() failed: %v", ret)
+	// }
+	// if actualMigUUID != expectedMigUUID {
+	// 	return fmt.Errorf("UUID mismatch upon deletion: expected: %s actual: %s", expectedMigUUID, actualMigUUID)
+	// }
+
 	// Can never be `ERROR_NOT_SUPPORTED` at this point. Can be UNINITIALIZED,
 	// INVALID_ARGUMENT, NO_PERMISSION: for those three, it's worth erroring out
 	// here (to be retried later).
@@ -1003,7 +1008,7 @@ func (l deviceLib) deleteMigDevice(parentUUID string, giId int, ciId int) error 
 	}
 
 	// That can for example fail with "In use by another client", in which case
-	// we may have performed only a partical cleanup (CI already destroyed; seen
+	// we may have performed only a partial cleanup (CI already destroyed; seen
 	// in practice).
 
 	// Note that this operation may take O(1 s). In a machine supporting many
@@ -1099,7 +1104,7 @@ func (l deviceLib) inspectMigProfilesAndPlacements(gpuInfo *GpuInfo, device nvde
 				Parent:        gpuInfo,
 				Profile:       migProfile,
 				GIProfileInfo: giProfileInfo,
-				MemorySlices:  giPlacement,
+				Placement:     giPlacement,
 			}
 			infos = append(infos, mi)
 
@@ -1136,7 +1141,7 @@ func (l deviceLib) inspectMigProfilesAndPlacements(gpuInfo *GpuInfo, device nvde
 
 // Mutate map `m` in-place: insert into map if the current QualifiedName does
 // not yet exist as a key. Otherwise, update item in map if the incoming value
-// `v` is larger than the one currenty stored in the map.
+// `v` is larger than the one currently stored in the map.
 func setMax(m map[resourceapi.QualifiedName]resourceapi.DeviceCapacity, k resourceapi.QualifiedName, v resourceapi.DeviceCapacity) {
 	if cur, ok := m[k]; !ok || v.Value.Value() > cur.Value.Value() {
 		m[k] = v

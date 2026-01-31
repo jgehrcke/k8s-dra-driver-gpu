@@ -62,7 +62,8 @@ type GpuInfo struct {
 	memSliceCount int
 }
 
-// Represents a specific (concrete, incarnated, created) MIG device.
+// Represents a specific (concrete, incarnated, created) MIG device. Annotated
+// properties are stored in the checkpoint JSON upon prepare.
 type MigDeviceInfo struct {
 	UUID    string `json:"uuid"`
 	Profile string `json:"profile"`
@@ -73,14 +74,12 @@ type MigDeviceInfo struct {
 	ParentMinor int    `json:"parentMinor"`
 	CIID        int    `json:"ciId"`
 	GIID        int    `json:"giId"`
+	GiProfileID int    `json:"profileId"`
 
-	// Is the placement implicitly encoded already in CIID and GIID? In any
-	// case, for now, store this in the JSON checkpoint because in
-	// CanonicalName() we rely on this -- and this must work after JSON
-	// deserialization. TODO: introduce cleaner data type carrying precisely
-	// (and just) what we want to store about a created MIG device in the
-	// checkpoint JSON.
-	Placement *MigDevicePlacement `json:"placement"`
+	// Store PlacementStart in the JSON checkpoint because in CanonicalName() we
+	// rely on this -- and this must work after JSON deserialization.
+	PlacementStart int `json:"placementStart"`
+	PlacementSize  int `json:"placementSize"`
 
 	gIInfo        *nvml.GpuInstanceInfo
 	cIInfo        *nvml.ComputeInstanceInfo
@@ -120,10 +119,18 @@ func (d *GpuInfo) String() string {
 	return fmt.Sprintf("%s-%s", d.CanonicalName(), d.UUID)
 }
 
+func (m *MigDeviceInfo) MigTuple() *MigTuple {
+	return &MigTuple{
+		ParentMinor:    m.ParentMinor,
+		ProfileID:      m.GiProfileID,
+		PlacementStart: m.PlacementStart,
+	}
+}
+
 // User-facing name for a specific (concrete) MIG device. Must encode especially
 // three Ps: parent, profile, placement.
 func (d *MigDeviceInfo) CanonicalName() string {
-	return migppCanonicalName(d.ParentMinor, d.Profile, &d.Placement.GpuInstancePlacement)
+	return migppCanonicalName(d.MigTuple(), d.Profile)
 }
 
 func (d *VfioDeviceInfo) CanonicalName() string {
@@ -227,7 +234,7 @@ func (d *MigDeviceInfo) GetDevice() resourceapi.Device {
 	// as capacity? Are users interested? That effectively shows 'placement' to
 	// users. Does it also allow users to request placement? Do we want to allow
 	// users to request specific placement?
-	for i := d.Placement.Start; i < d.Placement.Start+d.Placement.Size; i++ {
+	for i := d.PlacementStart; i < d.PlacementStart+d.PlacementSize; i++ {
 		// TODO: review memorySlice (legacy) vs memory-slice -- I believe I
 		// prefer memory-slice because that works for counters. Do we even need
 		// to announce the slices as capacity?

@@ -19,11 +19,8 @@ package main
 
 import (
 	"fmt"
-	"regexp"
-	"strings"
 
 	"github.com/Masterminds/semver"
-	"github.com/NVIDIA/go-nvml/pkg/nvml"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/dynamic-resource-allocation/deviceattribute"
@@ -275,7 +272,7 @@ func capacitiesToCounters(m PartCapacityMap) map[string]resourceapi.Counter {
 func (i MigSpec) PartConsumesCounters() []resourceapi.DeviceCounterConsumption {
 	return []resourceapi.DeviceCounterConsumption{{
 		CounterSet: i.Parent.GetSharedCounterSetName(),
-		Counters:   addCountersForMemSlices(capacitiesToCounters(i.PartCapacities()), int(i.MemorySlices.Start), int(i.MemorySlices.Size)),
+		Counters:   addCountersForMemSlices(capacitiesToCounters(i.PartCapacities()), int(i.Placement.Start), int(i.Placement.Size)),
 	}}
 }
 
@@ -302,43 +299,4 @@ func addCountersForMemSlices(counters map[string]resourceapi.Counter, start int,
 		counters[memsliceCounterName(i)] = resourceapi.Counter{Value: *resource.NewQuantity(1, resource.BinarySI)}
 	}
 	return counters
-}
-
-// toRFC1123Compliant converts the input to a DNS name compliant with RFC 1123.
-// Note that a device name in DRA must not contain dots either (this function
-// does not always return a string that can be used as a device name).
-func toRFC1123Compliant(name string) string {
-	name = strings.ToLower(name)
-	re := regexp.MustCompile(`[^a-z0-9-.]`)
-	name = re.ReplaceAllString(name, "-")
-	name = strings.Trim(name, "-")
-	name = strings.TrimSuffix(name, ".")
-
-	// Can this ever hurt? Should we error out?
-	if len(name) > 253 {
-		name = name[:253]
-	}
-
-	return name
-}
-
-func placementString(p *nvml.GpuInstancePlacement) string {
-	sfx := fmt.Sprintf("%d", p.Start)
-	if p.Size > 1 {
-		sfx = fmt.Sprintf("%s-%d", sfx, p.Start+p.Size-1)
-	}
-	// first, I had `placement-` in there -- but that may be too bulky
-	//return toRFC1123Compliant(fmt.Sprintf("%s", sfx))
-	return toRFC1123Compliant(sfx)
-}
-
-// `profile string` must be what's returned by profile.String(), the
-// classical/canonical profile string notation, with a dot. This must not crash
-// when fed with data from a MigDeviceInfo object deserialized from JSON.
-func migppCanonicalName(parentMinor int, profile string, p *nvml.GpuInstancePlacement) string {
-	placementSuffix := placementString(p)
-	// Remove the dot in e.g. `4g.95gb` -- device names must not contain dots,
-	// and this is used in a device name.
-	profname := strings.ReplaceAll(profile, ".", "")
-	return toRFC1123Compliant(fmt.Sprintf("gpu-%d-mig-%s-%s", parentMinor, profname, placementSuffix))
 }
