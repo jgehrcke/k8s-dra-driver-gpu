@@ -24,57 +24,49 @@ import (
 
 	nvdev "github.com/NVIDIA/go-nvlib/pkg/nvlib/device"
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
-	"k8s.io/klog/v2"
 )
 
-// The following 3-tuple precisely describes a physical MIG device
-// configuration, before or after creation: parent (UUID or minor),
-// Placement.Start, and ProfileID. The profile ID implies slice count.
+// MigTuple is a 3-tuple precisely describing a physical MIG device
+// configuration: parent (UUID or minor), placement start index, and (GI) MIG
+// profile ID. The profile ID implies memory slice count. This representation is
+// precise and meaningful before or after creation of a specific MIG device
+// configuration. It does not carry MIG device identity (UUID).
 type MigTuple struct {
 	ParentMinor GPUMinor
-	// What's commonly called the "MIG profile ID" here, at this level of
-	// detail, is actually the `GIProfileID` (GPU Instance Profile ID): This
-	// corresponds to the resource slice configuration (e.g., 1g.5gb). It
-	// defines the slice count and memory size. This is the ID one passes into
+	// What is commonly called "MIG profile ID" typically refers to the GPU
+	// Instance Profile ID. The GI profile ID is also what's emitted by
+	// `nvidia-smi mig -lgip` for each profile -- it directly corresponds to a
+	// specific human-readable profile string such as "1g.5gb". For programmatic
+	// management, it is the better profile representation than the string. Most
+	// importantly, the profile defines slice count and memory size. Another way
+	// to describe GI profile ID: this is the ID that one passes into
 	// nvmlDeviceCreateGpuInstance() to create the partition.
 	ProfileID      int
 	PlacementStart int
 }
 
-// After creation, a specific MIG device can also be fully identified by the
-// following 3-tuple: the parent GPU (UUID/minor), the GPU Instance (GI)
-// identifier, and the Compute Instance (CI) identifier. But that counts only
-// for as long as the device is known to be alive. This can be checked by
-// confirming actual vs. expected MIG device UUID after looking up the device by
-// (parent, CIID, GIID). TODO: maybe encode MIG UUID here as that 'expected'
-// UUID?
+// After creation, a specific MIG device can also be tracked and identified by
+// the following 3-tuple: the parent GPU (UUID/minor), the GPU Instance (GI)
+// identifier, and the Compute Instance (CI) identifier. As far as I understand,
+// there is no guaranteed relationship between GIID+CIID on the one hand and
+// profileID+placementStart on the other hand. That is why those two 3-tuple
+// types make sense to both be used. The GIID/CIID-based tracking makes sense
+// while the very same device is known to be alive -- hence the enrichment with
+// `uuid`; because the MIG device UUID changes across destruction/re-creation of
+// the same physical configuration. The `uuid` can be used to distinguish actual
+// vs. expected MIG device UUID after looking up the device by (parent, CIID,
+// GIID).
 type MigTupleLogical struct {
 	ParentMinor GPUMinor
 	GIID        int
 	CIID        int
+	uuid        string
 }
 
-// MigSpec describes an abstract MIG device with precise specification of parent
-// GPU, MIG profile and physcical placement on the parent GPU. Compared to the
-// minimal tuples above, the properties of this type are more complex objects.
-//
-// Does not necessarily encode a _concrete_ (materialized / created /
-// incarnated) device. In terms of abstract MIG device descriptions, there are
-// many useful levels of precision / abstraction / refinement. For example:
-//
-// 1) specify MIG profile; do not specify parent, placement 2) specify MIG
-// profile, parent; do not specify placement 3) specify MIG profile, parent,
-// placement.
-//
-// This type is case (3); it leaves no degrees of freedom.
-//
-// TODO2(JP): clarify how CI id and GI id are not orthogonal to placement. Maybe
-// add a method that translates between the two. I don't think we need to wait
-// for creation to then know the CI ID and GI ID. TODO3(JP): clarify the
-// relevance of the three-tuple of parent,ciid,giid for precisely describing a
-// MIG device, and how that's a fundamental data structure. Maybe define its own
-// type for it, and use it elsewhere.
-
+// MigSpec is similar to `MigTuple` as it also fundamentally encodes parent,
+// profile, and placement. In that sense, it is abstract description of a
+// specific MIG device configuration. Compared to `MigTuple`, though, the
+// properties of this type are more complex management objects for convenience.
 type MigSpec struct {
 	Parent        *GpuInfo
 	Profile       nvdev.MigProfile
@@ -83,7 +75,6 @@ type MigSpec struct {
 }
 
 func (m *MigSpec) Tuple() *MigTuple {
-	klog.Infof("migspec tuple() with profile ID: %d", m.GIProfileInfo.Id)
 	return &MigTuple{
 		ParentMinor:    m.Parent.minor,
 		ProfileID:      int(m.GIProfileInfo.Id),
