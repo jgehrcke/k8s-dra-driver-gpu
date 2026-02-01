@@ -18,6 +18,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -70,7 +71,7 @@ func NewCDIHandler(opts ...cdiOption) (*CDIHandler, error) {
 
 	if h.logger == nil {
 		h.logger = logrus.New()
-		// h.logger.SetOutput(io.Discard)
+		h.logger.SetOutput(io.Discard)
 	}
 	if h.nvml == nil {
 		h.nvml = nvml.New()
@@ -138,8 +139,7 @@ func (cdi *CDIHandler) writeSpec(spec spec.Interface, specName string) error {
 		return fmt.Errorf("failed to get minimum required CDI spec version: %w", err)
 	}
 	spec.Raw().Version = minVersion
-
-	// Write the spec out to disk.
+	klog.V(6).Infof("Write CDI spec: %s", specName)
 	return cdi.cache.WriteSpec(spec.Raw(), specName)
 }
 
@@ -155,7 +155,7 @@ func (cdi *CDIHandler) GetCommonEditsCached() (*cdiapi.ContainerEdits, error) {
 
 	t0 := time.Now()
 	v, err := cdi.nvcdiClaim.GetCommonEdits()
-	klog.V(6).Infof("t_cdi_get_common_edits %.3f s", time.Since(t0).Seconds())
+	klog.V(7).Infof("t_cdi_get_common_edits %.3f s", time.Since(t0).Seconds())
 
 	if err != nil {
 		return nil, err
@@ -185,7 +185,6 @@ func (cdi *CDIHandler) GetDeviceSpecsByUUIDCached(uuid string) ([]cdispec.Device
 	}
 
 	t0 := time.Now()
-	// This has been called 28 times
 	devs, err := cdi.nvcdiClaim.GetDeviceSpecsByID(uuid)
 	klog.Infof("GetDeviceSpecsByID() called for %s", uuid)
 	klog.V(6).Infof("t_cdi_get_specs_for_uuid %.3f s", time.Since(t0).Seconds())
@@ -205,14 +204,14 @@ func (cdi *CDIHandler) GetDeviceSpecsByUUIDCached(uuid string) ([]cdispec.Device
 // with the device, such as minor number, might change. The caller of this API
 // is expected to query such attributes again.' -- if the minor is indeed not
 // necessarily stable, there may be problems associating this spec _long-term_
-// with that name. Maye always dynamically generate spec during prepare(). That
-// is an argument for always dynamically generating also full-GPU CDI spec
-// during prepare().
+// with that name. That is an argument for always dynamically generating also
+// full-GPU CDI spec during prepare() (or: to cache it, and re-generate it every
+// now and then during this program's lifetime).
 func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices PreparedDevices) error {
 	// Generate those parts of the container spec that are not device-specific
-	// (to inject e.g. driver library mounts and meta devices).
+	// (to inject e.g. driver library mounts and meta devices). Note that
 	// `nvcdiDevice.GetCommonEdits()` may usually initialize nvsandboxutilslib
-	// under the hood -- to prevent that, we now use
+	// under the hood -- we now prevent that from happening by using
 	// `nvcdi.FeatureDisableNvsandboxUtils` above.
 	commonEdits, err := cdi.GetCommonEditsCached()
 	if err != nil {
@@ -232,14 +231,14 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 			uuid := ""
 
 			// Construct claim-specific CDI device name in accordance with the
-			// naming convention encoded in GetClaimDeviceName() below.
+			// naming convention encoded in `GetClaimDeviceName()` below.
 			dname := fmt.Sprintf("%s-%s", claimUID, dev.CanonicalName())
 
 			var dspec cdispec.Device
 
 			if dev.Type() == GpuDeviceType {
 				uuid = dev.Gpu.Info.UUID
-				// Get (copy of) cached device spec (is safe to be mutated below,
+				// Get (copy of) cached CDI spec (is safe to be mutated below,
 				// w/o compromising cache).
 				dspecsgpu, err := cdi.GetDeviceSpecsByUUIDCached(uuid)
 				if err != nil {
@@ -249,13 +248,13 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 			}
 
 			if dev.Type() == VfioDeviceType {
-				// uuid = dev.Vfio.Info.UUID
-				// Note(JP): overwrite commonEdits (potentially multiple times
-				// with the same data). Shouldn't we also use
+				// For now, just overwrite commonEdits (potentially multiple
+				// times with the same data). Can we also use
 				// `cdi.nvcdiDevice.GetCommonEdits()` here (wasn't done in the
 				// original vfio PR)? Also: assume that all devices in
-				// `preparedDevices` are vfio devices; a mixture would wreak
-				// havoc.
+				// `preparedDevices` are vfio devices; a mixture isn't supported
+				// by the current business logic and leads to unexpected
+				// behavior.
 				commonEdits = GetVfioCommonCDIContainerEdits()
 				dspec = cdispec.Device{
 					ContainerEdits: *GetVfioCDIContainerEdits(dev.Vfio.Info).ContainerEdits,
@@ -263,13 +262,12 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 			}
 
 			if dev.Type() == PreparedMigDeviceType {
-				// Goal: inject parent dev node. Other dev nodes specific to this
-				// MIG device are injected 'manually' further below. That is because
-				// currently `nvcdiDevice.GetDeviceSpecsByID()` may yield an
-				// incomplete spec for MIG devices, see
-				// https://github.com/NVIDIA/k8s-dra-driver-gpu/issues/787. Instead,
-				// manually create the required dev node spec for the consuming
-				// container via GetDevNodesForMigDevice() below.
+				// Here, get the 'parent dev node' part of the spec. THe spec
+				// fragment for other dev nodes specific to this MIG device is
+				// generated further below. One reason for doing things this way
+				// is that `nvcdiDevice.GetDeviceSpecsByID(MIG_UUID)` may yield
+				// an incomplete spec for MIG devices, see
+				// https://github.com/NVIDIA/k8s-dra-driver-gpu/issues/787.
 				uuid = dev.Mig.Created.parent.UUID
 				// Get (copy of) cached device spec (is safe to be mutated below,
 				// w/o compromising cache).
@@ -279,7 +277,6 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 				}
 				dspec = dspecsmig[0]
 
-				// Mutate `dspec` in case a MIG device was asked for.
 				devnodesForMig, err := cdi.GetDevNodesForMigDevice(dev.Mig.Created.parent.minor, int(dev.Mig.Created.GIID), int(dev.Mig.Created.CIID))
 				if err != nil {
 					return fmt.Errorf("failed to construct MIG device DeviceNode edits: %w", err)

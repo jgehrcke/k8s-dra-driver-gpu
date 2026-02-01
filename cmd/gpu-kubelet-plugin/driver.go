@@ -170,7 +170,7 @@ func (d *driver) GenerateDriverResources(nodeName string) resourceslice.DriverRe
 	// model 2, for now.
 	//
 	// Model 2) Create G resource slices, given G physical GPUs. Each slice
-	// describes the physical full device capacity by definining _one_ counter
+	// describes the physical full device capacity by defining _one_ counter
 	// set as part of `SharedCounters`. Then, in the same resource slice define
 	// all devices allocatable for that physical GPU. That is, M possible MIG
 	// devices, and 1 device representing the full GPU. Hence:
