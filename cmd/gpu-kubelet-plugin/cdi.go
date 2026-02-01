@@ -139,7 +139,7 @@ func (cdi *CDIHandler) writeSpec(spec spec.Interface, specName string) error {
 		return fmt.Errorf("failed to get minimum required CDI spec version: %w", err)
 	}
 	spec.Raw().Version = minVersion
-	klog.V(6).Infof("Write CDI spec: %s", specName)
+	klog.V(7).Infof("Write CDI spec: %s", specName)
 	return cdi.cache.WriteSpec(spec.Raw(), specName)
 }
 
@@ -226,6 +226,7 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 		"NVIDIA_VISIBLE_DEVICES=void")
 
 	var deviceSpecs []cdispec.Device
+
 	for _, group := range preparedDevices {
 		for _, dev := range group.Devices {
 			uuid := ""
@@ -277,7 +278,7 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 				}
 				dspec = dspecsmig[0]
 
-				devnodesForMig, err := cdi.GetDevNodesForMigDevice(dev.Mig.Created.parent.minor, int(dev.Mig.Created.GIID), int(dev.Mig.Created.CIID))
+				devnodesForMig, err := cdi.GetDevNodesForMigDevice(dev.Mig.Created.LiveTuple())
 				if err != nil {
 					return fmt.Errorf("failed to construct MIG device DeviceNode edits: %w", err)
 				}
@@ -285,15 +286,15 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 				dspec.ContainerEdits.DeviceNodes = append(dspec.ContainerEdits.DeviceNodes, devnodesForMig...)
 			}
 
-			// The previous calls guarantee that at this point, `dspec` is a
-			// list with precisely one item. Now, associate spec with
-			// claim-specific device name generated above.
+			// Associate thew newly generated spec with the claim-specific
+			// device name.
 			dspec.Name = dname
+
 			klog.V(7).Infof("Number of device nodes about to inject for device %s: %d", dname, len(dspec.ContainerEdits.DeviceNodes))
 			deviceSpecs = append(deviceSpecs, dspec)
 
-			// If there edits passed as part of the device config state (set on
-			// the group), add them to the spec of each device in that group.
+			// If there are edits passed as part of the device config state (set
+			// on the group), add them to the spec of each device in that group.
 			if group.ConfigState.containerEdits != nil {
 				deviceSpec := cdispec.Device{
 					Name:           fmt.Sprintf("%s-%s", claimUID, dname),
@@ -305,7 +306,6 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 	}
 
 	tws0 := time.Now()
-
 	spec, err := spec.New(
 		spec.WithVendor(cdiVendor),
 		spec.WithClass(cdiClaimClass),
@@ -322,7 +322,8 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 	specName := cdiapi.GenerateTransientSpecName(cdiVendor, cdiClaimClass, claimUID)
 	klog.V(6).Infof("Writing CDI spec '%s' for claim '%s'", specName, claimUID)
 	result := cdi.writeSpec(spec, specName)
-	klog.V(6).Infof("t_gen_write_cdi_spec %.3f s", time.Since(tws0).Seconds())
+
+	klog.V(7).Infof("t_gen_write_cdi_spec %.3f s", time.Since(tws0).Seconds())
 	return result
 }
 
@@ -358,9 +359,9 @@ func (cdi *CDIHandler) GetClaimDeviceName(claimUID string, device *AllocatableDe
 // without actually requiring the same device nodes to be explicitly created on
 // the host. That is what is achieved below with the structure created in
 // cdiDevNodeFromNVCapDevInfo().
-func (cdi *CDIHandler) GetDevNodesForMigDevice(parentMinor int, giId int, ciId int) ([]*cdispec.DeviceNode, error) {
-	gipath := fmt.Sprintf("%s/gpu%d/mig/gi%d/access", procNvCapsPath, parentMinor, giId)
-	cipath := fmt.Sprintf("%s/gpu%d/mig/gi%d/ci%d/access", procNvCapsPath, parentMinor, giId, ciId)
+func (cdi *CDIHandler) GetDevNodesForMigDevice(mlt *MigLiveTuple) ([]*cdispec.DeviceNode, error) {
+	gipath := fmt.Sprintf("%s/gpu%d/mig/gi%d/access", procNvCapsPath, mlt.ParentMinor, mlt.GIID)
+	cipath := fmt.Sprintf("%s/gpu%d/mig/gi%d/ci%d/access", procNvCapsPath, mlt.ParentMinor, mlt.GIID, mlt.CIID)
 
 	giCapsInfo, err := common.ParseNVCapDeviceInfo(gipath)
 	if err != nil {
