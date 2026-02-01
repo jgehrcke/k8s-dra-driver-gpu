@@ -932,6 +932,7 @@ func (l deviceLib) createMigDevice(migspec *MigSpec) (*MigDeviceInfo, error) {
 // questions: are MIG UUIDs random? Can a MIG UUID be looked up given the
 // 3-tuple?
 func (l deviceLib) deleteMigDevice(parentUUID string, giId int, ciId int) error {
+	t0 := time.Now()
 	migStr := fmt.Sprintf("MIG(%s, %d, %d)", parentUUID, giId, ciId)
 	klog.V(6).Infof("Delete MIG device: %s", migStr)
 
@@ -1023,6 +1024,7 @@ func (l deviceLib) deleteMigDevice(parentUUID string, giId int, ciId int) error 
 	if ret != nvml.SUCCESS {
 		return fmt.Errorf("error destroying GPU Instance: %v", ret)
 	}
+	klog.V(6).Infof("t_delete_mig_device %.3f s", time.Since(t0).Seconds())
 
 	if err := l.maybeDisableMigMode(parentUUID, parentNvmlDev); err != nil {
 		return fmt.Errorf("failed maybeDisableMigMode: %w", err)

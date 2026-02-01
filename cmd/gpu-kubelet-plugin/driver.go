@@ -334,7 +334,7 @@ func (d *driver) nodeUnprepareResource(ctx context.Context, claimRef kubeletplug
 	tunprep0 := time.Now()
 	err = d.state.Unprepare(ctx, claimRef)
 	klog.V(6).Infof("t_unprep %.3f s (claim %s)", time.Since(tunprep0).Seconds(), cs)
-	klog.V(6).Infof("t_unprep_total %.3f s (claim %s)", time.Since(t0).Seconds(), cs)
+	klog.V(7).Infof("t_unprep_with_lock_acq %.3f s (claim %s)", time.Since(t0).Seconds(), cs)
 
 	if err != nil {
 		return fmt.Errorf("error unpreparing devices for claim %v: %w", claimRef.String(), err)
