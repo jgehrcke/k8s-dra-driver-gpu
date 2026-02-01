@@ -46,6 +46,7 @@ type deviceLib struct {
 	devRoot           string
 	nvidiaSMIPath     string
 	gpuInfosByUUID    map[string]*GpuInfo
+	gpuUUIDbyMinor    map[GPUMinor]string
 	devhandleByUUID   map[string]nvml.Device
 }
 
@@ -78,6 +79,7 @@ func newDeviceLib(driverRoot root) (*deviceLib, error) {
 		nvidiaSMIPath:     nvidiaSMIPath,
 		nvpci:             nvpci,
 		gpuInfosByUUID:    make(map[string]*GpuInfo),
+		gpuUUIDbyMinor:    make(map[GPUMinor]string),
 		devhandleByUUID:   make(map[string]nvml.Device),
 	}
 
@@ -193,6 +195,7 @@ func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (PerGPUMinorAlloc
 
 		// Store gpuInfo object for later re-use (lookup by UUID).
 		l.gpuInfosByUUID[gpuInfo.UUID] = gpuInfo
+		l.gpuUUIDbyMinor[gpuInfo.minor] = gpuInfo.UUID
 
 		// Cache warmup: store mapping between full-GPU UUID and NVML device
 		// handle in a map. Ignore failures.
@@ -372,12 +375,13 @@ func (l deviceLib) obliterateStaleMIGDevices(expectedDeviceNames []DeviceName) e
 			// That's the name we announce the device with via DRA, i.e. it's
 			// node-unique, and must (by definition) precisely describe a
 			// specific device within a node.
-			canoname := mdi.CanonicalName()
-			expected := slices.Contains(expectedDeviceNames, canoname)
+			name := mdi.CanonicalName()
+			miglt := mdi.LiveTuple()
+			expected := slices.Contains(expectedDeviceNames, name)
 			if !expected {
-				klog.Warningf("Found unexpected MIG device (%s), destroy", canoname)
-				if err := l.deleteMigDevice(ginfo.UUID, mdi.GIID, mdi.CIID); err != nil {
-					return fmt.Errorf("could not delete unexpected MIG device (%s): %w", canoname, err)
+				klog.Warningf("Found unexpected MIG device (%s), destroy", name)
+				if err := l.deleteMigDevice(miglt); err != nil {
+					return fmt.Errorf("could not delete unexpected MIG device (%s): %w", name, err)
 				}
 			}
 		}
@@ -597,6 +601,7 @@ func (l deviceLib) getVfioDeviceInfo(idx int, device *nvpci.NvidiaPCIDevice) (*V
 		iommuGroup:             device.IommuGroup,
 		addressableMemoryBytes: memoryBytes,
 	}
+
 	return vfioDeviceInfo, nil
 }
 
@@ -793,6 +798,9 @@ func (l deviceLib) DeviceGetHandleByUUIDCached(uuid string) (nvml.Device, nvml.R
 	if ret != nvml.SUCCESS {
 		return nil, ret
 	}
+
+	// Pulate `devhandleByUUID` and `devhandleByMinor` maps for fast handle
+	// lookup.
 	l.devhandleByUUID[uuid] = dev
 	return dev, ret
 }
@@ -817,14 +825,14 @@ func (l deviceLib) createMigDevice(migspec *MigSpec) (*MigDeviceInfo, error) {
 	if ret != nvml.SUCCESS {
 		return nil, fmt.Errorf("error getting GPU device handle: %v", ret)
 	}
-	klog.V(6).Infof("t_prep_create_mig_dev_get_dev_handle %.3f s", time.Since(tdhbu0).Seconds())
+	klog.V(7).Infof("t_prep_create_mig_dev_get_dev_handle %.3f s", time.Since(tdhbu0).Seconds())
 
 	tnd0 := time.Now()
 	ndev, err := l.NewDevice(device)
 	if err != nil {
 		return nil, fmt.Errorf("error instantiating nvml dev: %w", err)
 	}
-	klog.V(6).Infof("t_prep_create_mig_dev_new_dev %.3f s", time.Since(tnd0).Seconds())
+	klog.V(7).Infof("t_prep_create_mig_dev_new_dev %.3f s", time.Since(tnd0).Seconds())
 
 	// nvml GetMigMode distinguishes between current and pending -- not exposed
 	// in go-nvlib yet. Maybe that distinction is important here.
@@ -835,7 +843,7 @@ func (l deviceLib) createMigDevice(migspec *MigSpec) (*MigDeviceInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error checking if MIG mode enabled for device %s: %w", ndev, err)
 	}
-	klog.V(6).Infof("t_prep_create_mig_dev_check_mig_enabled %.3f s", time.Since(tcme0).Seconds())
+	klog.V(7).Infof("t_prep_create_mig_dev_check_mig_enabled %.3f s", time.Since(tcme0).Seconds())
 
 	logpfx := fmt.Sprintf("Create %s", migspec.CanonicalName())
 
@@ -907,6 +915,7 @@ func (l deviceLib) createMigDevice(migspec *MigSpec) (*MigDeviceInfo, error) {
 		UUID:           uuid,
 		CIID:           int(ciInfo.Id),
 		GIID:           int(giInfo.Id),
+		ParentMinor:    gpu.minor,
 		ParentUUID:     gpu.UUID,
 		Profile:        profile.String(),
 		PlacementStart: int(placement.Start),
@@ -917,24 +926,18 @@ func (l deviceLib) createMigDevice(migspec *MigSpec) (*MigDeviceInfo, error) {
 		parent:         gpu,
 	}
 
-	klog.V(6).Infof("%s: MIG device created on %s: %s", logpfx, gpu.String(), migDevInfo.CanonicalName())
+	klog.V(6).Infof("%s: MIG device created on %s: %s (%#v)", logpfx, gpu.String(), migDevInfo.CanonicalName(), migDevInfo.LiveTuple())
 	return migDevInfo, nil
 }
 
-// TODO(JP): the three function arguments provided represent that fundamental
-// 3-tuple for precisely describing a concrete MIG device. Introduce a data type
-// for just that, and pass it into the function. Notably, the MIG device's UUID
-// does not need to be known here (I hope -- should the MIG device UUID from the
-// allocated claim be checked against the to-be-deleted MIG device? Is there
-// _any_ chance that the "same" MIG device was re-created in the meantime? In
-// that case it might have the same 3-tuple, but a different UUID (is that true?
-// Are MIG device UUIDs stable or 'random'? Looked it up: they change). Further
-// questions: are MIG UUIDs random? Can a MIG UUID be looked up given the
-// 3-tuple?
-func (l deviceLib) deleteMigDevice(parentUUID string, giId int, ciId int) error {
+func (l deviceLib) deleteMigDevice(miglt *MigLiveTuple) error {
+	parentUUID := l.gpuUUIDbyMinor[miglt.ParentMinor]
+	giId := miglt.GIID
+	ciId := miglt.CIID
+
 	t0 := time.Now()
-	migStr := fmt.Sprintf("MIG(%s, %d, %d)", parentUUID, giId, ciId)
-	klog.V(6).Infof("Delete MIG device: %s", migStr)
+	migStr := fmt.Sprintf("MIG(parent: %s, %+v)", parentUUID, miglt)
+	klog.V(6).Infof("Delete %s", migStr)
 
 	// if err := l.Init(); err != nil {
 	// 	return err
@@ -1145,6 +1148,92 @@ func (l deviceLib) inspectMigProfilesAndPlacements(gpuInfo *GpuInfo, device nvde
 	// memSliceCount.
 	gpuInfo.AddDetailAfterWalkingMigProfiles(maxCapacities, maxMemSlicesConsumed)
 	return infos, nil
+}
+
+// Test if MIG device defined by the provided `MigSpecTuple` exists. If it
+// exists, return pointer to a corresponding `MigLiveTuple`. If it doesn't
+// exist, return a nil pointer. if lookup fails, return a nil pointer and
+// non-nil error.
+func (l deviceLib) FindMigDevBySpec(ms *MigSpecTuple) (*MigLiveTuple, error) {
+	parentUUID := l.gpuUUIDbyMinor[ms.ParentMinor]
+	parent, ret := l.DeviceGetHandleByUUIDCached(parentUUID)
+	if ret != nvml.SUCCESS {
+		return nil, fmt.Errorf("could not get device handle by UUID for %s", parentUUID)
+	}
+
+	count, _ := parent.GetMaxMigDeviceCount()
+
+	for i := range count {
+		migHandle, ret := parent.GetMigDeviceHandleByIndex(i)
+		if ret != nvml.SUCCESS {
+			klog.Infof("GetMigDeviceHandleByIndex ret not success")
+			// Slot empty or invalid: treat as device does not currently exist.
+			continue
+		}
+
+		giId, ret := migHandle.GetGpuInstanceId()
+		if ret != nvml.SUCCESS {
+			return nil, fmt.Errorf("failed to get GI ID: %v", ret)
+		}
+
+		giHandle, ret := parent.GetGpuInstanceById(giId)
+		if ret != nvml.SUCCESS {
+			return nil, fmt.Errorf("failed to get GI handle for ID %d: %v", giId, ret)
+		}
+
+		giInfo, ret := giHandle.GetInfo()
+		if ret != nvml.SUCCESS {
+			return nil, fmt.Errorf("failed to get GI info: %v", ret)
+		}
+
+		klog.V(7).Infof("FindMigDevBySpec: saw MIG dev with profile id %d and placement start %d", giInfo.ProfileId, giInfo.Placement.Start)
+
+		if giInfo.ProfileId != uint32(ms.ProfileID) {
+			klog.V(7).Infof("profile ID mismatch: looking for %d", uint32(ms.ProfileID))
+			continue
+		}
+
+		if giInfo.Placement.Start != uint32(ms.PlacementStart) {
+			klog.V(7).Infof("placement start mismatch: looking for %d", ms.PlacementStart)
+			continue
+		}
+
+		klog.V(4).Infof("FindMigDevBySpec: match found for profile ID %d and placement start %d", giInfo.ProfileId, giInfo.Placement.Start)
+
+		// In our way of managing MIG devices, this should always be zero --
+		// nevertheless, perform the lookup. If the lookup fails, the MIG device
+		// may have been created only partially (only GI, but not CI). In that
+		// case, proceed.
+		ciId := 0
+		ciId, ret = migHandle.GetComputeInstanceId()
+		if ret != nvml.SUCCESS {
+			klog.V(4).Infof("FindMigDevBySpec(): failed to get CI ID: %v", ret)
+			// return nil, fmt.Errorf("failed to get CI ID: %v", ret)
+		}
+
+		uuid := ""
+		uuid, ret = migHandle.GetUUID()
+		if ret != nvml.SUCCESS {
+			klog.V(4).Infof("FindMigDevBySpec(): failed to get MIG UUID: %v", ret)
+			// return nil, fmt.Errorf("failed to get MIG UUID: %v", ret)
+		}
+
+		// Found device matching the spec, return handle. For subsequent
+		// deletion of a potentially partially prepared MIG device, it is OK if
+		// CIID and uuid are zero values.
+		mlt := MigLiveTuple{
+			ParentMinor: ms.ParentMinor,
+			GIID:        giId,
+			CIID:        ciId,
+			uuid:        uuid,
+		}
+
+		klog.Infof("FindMigDevBySpec result: %+v", mlt)
+		return &mlt, nil
+	}
+
+	klog.Infof("Iterated through all potential MIG devs -- no candidate found")
+	return nil, nil
 }
 
 // Mutate map `m` in-place: insert into map if the current QualifiedName does

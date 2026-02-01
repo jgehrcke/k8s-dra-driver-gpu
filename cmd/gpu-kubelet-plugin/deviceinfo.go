@@ -139,7 +139,7 @@ func (m *MigDeviceInfo) LiveTuple() *MigLiveTuple {
 // User-facing name for a specific (concrete) MIG device. Must encode especially
 // the three Ps: parent, profile, placement.
 func (d *MigDeviceInfo) CanonicalName() string {
-	return migppCanonicalName(d.SpecTuple(), d.Profile)
+	return d.SpecTuple().ToCanonicalName(d.Profile)
 }
 
 func (d *VfioDeviceInfo) CanonicalName() string {

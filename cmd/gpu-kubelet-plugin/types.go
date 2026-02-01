@@ -50,6 +50,10 @@ func ResourceClaimToString(rc *resourcev1.ResourceClaim) string {
 	return fmt.Sprintf("%s/%s:%s", rc.Namespace, rc.Name, rc.UID)
 }
 
+func PreparedClaimToString(pc *PreparedClaim, uid string) string {
+	return fmt.Sprintf("%s/%s:%s", pc.Namespace, pc.Name, uid)
+}
+
 func ClaimsToStrings(claims []*resourcev1.ResourceClaim) []string {
 	var results []string
 	for _, c := range claims {

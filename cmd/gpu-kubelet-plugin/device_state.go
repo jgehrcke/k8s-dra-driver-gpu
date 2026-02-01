@@ -208,7 +208,7 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 		// Make this a noop. Associated device(s) has/ave been prepared by us.
 		// Prepare() must be idempotent, as it may be invoked more than once per
 		// claim (and actual device preparation must happen at most once).
-		klog.V(6).Infof("skip prepare: claim %v found in checkpoint", claimUID)
+		klog.V(4).Infof("Skip prepare: claim already in PrepareCompleted state: %s", ResourceClaimToString(claim))
 		return preparedClaim.PreparedDevices.GetDevices(), nil
 	}
 
@@ -220,6 +220,16 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 	// More details: https://github.com/kubernetes/kubernetes/pull/136269
 	if err := s.validateNoOverlappingPreparedDevices(cp, claim); err != nil {
 		return nil, fmt.Errorf("unable to prepare claim %v: %w", claimUID, err)
+	}
+
+	// Relevant for DynamicMIG: a previous preparation attempt for the same
+	// claim might have resulted in complete or partial GI/CI creation -- roll
+	// that back.
+	if exists && preparedClaim.CheckpointState == ClaimCheckpointStatePrepareStarted {
+		klog.V(4).Infof("Claim %s already in PrepareStarted state: attempt rollback before new prepare", ResourceClaimToString(claim))
+		if err := s.unpreparePartiallyPrepairedClaim(claimUID, preparedClaim, cp); err != nil {
+			return nil, fmt.Errorf("unprepare failed for partially prepared claim %s failed: %w", PreparedClaimToString(&preparedClaim, claimUID), err)
+		}
 	}
 
 	tucp0 := time.Now()
@@ -305,8 +315,9 @@ func (s *DeviceState) DestroyUnknownMIGDevices(ctx context.Context) {
 
 	var expectedDeviceNames []DeviceName
 	for _, cpclaim := range filtered {
-		// Rely on the full structure having been written out
-		expectedDeviceNames = append(expectedDeviceNames, cpclaim.Status.Allocation.Devices.Results[0].Device)
+		for _, res := range cpclaim.Status.Allocation.Devices.Results {
+			expectedDeviceNames = append(expectedDeviceNames, res.Device)
+		}
 	}
 
 	klog.Infof("%s: enter teardown routine (%d expect devices: %s)", logpfx, len(expectedDeviceNames), expectedDeviceNames)
@@ -342,32 +353,9 @@ func (s *DeviceState) Unprepare(ctx context.Context, claimRef kubeletplugin.Name
 
 	switch pc.CheckpointState {
 	case ClaimCheckpointStatePrepareStarted:
-		// TODOMIG: revert potential previous MIG device creation; it may have
-		// succeeded without us pulling through. Can we safely revert that based
-		// on the information in checkpoint? Since we didn't pull through with
-		// creation, we certainly don't have a MIG device UUID. If we were to
-		// encode the MigSpecTriplet reliably in the device name below, maybe
-		// there'd be a way to reliably try-to-teardown the _right_ MIG device.
-		//
-		// Currently, we only store this:
-		//
-		// "checkpointState": "PrepareStarted", "status": {
-		//   "allocation": {
-		//     "devices": {
-		//       "results": [
-		//         {
-		//           "request": "mig-1g",
-		//           "driver": "gpu.nvidia.com",
-		//           "pool": "gb-nvl-027-compute06",
-		//           "device": "gpu-0-mig-1g24gb-0"
-		//         }
-		//       ]
-		//     },
-		//
-		// `gpu-0-mig-1g24gb-0` does -- in theory -- uniquely identify a
-		// profile/placement, but it's not quite ergonomic.
-		klog.Infof("unprepare noop: claim preparation started but not completed for claim '%s' (devices: %v)", claimRef.String(), pc.Status.Allocation.Devices.Results)
-		return nil
+		if err := s.unpreparePartiallyPrepairedClaim(claimUID, pc, checkpoint); err != nil {
+			return fmt.Errorf("unprepare failed for partially prepared claim %s failed: %w", claimRef.String(), err)
+		}
 	case ClaimCheckpointStatePrepareCompleted:
 		if err := s.unprepareDevices(ctx, claimUID, pc.PreparedDevices); err != nil {
 			return fmt.Errorf("unprepare devices failed for claim %s: %w", claimRef.String(), err)
@@ -407,6 +395,83 @@ func (s *DeviceState) Unprepare(ctx context.Context, claimRef kubeletplugin.Name
 	if err != nil {
 		return fmt.Errorf("error deleting claim from checkpoint: %w", err)
 	}
+	return nil
+}
+
+// Revert potential previous MIG device creation which was not acknowledged by
+// transitioning the claim state to PrepareCompleted. Can we safely revert that
+// based on the information in checkpoint? As we didn't pull through with the
+// regular creation/prepare flow, we conceptually cannot use a a specific MIG
+// device UUID as input to this cleanup operation. The precise physical MIG
+// device configuration however is known: it is encoded in the canonical device
+// name. That is, we have the chance to reliably identify and tear down an
+// orphaned MIG device (which was created by us, but never got user workload
+// assigned). It is absolutely critical, however, that this cleanup method does
+// not accidentally tear down a device in use by workload. At the time of
+// writing, I believe that the correct way to achieve that is to verify that
+// currently no other claim in the PrepareCompleted state refers to the same
+// device.
+//
+// Note that the information available to us here is sparse -- for example:
+//
+//	"checkpointState": "PrepareStarted", "status": {
+//	  "allocation": {
+//	    "devices": {
+//	      "results": [
+//	        {
+//	          "request": "mig-1g",
+//	          "driver": "gpu.nvidia.com",
+//	          "pool": "gb-nvl-027-compute06",
+//	          "device": "gpu-1-mig-2g47gb-14-0"
+//	        }
+//	      ]
+//	    }
+//
+// Also note that a plugin restart would tear down such device as part of its
+// `DestroyUnknownMIGDevices()` (which is executed before the driver accepts
+// requests).
+//
+// Construct a list of those claims that, according to the current snapshot,
+// have been properly prepared.
+//
+// This is called either for a claim that is known to be stale (not in the API
+// server) or for a claim that is not stale but that _we_ are currently
+// preparing for us. In both cases, the `checkpoint` data is fresh enough; there
+// is no other entity that currently legitimately owns the device represented in
+// `pc`,
+func (s *DeviceState) unpreparePartiallyPrepairedClaim(cuid string, pc PreparedClaim, checkpoint *Checkpoint) error {
+
+	// For now, thing to do when DynamicMIG is not enabled.
+	if !featuregates.Enabled(featuregates.DynamicMIG) {
+		klog.Infof("unprepare noop: preparation started but not completed for claim %s (devices: %v)", PreparedClaimToString(&pc, cuid), pc.Status.Allocation.Devices.Results)
+	}
+
+	// When DynamicMIG is enabled, try to identify orphaned MIG device. To that
+	// end, we need to know which currently prepared claims use which devices.
+	completedClaims := make(PreparedClaimsByUIDV2)
+	for cuid, c := range checkpoint.V2.PreparedClaims {
+		if c.CheckpointState == ClaimCheckpointStatePrepareCompleted {
+			completedClaims[cuid] = c
+		}
+	}
+
+	for _, r := range pc.Status.Allocation.Devices.Results {
+		devname := r.Device
+		ms, err := NewMigSpecTupleFromCanonicalName(devname)
+		if err != nil {
+			// This may be a regular, full GPU -- in which case there's nothing
+			// to do. To be sure that we detect parser errors, log that error
+			// though.
+			klog.V(6).Infof("Device name %s failed NewMigSpecTupleFromCanonicalName() parsing (assume this is not a MIG device): %s", devname, err)
+			continue
+		}
+
+		klog.V(1).Infof("Device %s is a MIG device, DynamicMIG mode: deleteMigDevIfExistsAndNotUsedByCompletedClaim()", devname)
+		if err := s.deleteMigDevIfExistsAndNotUsedByCompletedClaim(ms, devname, completedClaims); err != nil {
+			return fmt.Errorf("deleteMigDevIfExistsAndNotUsedByCompletedClaim failed: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -657,7 +722,7 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 				// `PrepareStarted` checkpoint entry really only stores e.g.
 				// `gpu-3-mig-1g24gb-5` as the only tangible piece of
 				// information that we can use to delete a specific device.
-				// However, deleting a MIG device requires parrent UUID, CI and
+				// However, deleting a MIG device requires parent UUID, CI and
 				// GI ID. Those are 'hard' (not impossible) to reconstruct based
 				// on just that name.
 				tcmig0 := time.Now()
@@ -723,15 +788,16 @@ func (s *DeviceState) unprepareDevices(ctx context.Context, claimUID string, dev
 			case PreparedMigDeviceType:
 				if featuregates.Enabled(featuregates.DynamicMIG) {
 					mig := device.Mig.Created
+					migname := device.Mig.Created.CanonicalName()
 					klog.V(4).Infof("Unprepare: tear down MIG device '%s' for claim '%s'", mig.UUID, claimUID)
-					err := s.nvdevlib.deleteMigDevice(mig.ParentUUID, mig.GIID, mig.CIID)
+					err := s.nvdevlib.deleteMigDevice(mig.LiveTuple())
 					if err != nil {
 						// Such errors are expected, but they also are somewhat
 						// worrisome. This may for example be 'error destroying
 						// GPU Instance: In use by another client' and resolve
 						// itself soon. Log an explicit warning, at least.
-						klog.Warningf("Error deleting MIG device %s: %s", device.Mig.Created.CanonicalName(), err)
-						return fmt.Errorf("error deleting MIG device %s: %w", device.Mig.Created.CanonicalName(), err)
+						klog.Warningf("Error deleting MIG device %s: %s", migname, err)
+						return fmt.Errorf("error deleting MIG device %s: %w", migname, err)
 					}
 				} else {
 					klog.V(4).Infof("Unprepare: static MIG: noop (MIG %s)", device.Gpu.Info.String())
@@ -1066,6 +1132,36 @@ func (s *DeviceState) validateNoOverlappingPreparedDevices(checkpoint *Checkpoin
 			}
 		}
 	}
+	return nil
+}
+
+// Make this best-effort for now (do not return an error, but log details).
+func (s *DeviceState) deleteMigDevIfExistsAndNotUsedByCompletedClaim(ms *MigSpecTuple, dname DeviceName, completelyPreparedClaims PreparedClaimsByUID) error {
+	for uid, claim := range completelyPreparedClaims {
+		for _, res := range claim.Status.Allocation.Devices.Results {
+			if res.Device == dname {
+				klog.V(1).Infof("Device %s is in use by completely prepared claim %s", dname, PreparedClaimToString(&claim, uid))
+				return nil
+			}
+		}
+	}
+
+	klog.V(1).Infof("Device '%s' is not in use by any completely prepared claim, find corresponding actual MIG device", dname)
+	mlt, err := s.nvdevlib.FindMigDevBySpec(ms)
+	if err != nil {
+		return fmt.Errorf("FindMigDevBySpecTuple() failed for %s: %s", dname, err)
+	}
+
+	if mlt == nil {
+		klog.V(1).Infof("No live MIG device corresponding to name %s currently exists (nothing to clean up)", dname)
+		return nil
+	}
+
+	klog.V(1).Infof("MIG device corresponding to name %s found with UUID %s -- attempt to tear down", dname, mlt.uuid)
+	if err := s.nvdevlib.deleteMigDevice(mlt); err != nil {
+		return fmt.Errorf("MIG device deletion failed: %w", err)
+	}
+
 	return nil
 }
 
