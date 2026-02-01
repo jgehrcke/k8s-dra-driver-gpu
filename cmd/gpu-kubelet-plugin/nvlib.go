@@ -926,7 +926,7 @@ func (l deviceLib) createMigDevice(migspec *MigSpec) (*MigDeviceInfo, error) {
 		parent:         gpu,
 	}
 
-	klog.V(6).Infof("%s: MIG device created on %s: %s (%#v)", logpfx, gpu.String(), migDevInfo.CanonicalName(), migDevInfo.LiveTuple())
+	klog.V(6).Infof("%s: MIG device created on %s: %s (%+v)", logpfx, gpu.String(), migDevInfo.CanonicalName(), migDevInfo.LiveTuple())
 	return migDevInfo, nil
 }
 
