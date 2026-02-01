@@ -26,12 +26,12 @@ import (
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 )
 
-// MigTuple is a 3-tuple precisely describing a physical MIG device
+// MigSpecTuple is a 3-tuple precisely describing a physical MIG device
 // configuration: parent (UUID or minor), placement start index, and (GI) MIG
 // profile ID. The profile ID implies memory slice count. This representation is
 // precise and meaningful before or after creation of a specific MIG device
 // configuration. It does not carry MIG device identity (UUID).
-type MigTuple struct {
+type MigSpecTuple struct {
 	ParentMinor GPUMinor
 	// What is commonly called "MIG profile ID" typically refers to the GPU
 	// Instance Profile ID. The GI profile ID is also what's emitted by
@@ -45,27 +45,32 @@ type MigTuple struct {
 	PlacementStart int
 }
 
-// After creation, a specific MIG device can also be tracked and identified by
-// the following 3-tuple: the parent GPU (UUID/minor), the GPU Instance (GI)
-// identifier, and the Compute Instance (CI) identifier. As far as I understand,
-// there is no guaranteed relationship between GIID+CIID on the one hand and
-// profileID+placementStart on the other hand. That is why those two 3-tuple
-// types make sense to both be used. The GIID/CIID-based tracking makes sense
-// while the very same device is known to be alive -- hence the enrichment with
-// `uuid`; because the MIG device UUID changes across destruction/re-creation of
-// the same physical configuration. The `uuid` can be used to distinguish actual
-// vs. expected MIG device UUID after looking up the device by (parent, CIID,
-// GIID).
-type MigTupleLogical struct {
+// Minimal, precise representation of a specific, created MIG device.
+//
+// After creation and during its lifetime, a specific MIG device can be
+// identified by the following 3-tuple: the parent GPU (UUID/minor), the GPU
+// Instance (GI) identifier, and the Compute Instance (CI) identifier. The
+// GIID/CIID-based tracking is however only safe for as long as the very same
+// device is known to be alive (otherwise those IDs may refer to a different
+// device than assumed because they may be re-used for a potentially different
+// physical configuration -- at least, there doesn't seem to be any guarantee
+// that that is not the case). Hence, another parameter is tracked by this type:
+// `uuid` -- a MIG device UUID changes across destruction/re-creation of the
+// same physical configuration. The `uuid` carried by this type can therefore be
+// used to distinguish actual vs. expected MIG device UUID after looking up a
+// MIG device by (parent, CIID, GIID). What's expressed above, in other words:
+// as far as I understand, there is no guaranteed relationship between GIID+CIID
+// on the one hand and profileID+placementStart on the other hand.
+type MigLiveTuple struct {
 	ParentMinor GPUMinor
 	GIID        int
 	CIID        int
 	uuid        string
 }
 
-// MigSpec is similar to `MigTuple` as it also fundamentally encodes parent,
+// MigSpec is similar to `MigSpecTuple` as it also fundamentally encodes parent,
 // profile, and placement. In that sense, it is abstract description of a
-// specific MIG device configuration. Compared to `MigTuple`, though, the
+// specific MIG device configuration. Compared to `MigSpecTuple`, though, the
 // properties of this type are more complex management objects for convenience.
 type MigSpec struct {
 	Parent        *GpuInfo
@@ -74,8 +79,8 @@ type MigSpec struct {
 	Placement     nvml.GpuInstancePlacement
 }
 
-func (m *MigSpec) Tuple() *MigTuple {
-	return &MigTuple{
+func (m *MigSpec) Tuple() *MigSpecTuple {
+	return &MigSpecTuple{
 		ParentMinor:    m.Parent.minor,
 		ProfileID:      int(m.GIProfileInfo.Id),
 		PlacementStart: int(m.Placement.Start),
@@ -111,7 +116,7 @@ type MigDevicePlacement struct {
 // `profile string` must be what's returned by profile.String(), the
 // classical/canonical profile string notation, with a dot. This must not crash
 // when fed with data from a MigDeviceInfo object deserialized from JSON.
-func migppCanonicalName(mt *MigTuple, profileName string) string {
+func migppCanonicalName(mt *MigSpecTuple, profileName string) string {
 	// `profileName` is for exampole `4g.95gb` -- DRA device names must not
 	// contain dots, and this is used in a device name. The outer
 	// `toRFC1123Compliant()` call is just to be safe; I don't see a clear need
