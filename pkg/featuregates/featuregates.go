@@ -175,7 +175,7 @@ func ValidateFeatureGates() error {
 		return fmt.Errorf("feature gate %s requires %s to also be enabled", ComputeDomainCliques, IMEXDaemonsWithDNSNames)
 	}
 
-	if Enabled(DynamicMIG) && !Enabled(PassthroughSupport) {
+	if Enabled(DynamicMIG) && Enabled(PassthroughSupport) {
 		return fmt.Errorf("feature gate %s is currently mutually exclusive with %s", DynamicMIG, PassthroughSupport)
 	}
 
