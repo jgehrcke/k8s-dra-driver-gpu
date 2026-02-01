@@ -53,7 +53,9 @@ type PreparedMigDevice struct {
 	// Specifc, created device. Detail needed for deletion and book-keeping.
 	// Note that this is either created via the 'static MIG' flow or the
 	// 'dynamic MIG' flow -- in any case, it represents a MIG device that
-	// currently exists (incarnated, concrete). Maybe rename to `Concrete`
+	// currently exists (incarnated, concrete). Maybe rename to `Concrete`.
+	// Update: after re-vambing MIG-related types, this can now maybe be of type
+	// `MigLiveTuple`.
 	Created *MigDeviceInfo        `json:"created"`
 	Device  *kubeletplugin.Device `json:"device"`
 }

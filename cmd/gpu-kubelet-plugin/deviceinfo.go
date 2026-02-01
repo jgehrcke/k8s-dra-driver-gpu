@@ -119,18 +119,27 @@ func (d *GpuInfo) String() string {
 	return fmt.Sprintf("%s-%s", d.CanonicalName(), d.UUID)
 }
 
-func (m *MigDeviceInfo) MigTuple() *MigTuple {
-	return &MigTuple{
+func (m *MigDeviceInfo) SpecTuple() *MigSpecTuple {
+	return &MigSpecTuple{
 		ParentMinor:    m.ParentMinor,
 		ProfileID:      m.GiProfileID,
 		PlacementStart: m.PlacementStart,
 	}
 }
 
+func (m *MigDeviceInfo) LiveTuple() *MigLiveTuple {
+	return &MigLiveTuple{
+		ParentMinor: m.ParentMinor,
+		GIID:        m.GIID,
+		CIID:        m.CIID,
+		uuid:        m.UUID,
+	}
+}
+
 // User-facing name for a specific (concrete) MIG device. Must encode especially
-// three Ps: parent, profile, placement.
+// the three Ps: parent, profile, placement.
 func (d *MigDeviceInfo) CanonicalName() string {
-	return migppCanonicalName(d.MigTuple(), d.Profile)
+	return migppCanonicalName(d.SpecTuple(), d.Profile)
 }
 
 func (d *VfioDeviceInfo) CanonicalName() string {
