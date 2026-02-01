@@ -234,8 +234,8 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 	if err != nil {
 		return nil, fmt.Errorf("unable to update checkpoint: %w", err)
 	}
-	klog.V(6).Infof("checkpoint updated for claim %v", claimUID)
 	klog.V(6).Infof("t_prep_ucp %.3f s", time.Since(tucp0).Seconds())
+	klog.V(6).Infof("checkpoint updated for claim %v", claimUID)
 
 	tprep0 := time.Now()
 	preparedDevices, err := s.prepareDevices(ctx, claim)
@@ -309,9 +309,10 @@ func (s *DeviceState) DestroyUnknownMIGDevices(ctx context.Context) {
 		expectedDeviceNames = append(expectedDeviceNames, cpclaim.Status.Allocation.Devices.Results[0].Device)
 	}
 
+	klog.Infof("%s: enter destruction routine (%d expect devices: %s)", logpfx, len(expectedDeviceNames), expectedDeviceNames)
 	if err := s.nvdevlib.obliterateStaleMIGDevices(expectedDeviceNames); err != nil {
-		// For now, let this be best-effort. Proceed with the program, do not
-		// crash it.
+		// For now, let this be best-effort. Upon error, proceed with the
+		// program, do not crash it.
 		klog.Errorf("%s: obliterateStaleMIGDevices failed: %s", logpfx, err)
 	}
 
@@ -388,12 +389,20 @@ func (s *DeviceState) Unprepare(ctx context.Context, claimRef kubeletplugin.Name
 			}
 		}
 	}
+
+	// TODOMIG: we delete per-claim CDI spec files here in the happy path. In
+	// regular operation, that means we don't leak files. However, upon program
+	// start, or periodically, clean up CDI spec directory just in case we're
+	// ever missing or failing to delete (a) file(s).
 	if err := s.cdi.DeleteClaimSpecFile(claimUID); err != nil {
-		return fmt.Errorf("unable to delete CDI spec file for claim %s: %w", claimRef.String(), err)
+		// Just log an error -- if this fails, we still want to proceed
+		// attempting to remove the claim from the checkpoint.
+		klog.Errorf("unable to delete CDI spec file for claim %s: %s", claimRef.String(), err)
 	}
 
 	// Mutate checkpoint reflecting that all devices for this claim have been
-	// unprepared, by virtue of removing its UID from the PreparedClaims map.
+	// unprepared, by virtue of removing its entry (based on claim UID) from the
+	// PreparedClaims map.
 	err = s.deleteClaimFromCheckpoint(ctx, claimRef)
 	if err != nil {
 		return fmt.Errorf("error deleting claim from checkpoint: %w", err)
@@ -415,19 +424,19 @@ func (s *DeviceState) createCheckpoint(ctx context.Context, cp *Checkpoint) erro
 }
 
 func (s *DeviceState) getCheckpoint(ctx context.Context) (*Checkpoint, error) {
-	klog.V(6).Info("acquire cplock (get cp)")
+	klog.V(7).Info("acquire cplock (getCheckpoint)")
 	release, err := s.cplock.Acquire(ctx, flock.WithTimeout(10*time.Second))
 	if err != nil {
 		return nil, fmt.Errorf("error acquiring cplock: %w", err)
 	}
 	defer release()
-	klog.V(6).Info("acquired cplock")
+	klog.V(7).Info("acquired cplock (getCheckpoint)")
 
 	checkpoint := &Checkpoint{}
 	if err := s.checkpointManager.GetCheckpoint(DriverPluginCheckpointFileBasename, checkpoint); err != nil {
 		return nil, err
 	}
-	klog.V(6).Info("cp read")
+	klog.V(6).Info("checkpoint read")
 	return checkpoint.ToLatestVersion(), nil
 }
 
@@ -437,13 +446,13 @@ func (s *DeviceState) getCheckpoint(ctx context.Context) (*Checkpoint, error) {
 // conceptually certain that multiple read-mutate-write actions never overlap.
 func (s *DeviceState) updateCheckpoint(ctx context.Context, mutate func(*Checkpoint)) error {
 	tucp0 := time.Now()
-	klog.V(6).Info("acquire cplock (update cp)")
+	klog.V(7).Info("acquire cplock (updateCheckpoint)")
 	release, err := s.cplock.Acquire(ctx, flock.WithTimeout(10*time.Second))
 	if err != nil {
 		return fmt.Errorf("error acquiring cplock: %w", err)
 	}
 	defer release()
-	klog.V(6).Info("acquired cplock")
+	klog.V(7).Info("acquired cplock (updateCheckpoint)")
 
 	// get checkpoint w/o acquiring lock (we have it already)
 	checkpoint := &Checkpoint{}
@@ -453,7 +462,6 @@ func (s *DeviceState) updateCheckpoint(ctx context.Context, mutate func(*Checkpo
 	if err != nil {
 		return fmt.Errorf("unable to get checkpoint: %w", err)
 	}
-
 	mutate(checkpoint)
 
 	// create w/o lock acqu, we already have the lock
@@ -461,7 +469,6 @@ func (s *DeviceState) updateCheckpoint(ctx context.Context, mutate func(*Checkpo
 	if err != nil {
 		return fmt.Errorf("unable to create checkpoint: %w", err)
 	}
-	klog.V(6).Info("cp updated")
 	klog.V(6).Infof("t_checkpoint_update_total %.3f s", time.Since(tucp0).Seconds())
 	return nil
 }

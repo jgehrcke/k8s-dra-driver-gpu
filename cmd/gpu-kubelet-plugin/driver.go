@@ -300,7 +300,7 @@ func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.Res
 	tprep0 := time.Now()
 	devs, err := d.state.Prepare(ctx, claim)
 	klog.V(6).Infof("t_prep %.3f s (claim %s)", time.Since(tprep0).Seconds(), cs)
-	klog.V(6).Infof("t_prep_total %.3f s (claim %s)", time.Since(t0).Seconds(), cs)
+	klog.V(6).Infof("t_prep_including_lockacq %.3f s (claim %s)", time.Since(t0).Seconds(), cs)
 
 	if err != nil {
 		return kubeletplugin.PrepareResult{
