@@ -196,7 +196,7 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 	if err != nil {
 		return nil, fmt.Errorf("unable to get checkpoint: %v", err)
 	}
-	klog.V(6).Infof("t_prep_gcp %.3f s", time.Since(tgcp0).Seconds())
+	klog.V(7).Infof("t_prep_get_checkpoint %.3f s", time.Since(tgcp0).Seconds())
 
 	// Check for existing 'completed' claim preparation before updating the
 	// checkpoint with 'PrepareStarted'. Otherwise, we effectively mark a
@@ -234,7 +234,7 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 	if err != nil {
 		return nil, fmt.Errorf("unable to update checkpoint: %w", err)
 	}
-	klog.V(6).Infof("t_prep_ucp %.3f s", time.Since(tucp0).Seconds())
+	klog.V(6).Infof("t_prep_update_checkpoint %.3f s", time.Since(tucp0).Seconds())
 	klog.V(6).Infof("checkpoint updated for claim %v", claimUID)
 
 	tprep0 := time.Now()
@@ -260,7 +260,7 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 	if err := s.cdi.CreateClaimSpecFile(claimUID, preparedDevices); err != nil {
 		return nil, fmt.Errorf("unable to create CDI spec file for claim: %w", err)
 	}
-	klog.V(6).Infof("t_prep_ccsf %.3f s", time.Since(tccsf0).Seconds())
+	klog.V(7).Infof("t_prep_ccsf %.3f s", time.Since(tccsf0).Seconds())
 
 	tucp20 := time.Now()
 	err = s.updateCheckpoint(ctx, func(cp *Checkpoint) {
@@ -309,7 +309,7 @@ func (s *DeviceState) DestroyUnknownMIGDevices(ctx context.Context) {
 		expectedDeviceNames = append(expectedDeviceNames, cpclaim.Status.Allocation.Devices.Results[0].Device)
 	}
 
-	klog.Infof("%s: enter destruction routine (%d expect devices: %s)", logpfx, len(expectedDeviceNames), expectedDeviceNames)
+	klog.Infof("%s: enter teardown routine (%d expect devices: %s)", logpfx, len(expectedDeviceNames), expectedDeviceNames)
 	if err := s.nvdevlib.obliterateStaleMIGDevices(expectedDeviceNames); err != nil {
 		// For now, let this be best-effort. Upon error, proceed with the
 		// program, do not crash it.
@@ -436,7 +436,7 @@ func (s *DeviceState) getCheckpoint(ctx context.Context) (*Checkpoint, error) {
 	if err := s.checkpointManager.GetCheckpoint(DriverPluginCheckpointFileBasename, checkpoint); err != nil {
 		return nil, err
 	}
-	klog.V(6).Info("checkpoint read")
+	klog.V(7).Info("checkpoint read")
 	return checkpoint.ToLatestVersion(), nil
 }
 
@@ -820,13 +820,13 @@ func (s *DeviceState) discoverSiblingAllocatables(device *AllocatableDevice) err
 func (s *DeviceState) applyConfig(ctx context.Context, config configapi.Interface, claim *resourceapi.ResourceClaim, results []*resourceapi.DeviceRequestAllocationResult) (*DeviceConfigState, error) {
 	switch castConfig := config.(type) {
 	case *configapi.GpuConfig:
-		klog.V(6).Infof("applySharingConfig() for GpuConfig")
+		klog.V(7).Infof("applySharingConfig() for GpuConfig")
 		return s.applySharingConfig(ctx, castConfig.Sharing, claim, results)
 	case *configapi.MigDeviceConfig:
-		klog.V(6).Infof("applySharingConfig() for MigDeviceConfig")
+		klog.V(7).Infof("applySharingConfig() for MigDeviceConfig")
 		return s.applySharingConfig(ctx, castConfig.Sharing, claim, results)
 	case *configapi.VfioDeviceConfig:
-		klog.V(6).Infof("applySharingConfig() for VfioDeviceConfig")
+		klog.V(7).Infof("applySharingConfig() for VfioDeviceConfig")
 		return s.applyVfioDeviceConfig(ctx, castConfig, claim, results)
 	default:
 		return nil, fmt.Errorf("unknown config type: %T", castConfig)

@@ -776,15 +776,19 @@ func (l deviceLib) DeviceGetHandleByUUIDCached(uuid string) (nvml.Device, nvml.R
 	}
 
 	klog.V(6).Infof("DeviceGetHandleByUUIDCached called for %s, cache miss", uuid)
-	// Note(JP): in theory here we need a 'single‑flight' (request coalescing)
-	// strategy. Otherwise, cache stampede is a thing in practice: a burst of
-	// requests with the same UUID might be incoming in a timeframe much shorter
-	// than it takes for the call below to succeed. All cache missed then end up
-	// doing this expensive lookup, although it only needs to be performed once.
-	// For now, I opt for addressing this by warming up the cache during program
-	// startup. Given that the set of full GPUs is static and that we have no
-	// expiry (but a long-lived map), that will work.
+	// Note(JP): under pressure, this call can be slow. Hence, the decision to
+	// use long-lived handles (at least for DynamicMIG). In theory here we need
+	// a request coalescing strategy (otherwise, cache stampede is a thing in
+	// practice: a burst of requests with the same UUID might be incoming in a
+	// timeframe much shorter than it takes for the call below to succeed. All
+	// cache misses then end up doing this expensive lookup, although it only
+	// needs to be performed once). For now, I opt for addressing this by
+	// warming up the cache during program startup. Given that the set of full
+	// GPUs is static and that we currently have no expiry (but a long-lived
+	// map), that will work.
+	t0 := time.Now()
 	dev, ret := l.nvmllib.DeviceGetHandleByUUID(uuid)
+	klog.V(6).Infof("t_device_get_handle_by_uuid %.3f s", time.Since(t0).Seconds())
 
 	if ret != nvml.SUCCESS {
 		return nil, ret
@@ -1046,7 +1050,9 @@ func (l deviceLib) maybeDisableMigMode(uuid string, nvmldev nvml.Device) error {
 	}
 
 	klog.V(6).Infof("Attempting to disable MIG mode for device %s", gpu.String())
+	t0 := time.Now()
 	ret, activationStatus := nvmldev.SetMigMode(nvml.DEVICE_MIG_DISABLE)
+	klog.V(6).Infof("t_disable_mig %.3f s", time.Since(t0).Seconds())
 	if ret != nvml.SUCCESS {
 		// activationStatus would return the appropriate error code upon unsuccessful activation
 		klog.Warningf("SetMigMode activationStatus (device %s): %s", gpu.String(), activationStatus)
@@ -1124,8 +1130,8 @@ func (l deviceLib) inspectMigProfilesAndPlacements(gpuInfo *GpuInfo, device nvde
 		return nil
 	})
 
-	klog.Infof("Per-capacity maximum across all MIG profiles+placements: %v", maxCapacities)
-	klog.Infof("Largest MIG placement size seen (maxMemSlicesConsumed): %d", maxMemSlicesConsumed)
+	klog.V(1).Infof("%s: Per-capacity maximum across all MIG profiles+placements: %v", gpuInfo.String(), maxCapacities)
+	klog.V(1).Infof("%s: Largest MIG placement size seen (maxMemSlicesConsumed): %d", gpuInfo.String(), maxMemSlicesConsumed)
 
 	if err != nil {
 		return nil, fmt.Errorf("error visiting MIG profiles: %w", err)

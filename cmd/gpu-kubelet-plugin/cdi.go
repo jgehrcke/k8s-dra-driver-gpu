@@ -186,8 +186,8 @@ func (cdi *CDIHandler) GetDeviceSpecsByUUIDCached(uuid string) ([]cdispec.Device
 
 	t0 := time.Now()
 	devs, err := cdi.nvcdiClaim.GetDeviceSpecsByID(uuid)
-	klog.Infof("GetDeviceSpecsByID() called for %s", uuid)
-	klog.V(6).Infof("t_cdi_get_specs_for_uuid %.3f s", time.Since(t0).Seconds())
+	klog.V(1).Infof("GetDeviceSpecsByID() called for %s", uuid)
+	klog.V(7).Infof("t_cdi_get_device_specs_by_id %.3f s", time.Since(t0).Seconds())
 	if err != nil {
 		return nil, err
 	}
