@@ -289,11 +289,56 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 	return preparedDevices.GetDevices(), nil
 }
 
-// Expected to be called once during startup, before starting the driver logic
-// (before accepting requests from the kubelet). This is critical cleanup in the
-// sense that it is important and at the same time dangerous -- if done wrongly,
-// it may affect workload negatively. Here, we as always rely on the checkpoint
-// state to be the source of truth.
+// DestroyUnknownMIGDevices() relies on the checkpoint as the source of truth.
+// It tries to tear down any existing MIG device that is not referenced by
+// currently checkpointed claims in ClaimCheckpointStatePrepareCompleted state.
+//
+// This routine is currently called once during startup before accepting
+// requests from the kubelet. TODO: a better mechanism to make sure it does not
+// conflict with overlapping Prepare() and Unprepare() activities (from e.g. a
+// separate plugin process, during an upgrade) would be to hold on to file-based
+// lock on the checkpoint (during the entire operation). Notworthy: the
+// operation may potentially take significant wall time.
+//
+// We need to learn over time how workload running on a to-be-torn-down MIG
+// device may and should affect the teardown attempt.
+//
+// There may be a fundamental need to invoke this type of cleanup periodically,
+// instead of once during startup.
+//
+// Note: there are other cleanup strategies performed at runtime: (1) periodic
+// cleanup of partially prepared but _stale_ claims (2) attempted rollback in
+// the Prepare() path for a specific, non-stale claim). Especially once/if this
+// method here is executed periodically, there is overlap with (1) -- but there
+// are decisive differences:
+//
+// - This routine here (0) does not mutate the checkpoint. It only tears down
+// devices. (1) removes entries from the checkpoint after confirming cleanup.
+// (1) may also tear down MIG devices that (0) would otherwise tear down: one
+// wins, and that is OK.
+//
+// - (2) is something that (1) cannot achieve, because the claim in question is
+// not stale. A previous Prepare() attempt was executed partially and any state
+// mutations performed may make an immediately retried Prepare() fail (with
+// "insufficient resources"). In that case, (2) performs an active rollback in
+// the business logic of the retried Prepare() call, to help resolve the
+// conflict quickly (from the user's point of view). (0) may also help but not
+// in a timely fashion.
+//
+// All cleanup strategies are critical but also dangerous -- when designed or
+// implemented wrongly, they may affect workload.
+//
+// Significance of this cleanup:
+//
+// 1) Healing out-of-band MIG device creation. Forbidden by design (make sure to
+// document tha). Sometimes, MIG devices however still get created manually,
+// out-of-band). It is convenient for the system to recover from that
+// automatically.
+//
+// 2) Recovering from interruptions within a multi-step transaction (as of bugs
+// within this plugin, issues in the NVML management layer, invasive operations,
+// etc). There is a lot of room, especially over time, for state to be drifting
+// as of partially performed transactions.
 func (s *DeviceState) DestroyUnknownMIGDevices(ctx context.Context) {
 	logpfx := "Destroy unknown MIG devices"
 	cp, err := s.getCheckpoint(ctx)
@@ -303,9 +348,10 @@ func (s *DeviceState) DestroyUnknownMIGDevices(ctx context.Context) {
 	}
 
 	// Get checkpointed claims in PrepareCompleted state. Only MIG devices
-	// mentioned in there will survive. The below's logic tears down MIG devices
-	// that correspond to claims in a PrepareStarted limbo state -- is that a
-	// correct decision?
+	// referenced in those will be retained. That is, the below's logic tears
+	// down MIG devices that correspond to claims in a PrepareStarted limbo
+	// state -- that can only be correct when there are no overlapping
+	// NodePrepareResources() executions.
 	filtered := make(PreparedClaimsByUIDV2)
 	for uid, claim := range cp.V2.PreparedClaims {
 		if claim.CheckpointState == ClaimCheckpointStatePrepareCompleted {
@@ -321,9 +367,10 @@ func (s *DeviceState) DestroyUnknownMIGDevices(ctx context.Context) {
 	}
 
 	klog.Infof("%s: enter teardown routine (%d expect devices: %s)", logpfx, len(expectedDeviceNames), expectedDeviceNames)
+
+	// For now, let this be best-effort. Upon error, proceed with the program,
+	// do not crash it. TODO: maybe this should be timeout-controlled.
 	if err := s.nvdevlib.obliterateStaleMIGDevices(expectedDeviceNames); err != nil {
-		// For now, let this be best-effort. Upon error, proceed with the
-		// program, do not crash it.
 		klog.Errorf("%s: obliterateStaleMIGDevices failed: %s", logpfx, err)
 	}
 
