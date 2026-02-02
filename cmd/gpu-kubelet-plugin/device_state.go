@@ -59,7 +59,7 @@ type DeviceState struct {
 	allocatable              AllocatableDevices
 	config                   *Config
 
-	// Same set of allocatable devices as stored in `allocatable` (abovee), but
+	// Same set of allocatable devices as stored in `allocatable` (above), but
 	// grouped by physical GPU. This is useful for grouped announcement (e.g.,
 	// when announcing one ResourceSlice per physical GPU).
 	perGPUAllocatable PerGPUMinorAllocatableDevices
@@ -757,31 +757,19 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 				}
 			case MigDynamicDeviceType:
 				migspec := adev.MigDynamic
-				// Maybe: persist anything to disk that may be useful for
-				// cleaning up a partial prepare. Here, we have valuable
-				// information: claim UID, mig device placement (also encoded by
-				// the canonical MIG device name). Note that the
-				// `PrepareStarted` checkpoint entry really only stores e.g.
-				// `gpu-3-mig-1g24gb-5` as the only tangible piece of
-				// information that we can use to delete a specific device.
-				// However, deleting a MIG device requires parent UUID, CI and
-				// GI ID. Those are 'hard' (not impossible) to reconstruct based
-				// on just that name.
+				// Note: immediately after createMigDevice() returns we could
+				// persist data to disk that may be useful for cleaning up a
+				// partial prepare more reliably (such as the MIG device UUID).
 				tcmig0 := time.Now()
 				migdev, err := s.nvdevlib.createMigDevice(migspec)
 				klog.V(6).Infof("t_prep_create_mig_dev %.3f s (claim %s)", time.Since(tcmig0).Seconds(), ResourceClaimToString(claim))
 				if err != nil {
 					return nil, fmt.Errorf("error creating MIG device: %w", err)
 				}
-
 				preparedDevice.Mig = &PreparedMigDevice{
-					// Abstract, allocatable device
-					// encodes a specific mig/profile/placement combination.
 					RequestedCanonicalName: migspec.CanonicalName(),
-					// Specifc, created device
-					Created: migdev,
-					// DRA device object
-					Device: device,
+					Created:                migdev,
+					Device:                 device,
 				}
 			case VfioDeviceType:
 				preparedDevice.Vfio = &PreparedVfioDevice{
@@ -791,17 +779,11 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 			}
 
 			klog.V(6).Infof("Prepared device for claim '%s': %s", ResourceClaimToString(claim), device.DeviceName)
-			// TODO: here is maybe a decent opportunity to update the
-			// checkpoint, reflecting the device preparation (still within
-			// PrepareStarted state) -- there is potential for crashes and early
-			// termination between here and final claim preparation; and we need
-			// to retain the opportunity to revert changes, based on the
-			// checkpoint ('unprepare previously partially prepared claims').
-			// For example, a prepare devices failed: `error creating MIG
-			// device: error creating GPU instance for 'gpu-0-mig-1g24gb-0':
-			// Insufficient Resources,},},}`` may leave an enabled MIG mode
-			// behind (not the most extreme example, can be resolved by other
-			// means -- but just an example)
+			// Here is a unique opportunity to update the checkpoint, reflecting
+			// the current state of device preparation (still within
+			// PrepareStarted state, but with more detail than before). There is
+			// potential for crashes and early termination between here and
+			// final claim preparation.
 			preparedDeviceGroup.Devices = append(preparedDeviceGroup.Devices, preparedDevice)
 		}
 
@@ -822,7 +804,7 @@ func (s *DeviceState) unprepareDevices(ctx context.Context, claimUID string, dev
 			}
 		}
 
-		// TODO: do this after MPS/TimeSlicing primitive teardown?
+		// TODOMIG: do this after MPS/TimeSlicing primitive teardown?
 		for _, device := range group.Devices {
 			switch device.Type() {
 			case GpuDeviceType:
@@ -830,16 +812,18 @@ func (s *DeviceState) unprepareDevices(ctx context.Context, claimUID string, dev
 			case PreparedMigDeviceType:
 				if featuregates.Enabled(featuregates.DynamicMIG) {
 					mig := device.Mig.Created
-					migname := device.Mig.Created.CanonicalName()
 					klog.V(4).Infof("Unprepare: tear down MIG device '%s' for claim '%s'", mig.UUID, claimUID)
+					// Errors during MIG device deletion are generally rare but
+					// have to be expected, and should fail the
+					// NodeUnprepareResources() operation. This may for example
+					// be 'error destroying GPU Instance: In use by another
+					// client' and resolve itself soon; when the conflicting
+					// party goes away. Log an explicit warning, in addition to
+					// returning an error.
 					err := s.nvdevlib.deleteMigDevice(mig.LiveTuple())
 					if err != nil {
-						// Such errors are expected, but they also are somewhat
-						// worrisome. This may for example be 'error destroying
-						// GPU Instance: In use by another client' and resolve
-						// itself soon. Log an explicit warning, at least.
-						klog.Warningf("Error deleting MIG device %s: %s", migname, err)
-						return fmt.Errorf("error deleting MIG device %s: %w", migname, err)
+						klog.Warningf("Error deleting MIG device %s: %s", mig.CanonicalName(), err)
+						return fmt.Errorf("error deleting MIG device %s: %w", mig.CanonicalName(), err)
 					}
 				} else {
 					klog.V(4).Infof("Unprepare: static MIG: noop (MIG %s)", device.Gpu.Info.String())
@@ -966,12 +950,10 @@ func (s *DeviceState) applySharingConfig(ctx context.Context, config configapi.S
 		if tsc != nil {
 			// Get UUIDs of physical GPUs for which to change the timeslicing
 			// settings. Do this only for any requested full GPUs. Note:
-			// timeslicing settings cannot be set on MIG devices directly; so if
-			// we wanted to apply a timeslicing setting "for a MIG device" we
-			// would have to do it to its parent -- and hence it would affect
-			// other MIG devices running on the same physical GPU; hence we do
-			// not ally for setting `timeSlicingConfig` on a `MigDeviceConfig`.
-			// TODO: should we do this for passthrough devices?
+			// timeslicing settings cannot be set on MIG devices directly.
+			// Hence, the API does not allow for setting `timeSlicingConfig` on
+			// a `MigDeviceConfig`. TODO: should we do this for passthrough
+			// devices?
 			uuids := requestedDevices.GpuUUIDs()
 			klog.V(6).Infof("SetTimeSlice() for full GPUs with UUIDs: %s", uuids)
 			err = s.tsManager.SetTimeSlice(uuids, tsc)
@@ -994,9 +976,6 @@ func (s *DeviceState) applySharingConfig(ctx context.Context, config configapi.S
 			return nil, fmt.Errorf("error getting MPS configuration: %w", err)
 		}
 
-		// Note(JP): `AllocatableDevices` cannot be a reliable UUIDProvider
-		// anymore because non-concrete MIG devices do not have a UUID yet.
-		// Hence the check above.
 		mpsControlDaemon := s.mpsManager.NewMpsControlDaemon(string(claim.UID), requestedDevices)
 		if err := mpsControlDaemon.Start(ctx, mpsc); err != nil {
 			return nil, fmt.Errorf("error starting MPS control daemon: %w", err)

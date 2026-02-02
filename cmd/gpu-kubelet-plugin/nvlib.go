@@ -143,8 +143,8 @@ func (l deviceLib) enumerateAllPossibleDevices() (AllocatableDevices, PerGPUMino
 	}
 
 	if featuregates.Enabled(featuregates.PassthroughSupport) {
-		// Construct `passtrhoughDevices` and insert them into
-		// `perGPUAllocatable` map from above.
+		// Discover passthrough devices and insert them into the
+		// `perGPUAllocatable` map created earlier
 		passthroughDevices, err := l.enumerateGpuPciDevices(perGPUAllocatable)
 		if err != nil {
 			return nil, nil, fmt.Errorf("error enumerating GPU PCI devices: %w", err)
@@ -165,12 +165,10 @@ func (l deviceLib) enumerateAllPossibleDevices() (AllocatableDevices, PerGPUMino
 	return all, perGPUAllocatable, nil
 }
 
-// GetPerGpuAllocatableDevices is called once upon driver startup. It gets the
-// set of allocatable devices using NVDeviceLib.  A list of GPU indices can be
-// optionally provided to limit the set of allocatable devices to just those
-// GPUs. If no indices are provided, the full set of allocatable devices across
-// all GPUs are returned. NOTE: Both full GPUs and MIG devices are returned as
-// part of this call.
+// GetPerGpuAllocatableDevices() is called once upon startup. It performs device
+// discovery, and assembles the set of allocatable devices that will be
+// announced by this DRA driver. A list of GPU indices can optionally be
+// provided to limit the discovery to a set of physical GPUs.
 func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (PerGPUMinorAllocatableDevices, error) {
 	klog.Infof("Traverse GPU devices")
 	perGPUAllocatable := make(PerGPUMinorAllocatableDevices)
@@ -180,7 +178,7 @@ func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (PerGPUMinorAlloc
 			return nil
 		}
 
-		// Prepare data structure for conceptually allocatable devices for this
+		// Prepare data structure for conceptually allocatable devices on this
 		// one physical GPU.
 		thisGPUAllocatable := make(AllocatableDevices)
 
@@ -205,16 +203,15 @@ func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (PerGPUMinorAlloc
 
 		if featuregates.Enabled(featuregates.DynamicMIG) {
 			// For this full device, inspect all MIG profiles and their possible
-			// placements. This enriches `gpuInfo` with additional properties (such
-			// as the memory slice count, and the maximum capacities as reported by
-			// individual MIG profiles).
+			// placements. Side effect: this enriches `gpuInfo` with additional
+			// properties (such as the memory slice count, and the maximum
+			// capacities as reported by individual MIG profiles).
 			migspecs, err := l.inspectMigProfilesAndPlacements(gpuInfo, d)
 			if err != nil {
 				return fmt.Errorf("error getting MIG info for GPU %v: %w", i, err)
 			}
 
-			// Announce the full physical GPU. Announce it using
-			// `CanonicalName()` -- which is based on its device minor.
+			// Announce the full physical GPU.
 			thisGPUAllocatable[gpuInfo.CanonicalName()] = parentdev
 
 			for _, migspec := range migspecs {
