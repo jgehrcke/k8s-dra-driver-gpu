@@ -179,10 +179,10 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 }
 
 func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceClaim) ([]kubeletplugin.Device, error) {
-	// tplock0 := time.Now()
-	// s.Lock()
-	// defer s.Unlock()
-	// klog.V(6).Infof("t_prep_state_lock_acq %.3f s", time.Since(tplock0).Seconds())
+	tplock0 := time.Now()
+	s.Lock()
+	defer s.Unlock()
+	klog.V(6).Infof("t_prep_state_lock_acq %.3f s", time.Since(tplock0).Seconds())
 
 	claimUID := string(claim.UID)
 
@@ -525,9 +525,9 @@ func (s *DeviceState) createCheckpoint(ctx context.Context, cp *Checkpoint) erro
 		return fmt.Errorf("error acquiring cplock: %w", err)
 	}
 	defer release()
-	klog.V(6).Info("acquired cplock")
+	klog.V(7).Info("acquired cplock (createCheckpoint)")
 	err = s.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFileBasename, cp)
-	klog.V(6).Info("create cp: done")
+	klog.V(7).Info("create cp: done")
 	return err
 }
 
@@ -975,7 +975,6 @@ func (s *DeviceState) applySharingConfig(ctx context.Context, config configapi.S
 		if err != nil {
 			return nil, fmt.Errorf("error getting MPS configuration: %w", err)
 		}
-
 		mpsControlDaemon := s.mpsManager.NewMpsControlDaemon(string(claim.UID), requestedDevices)
 		if err := mpsControlDaemon.Start(ctx, mpsc); err != nil {
 			return nil, fmt.Errorf("error starting MPS control daemon: %w", err)
