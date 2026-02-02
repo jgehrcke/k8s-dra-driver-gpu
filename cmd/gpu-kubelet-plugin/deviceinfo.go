@@ -65,16 +65,18 @@ type GpuInfo struct {
 // Represents a specific (concrete, incarnated, created) MIG device. Annotated
 // properties are stored in the checkpoint JSON upon prepare.
 type MigDeviceInfo struct {
-	UUID    string `json:"uuid"`
-	Profile string `json:"profile"`
+	// Selectively serialize some properties to the checkpoint JSON file (needed
+	// mainly for controlled deletion in the unprepare flow).
 
-	// Selectively serialize these (public) properties to the checkpoint JSON
-	// file (needed mainly for controlled deletion in the unprepare flow).
+	UUID        string `json:"uuid"`
+	Profile     string `json:"profile"`
 	ParentUUID  string `json:"parentUUID"`
-	ParentMinor int    `json:"parentMinor"`
-	CIID        int    `json:"ciId"`
-	GIID        int    `json:"giId"`
 	GiProfileID int    `json:"profileId"`
+
+	// TODO: maybe embed MigLiveTuple.
+	ParentMinor int `json:"parentMinor"`
+	CIID        int `json:"ciId"`
+	GIID        int `json:"giId"`
 
 	// Store PlacementStart in the JSON checkpoint because in CanonicalName() we
 	// rely on this -- and this must work after JSON deserialization.

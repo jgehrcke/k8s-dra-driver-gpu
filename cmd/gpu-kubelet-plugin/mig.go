@@ -64,10 +64,10 @@ type MigSpecTuple struct {
 // between GIID+CIID on the one hand and profileID+placementStart on the other
 // hand.
 type MigLiveTuple struct {
-	ParentMinor GPUMinor
-	GIID        int
-	CIID        int
-	uuid        string
+	ParentMinor GPUMinor `json:"parentMinor"`
+	GIID        int      `json:"giId"`
+	CIID        int      `json:"ciId"`
+	MigUUID     string   `json:"migUUID"`
 }
 
 // MigSpec is similar to `MigSpecTuple` as it also fundamentally encodes the
