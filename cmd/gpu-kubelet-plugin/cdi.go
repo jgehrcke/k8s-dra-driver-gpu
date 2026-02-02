@@ -117,6 +117,7 @@ func NewCDIHandler(opts ...cdiOption) (*CDIHandler, error) {
 		h.cache = cache
 	}
 
+	// The expiration time is defined upon key insert, not cache-globally.
 	h.specCache = utilcache.NewExpiring()
 
 	return h, nil

@@ -280,7 +280,7 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 		return nil, fmt.Errorf("unable to update checkpoint: %w", err)
 	}
 	klog.V(6).Infof("checkpoint updated for claim %v", claimUID)
-	klog.V(6).Infof("t_prep_ucp2 %.3f s", time.Since(tucp20).Seconds())
+	klog.V(7).Infof("t_prep_ucp2 %.3f s", time.Since(tucp20).Seconds())
 
 	return preparedDevices.GetDevices(), nil
 }

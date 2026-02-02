@@ -83,8 +83,12 @@ func newDeviceLib(driverRoot root) (*deviceLib, error) {
 		devhandleByUUID:   make(map[string]nvml.Device),
 	}
 
-	if err := d.Init(); err != nil {
-		return nil, fmt.Errorf("failed to initialize NVML: %w", err)
+	// Current design: when DynamicMIG is enabled, use one long-lived NVML
+	// session.
+	if featuregates.Enabled(featuregates.DynamicMIG) {
+		if err := d.Init(); err != nil {
+			return nil, fmt.Errorf("failed to initialize NVML: %w", err)
+		}
 	}
 
 	return &d, nil
@@ -120,7 +124,7 @@ func setOrOverrideEnvvar(envvars []string, key, value string) []string {
 // may see "in use by another client" errors (they are forbidden by design when
 // DynamicMIG is enabled).
 func (l deviceLib) Init() error {
-	klog.Infof("Initializing NVML")
+	klog.V(6).Infof("Initializing NVML")
 	ret := l.nvmllib.Init()
 	if ret != nvml.SUCCESS {
 		return fmt.Errorf("error initializing NVML: %v", ret)
@@ -129,15 +133,40 @@ func (l deviceLib) Init() error {
 }
 
 func (l deviceLib) alwaysShutdown() {
-	klog.Infof("Shutting down NVML")
+	klog.V(6).Infof("Shutting down NVML")
 	ret := l.nvmllib.Shutdown()
 	if ret != nvml.SUCCESS {
 		klog.Warningf("error shutting down NVML: %v", ret)
 	}
 }
 
+// ensureNVML() calls NVML Init() and returns an NVML shutdown function and an
+// error (nvml.Return). The caller is responsible for calling the shutdown
+// function (via defer). This is a noop when DynamicMIG is enabled.
+func (l deviceLib) ensureNVML() (func(), nvml.Return) {
+	// Long-lived NVML: no init needed, return no-op shutdown func. We could
+	// achieve the same by just calling init() once more than shutdown because
+	// NVML keeps an internal reference count. I however find it more readable
+	// to explicitly initialize NVML only once when DynamicMIG is enabled.
+	if featuregates.Enabled(featuregates.DynamicMIG) {
+		return func() {}, nvml.SUCCESS
+	}
+
+	t0 := time.Now()
+	ret := l.nvmllib.Init()
+	if ret != nvml.SUCCESS {
+		klog.Warningf("Failed to initialize NVML: %s", ret)
+		// Init failed, nothing to cleanup: return no-op.
+		return func() {}, ret
+	}
+	klog.V(6).Infof("t_nvml_init %.3f s", time.Since(t0).Seconds())
+
+	return func() { l.alwaysShutdown() }, nvml.SUCCESS
+}
+
 // Discover devices that are allocatable, on this node.
 func (l deviceLib) enumerateAllPossibleDevices() (AllocatableDevices, PerGPUMinorAllocatableDevices, error) {
+
 	perGPUAllocatable, err := l.GetPerGpuAllocatableDevices()
 	if err != nil {
 		return nil, nil, fmt.Errorf("error enumerating allocatable devices: %w", err)
@@ -172,6 +201,13 @@ func (l deviceLib) enumerateAllPossibleDevices() (AllocatableDevices, PerGPUMino
 // provided to limit the discovery to a set of physical GPUs.
 func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (PerGPUMinorAllocatableDevices, error) {
 	klog.Infof("Traverse GPU devices")
+
+	shutdown, ret := l.ensureNVML()
+	if ret != nvml.SUCCESS {
+		return nil, fmt.Errorf("ensureNVML failed: %w", ret)
+	}
+	defer shutdown()
+
 	perGPUAllocatable := make(PerGPUMinorAllocatableDevices)
 
 	err := l.VisitDevices(func(i int, d nvdev.Device) error {
@@ -196,13 +232,13 @@ func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (PerGPUMinorAlloc
 		l.gpuInfosByUUID[gpuInfo.UUID] = gpuInfo
 		l.gpuUUIDbyMinor[gpuInfo.minor] = gpuInfo.UUID
 
-		// Cache warmup: store mapping between full-GPU UUID and NVML device
-		// handle in a map. Ignore failures.
-		if _, ret := l.DeviceGetHandleByUUIDCached(gpuInfo.UUID); ret != nvml.SUCCESS {
-			klog.Warningf("DeviceGetHandleByUUIDCached failed: %s", ret)
-		}
-
 		if featuregates.Enabled(featuregates.DynamicMIG) {
+			// Best-effort handle cache warmup: store mapping between full-GPU
+			// UUID and NVML device handle in a map. Ignore failures.
+			if _, ret := l.DeviceGetHandleByUUID(gpuInfo.UUID); ret != nvml.SUCCESS {
+				klog.Warningf("DeviceGetHandleByUUIDCached failed: %s", ret)
+			}
+
 			// For this full device, inspect all MIG profiles and their possible
 			// placements. Side effect: this enriches `gpuInfo` with additional
 			// properties (such as the memory slice count, and the maximum
@@ -349,13 +385,9 @@ func (l deviceLib) discoverVfioDevice(gpuInfo *GpuInfo) (*AllocatableDevice, err
 	return nil, fmt.Errorf("error discovering VFIO device by PCIe bus ID: %s", gpuInfo.pcieBusID)
 }
 
-// Tear down any MIG devices that are present and don't belong to completed claims.
+// Tear down any MIG devices that are present and don't belong to completed
+// claims. Assume long-lived NVML session.
 func (l deviceLib) obliterateStaleMIGDevices(expectedDeviceNames []DeviceName) error {
-	// if err := l.Init(); err != nil {
-	// 	return err
-	// }
-	// defer l.alwaysShutdown()
-
 	err := l.VisitDevices(func(i int, d nvdev.Device) error {
 		ginfo, err := l.getGpuInfo(i, d)
 		if err != nil {
@@ -601,7 +633,13 @@ func (l deviceLib) getMigDevices(gpuInfo *GpuInfo) (map[string]*MigDeviceInfo, e
 		return nil, nil
 	}
 
-	device, ret := l.DeviceGetHandleByUUIDCached(gpuInfo.UUID)
+	shutdown, ret := l.ensureNVML()
+	if ret != nvml.SUCCESS {
+		return nil, fmt.Errorf("ensureNVML failed: %w", ret)
+	}
+	defer shutdown()
+
+	device, ret := l.DeviceGetHandleByUUID(gpuInfo.UUID)
 	if ret != nvml.SUCCESS {
 		return nil, fmt.Errorf("error getting GPU device handle: %v", ret)
 	}
@@ -764,55 +802,63 @@ func (l deviceLib) setComputeMode(uuids []string, mode string) error {
 	return nil
 }
 
-// This is meant to only be used for physical, full GPUs (not MIG devices).
-func (l deviceLib) DeviceGetHandleByUUIDCached(uuid string) (nvml.Device, nvml.Return) {
+// Get an NVML device handle for a physical GPU. When not in DynamicMIG mode,
+// this currently always calls out to NVML's DeviceGetHandleByUUID(). In
+// DynamicMIG mode, this function maintains an NVML handle cache and hence
+// guarantees fast lookups. This is meant to only be called for physical, full
+// GPUs (not MIG devices).
+func (l deviceLib) DeviceGetHandleByUUID(uuid string) (nvml.Device, nvml.Return) {
+	shutdown, ret := l.ensureNVML()
+	if ret != nvml.SUCCESS {
+		return nil, ret
+	}
+	defer shutdown()
+
+	// For now, only use long-lived NVML with cached handles when DynamicMIG is
+	// enabled. In all other cases, do not cache handles (this is something we
+	// may want to do in the future).
+	if !featuregates.Enabled(featuregates.DynamicMIG) {
+		return l.nvmllib.DeviceGetHandleByUUID(uuid)
+	}
+
 	dev, exists := l.devhandleByUUID[uuid]
 	if exists {
 		return dev, nvml.SUCCESS
 	}
 
-	klog.V(6).Infof("DeviceGetHandleByUUIDCached called for %s, cache miss", uuid)
-	// Note(JP): under pressure, this call can be slow. Hence, the decision to
-	// use long-lived handles (at least for DynamicMIG). In theory here we need
-	// a request coalescing strategy (otherwise, cache stampede is a thing in
-	// practice: a burst of requests with the same UUID might be incoming in a
-	// timeframe much shorter than it takes for the call below to succeed. All
-	// cache misses then end up doing this expensive lookup, although it only
-	// needs to be performed once). For now, I opt for addressing this by
-	// warming up the cache during program startup. Given that the set of full
-	// GPUs is static and that we currently have no expiry (but a long-lived
-	// map), that will work.
+	klog.V(6).Infof("DeviceGetHandleByUUID called for %s, cache miss", uuid)
+	// Note(JP): This call can be slow. Hence, the decision to use long-lived
+	// handles (at least for DynamicMIG). In theory here we need a request
+	// coalescing strategy (otherwise, cache stampede is a thing in practice: a
+	// burst of requests with the same UUID might be incoming in a timeframe
+	// much shorter than it takes for the call below to succeed. All cache
+	// misses then end up doing this expensive lookup, although it only needs to
+	// be performed once). For now, I opt for addressing this by warming up the
+	// cache during program startup. Given that the set of full GPUs is static
+	// and that we currently have no expiry (but a long-lived map), that will
+	// work.
 	t0 := time.Now()
-	dev, ret := l.nvmllib.DeviceGetHandleByUUID(uuid)
+	dev, ret = l.nvmllib.DeviceGetHandleByUUID(uuid)
 	klog.V(6).Infof("t_device_get_handle_by_uuid %.3f s", time.Since(t0).Seconds())
 
 	if ret != nvml.SUCCESS {
 		return nil, ret
 	}
 
-	// Pulate `devhandleByUUID` and `devhandleByMinor` maps for fast handle
-	// lookup.
+	// Populate `devhandleByUUID` for fast lookup.
 	l.devhandleByUUID[uuid] = dev
 	return dev, ret
 }
 
+// Assume long-lived NVML session.
 func (l deviceLib) createMigDevice(migspec *MigSpec) (*MigDeviceInfo, error) {
 	gpu := migspec.Parent
 	profile := migspec.Profile
 	placement := &migspec.Placement
 
-	// tcmigdev0 := time.Now()
-	// if err := l.Init(); err != nil {
-	// 	return nil, err
-	// }
-	// defer l.alwaysShutdown()
-	// klog.V(6).Infof("t_prep_create_mig_dev_init %.3f s", time.Since(tcmigdev0).Seconds())
-
 	tdhbu0 := time.Now()
-	// I've seen this to take up to 10 seconds, also four six 8 seconds.
-	// Can this be cached?
-	//device, ret := l.nvmllib.DeviceGetHandleByUUID(gpu.UUID)
-	device, ret := l.DeviceGetHandleByUUIDCached(gpu.UUID)
+	// Without handle caching, I've seen this to take up O(10 s).
+	device, ret := l.DeviceGetHandleByUUID(gpu.UUID)
 	if ret != nvml.SUCCESS {
 		return nil, fmt.Errorf("error getting GPU device handle: %v", ret)
 	}
@@ -930,10 +976,11 @@ func (l deviceLib) createMigDevice(migspec *MigSpec) (*MigDeviceInfo, error) {
 		parent:         gpu,
 	}
 
-	klog.V(6).Infof("%s: MIG device created on %s: %s (%+v)", logpfx, gpu.String(), migDevInfo.CanonicalName(), migDevInfo.LiveTuple())
+	klog.V(6).Infof("%s: MIG device created on %s: %+v", logpfx, gpu.String(), migDevInfo.LiveTuple())
 	return migDevInfo, nil
 }
 
+// Assume long-lived NVML session.
 func (l deviceLib) deleteMigDevice(miglt *MigLiveTuple) error {
 	parentUUID := l.gpuUUIDbyMinor[miglt.ParentMinor]
 	giId := miglt.GIID
@@ -943,13 +990,7 @@ func (l deviceLib) deleteMigDevice(miglt *MigLiveTuple) error {
 	migStr := fmt.Sprintf("MIG(parent: %s, %+v)", parentUUID, miglt)
 	klog.V(6).Infof("Delete %s", migStr)
 
-	// if err := l.Init(); err != nil {
-	// 	return err
-	// }
-	// defer l.alwaysShutdown()
-
-	//parentNvmlDev, ret := l.nvmllib.DeviceGetHandleByUUID(parentUUID)
-	parentNvmlDev, ret := l.DeviceGetHandleByUUIDCached(parentUUID)
+	parentNvmlDev, ret := l.DeviceGetHandleByUUID(parentUUID)
 	if ret != nvml.SUCCESS {
 		return fmt.Errorf("error getting device from UUID '%v': %v", parentUUID, ret)
 	}
@@ -1161,7 +1202,7 @@ func (l deviceLib) inspectMigProfilesAndPlacements(gpuInfo *GpuInfo, device nvde
 // returned.
 func (l deviceLib) FindMigDevBySpec(ms *MigSpecTuple) (*MigLiveTuple, error) {
 	parentUUID := l.gpuUUIDbyMinor[ms.ParentMinor]
-	parent, ret := l.DeviceGetHandleByUUIDCached(parentUUID)
+	parent, ret := l.DeviceGetHandleByUUID(parentUUID)
 	if ret != nvml.SUCCESS {
 		return nil, fmt.Errorf("could not get device handle by UUID for %s", parentUUID)
 	}
