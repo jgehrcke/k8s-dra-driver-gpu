@@ -11,7 +11,7 @@ setup_file () {
     -n nvidia-dra-driver-gpu \
     -c gpus \
     --prefix --tail=-1
-  assert_output --partial "About to announce device gpu-0-mig-1g24gb-0"
+  assert_output --partial "About to announce device gpu-2-mig-1g24gb"
 }
 
 # Executed before entering each test in this file.
