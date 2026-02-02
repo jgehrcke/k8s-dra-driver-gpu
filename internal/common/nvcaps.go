@@ -64,12 +64,10 @@ func (i *NVcapDeviceInfo) CDICharDevNode() *cdispec.DeviceNode {
 	}
 }
 
-// A more or less random note that I want to put somewhere else:
+// A note: MIG minors are predictable, and can be looked up in
+// `/proc/driver/nvidia-caps/mig-minors`:
 //
-// MIG minors are predictable, and can be looked up:
-//
-// cat /proc/driver/nvidia-caps/mig-minors
-//
+// $ cat /proc/driver/nvidia-caps/mig-minors
 // ...
 // gpu0/gi0/access 3
 // gpu0/gi0/ci0/access 4
