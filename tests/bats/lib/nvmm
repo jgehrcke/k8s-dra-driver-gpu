@@ -52,9 +52,10 @@ maybe_refresh_node_cache() {
 	local cachefn
 	cachefn="${NODES_FILE_NAME}"
 	if [ ! -f "$cachefn" ] || ! find "$cachefn" -type f -newermt '-120 seconds' -printf . -quit | grep -q .; then
-		# echo "refreshing nodes" >&2
-		kubectl get nodes -o jsonpath='{.items[*].metadata.name}' > "$NODES_FILE_NAME"
-		kubectl get nodes -o wide > "$NODES_WIDE_FILE_NAME"
+		# echo "refreshing nodes" >&2 Exclude nodes explicitly marked with
+		# SchedulingDisabled (cordoned,drained,tainted,...).
+		kubectl get nodes -o json | jq -r '.items[] | select(.spec.unschedulable!=true) | .metadata.name' > "$NODES_FILE_NAME"
+		kubectl get nodes -o wide | grep -v SchedulingDisabled > "$NODES_WIDE_FILE_NAME"
 	else
 		# echo "nodes cache fresh" >&2
 		echo -n ""

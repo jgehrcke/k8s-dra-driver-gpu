@@ -32,7 +32,7 @@ bats::on_failure() {
 
 confirm_mig_mode_disabled_all_nodes() {
   # Confirm that MIG mode is disabled for all GPUs on all nodes.
-  for node in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
+  for node in $(kubectl get nodes -o json | jq -r '.items[] | select(.spec.unschedulable!=true) | .metadata.name'); do
      nvmm "$node" sh -c 'nvidia-smi --query-gpu=index,mig.mode.current --format=csv'
      run nvmm "$node" sh -c 'nvidia-smi --query-gpu=index,mig.mode.current --format=csv'
      refute_output --partial "Enabled"
