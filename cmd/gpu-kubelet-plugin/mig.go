@@ -30,9 +30,8 @@ import (
 // MigSpecTuple is a 3-tuple precisely describing a physical MIG device
 // configuration: parent (defined by UUID or minor), placement start index, and
 // (GI) MIG profile ID. The profile ID implies memory slice count. This
-// representation is precise and meaningful before or after creation of a
-// specific MIG device configuration. It does not carry MIG device identity
-// (UUID).
+// representation is abstract. It does not carry MIG device identity (UUID), and
+// does not express whether that device currently exists.
 type MigSpecTuple struct {
 	ParentMinor GPUMinor
 	// What is commonly called "MIG profile ID" typically refers to the GPU

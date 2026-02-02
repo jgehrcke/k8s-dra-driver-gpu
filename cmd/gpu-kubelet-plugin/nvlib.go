@@ -112,12 +112,13 @@ func setOrOverrideEnvvar(envvars []string, key, value string) []string {
 	return append(updated, fmt.Sprintf("%s=%s", key, value))
 }
 
-// New paradigm, for faster device management (getting device handles by UUID
-// can take (10 seconds) when done concurrently. Try something slightly more
-// difficult instead: maintain long-term state: initialize once at startup,
-// cache handles, serialize NVML calls, and implement a clear re-init path on
-// NVML errors; this hopefully balances performance and robustness for this
-// long-running process.
+// Getting a device handle by UUID can take O(10) when done concurrently. For
+// faster device management, maintain long-term state: initialize once at
+// startup, cache handles, serialize NVML calls. TODO: implement a re-init path
+// on NVML errors; this hopefully balances performance and robustness for this
+// long-running process. Downside: out-of-band NVML clients (e.g., mig-parted)
+// may see "in use by another client" errors (they are forbidden by design when
+// DynamicMIG is enabled).
 func (l deviceLib) Init() error {
 	klog.Infof("Initializing NVML")
 	ret := l.nvmllib.Init()
