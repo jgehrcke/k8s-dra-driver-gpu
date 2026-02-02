@@ -288,31 +288,6 @@ kplog () {
   kubectl logs -n nvidia-dra-driver-gpu "$pod" -c "$cont" "$@"
 }
 
-show_all_mig_devices_all_nodes() {
-  for node in $(kubectl get nodes -o=jsonpath='{.items[*].metadata.name}'); do
-    nvmm "$node" nvidia-smi -L
-    #mig -lgi
-  done
-}
-
-show_processes_on_migs_all_nodes() {
-  for node in $(kubectl get nodes -o=jsonpath='{.items[*].metadata.name}'); do
-    nvmm "$node" sh -c 'nvidia-smi mig -lgi | grep MIG; nvidia-smi | grep -A10 Processes | grep -E '[0-9]+''
-  done
-}
-
-show_mig_mode_all_gpus_all_nodes() {
-  for node in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
-     nvmm "$node" sh -c 'nvidia-smi --query-gpu=index,mig.mode.current --format=csv'
-  done
-}
-
-
-show_utilization_all_gpus_all_nodes() {
-  for node in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
-     nvmm "$node" nvidia-smi --query-gpu=memory.used,temperature.gpu --format=csv
-  done
-}
 
 _log_ts_no_newline() {
     echo -n "$(date -u +'%Y-%m-%dT%H:%M:%S.%3NZ ')"
