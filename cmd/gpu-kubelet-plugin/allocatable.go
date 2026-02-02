@@ -86,7 +86,6 @@ func (d *AllocatableDevice) GetDevice() resourceapi.Device {
 	switch d.Type() {
 	case GpuDeviceType:
 		return d.Gpu.GetDevice()
-
 	case MigStaticDeviceType:
 		return d.MigStatic.GetDevice()
 	case VfioDeviceType:
@@ -95,10 +94,11 @@ func (d *AllocatableDevice) GetDevice() resourceapi.Device {
 	panic("unexpected type for AllocatableDevice")
 }
 
-// Note: this is here mainly for AllocatableDevices implementing the
-// UUIDProvider interface. Conceptually, at least since introduction of
-// DynamicMIG, some allocatable devices are abstract devices that do not have a
-// UUID before actualization -- hence, this concept is brittle.
+// UUID() is here for `AllocatableDevices` to implement the `UUIDProvider`
+// interface. Conceptually, at least since introduction of DynamicMIG, some
+// allocatable devices are abstract devices that do not have a UUID before
+// actualization -- hence, the idea of `AllocatableDevices` implementing
+// UUIDProvider is brittle.
 func (d AllocatableDevice) UUID() string {
 	if d.Gpu != nil {
 		return d.Gpu.UUID
@@ -185,6 +185,7 @@ func (d AllocatableDevices) GpuUUIDs() []string {
 			uuids = append(uuids, dev.UUID())
 		}
 	}
+	slices.Sort(uuids)
 	return uuids
 }
 
@@ -197,6 +198,7 @@ func (d AllocatableDevices) MigDeviceUUIDs() []string {
 			uuids = append(uuids, dev.UUID())
 		}
 	}
+	slices.Sort(uuids)
 	return uuids
 }
 
@@ -219,6 +221,7 @@ func (d AllocatableDevices) UUIDs() []string {
 	for _, dev := range d {
 		uuids = append(uuids, dev.UUID())
 	}
+	slices.Sort(uuids)
 	return uuids
 }
 
