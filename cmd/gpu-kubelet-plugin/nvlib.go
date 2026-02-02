@@ -117,7 +117,7 @@ func setOrOverrideEnvvar(envvars []string, key, value string) []string {
 	return append(updated, fmt.Sprintf("%s=%s", key, value))
 }
 
-// Getting a device handle by UUID can take O(10) when done concurrently. For
+// Getting a device handle by UUID can take O(10 s) when done concurrently. For
 // faster device management, maintain long-term state: initialize once at
 // startup, cache handles, serialize NVML calls. TODO: implement a re-init path
 // on NVML errors; this hopefully balances performance and robustness for this

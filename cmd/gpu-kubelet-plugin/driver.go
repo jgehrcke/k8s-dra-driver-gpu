@@ -287,21 +287,32 @@ func (d *driver) HandleError(ctx context.Context, err error, msg string) {
 
 func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
 	cs := ResourceClaimToString(claim)
-	// queue things a little longer than 10 seconds.
-	t0 := time.Now()
-	// release, err := d.pulock.Acquire(ctx, flock.WithTimeout(300*time.Second))
-	// if err != nil {
-	// 	return kubeletplugin.PrepareResult{
-	// 		Err: fmt.Errorf("error acquiring prep/unprep lock: %w", err),
-	// 	}
-	// }
-	// defer release()
-	klog.V(6).Infof("t_prep_lock_acq %.3f s", time.Since(t0).Seconds())
+
+	// Instead of a global prepare/unprepare (PU) lock, rely on fine-grained
+	// checkpoint locking in case of DynamicMIG mode. A single plugin instance
+	// may have to manage ~30 individual MIG devices. With many requests
+	// incomning in a short period of time, they would queue up here and easily
+	// wait O(1 min) for this lock acquisition -- whereas the underlying NVML
+	// primitives and API calls allow for faster processing. Notably, at the
+	// time of writing, this outer lock does not appear to be required for
+	// correctness; the inner business logic appears to operate correctly.
+	// However, out of caution, retain this global PU lock for non-DynamicMIG
+	// use cases for now.
+	if !featuregates.Enabled(featuregates.DynamicMIG) {
+		t0 := time.Now()
+		release, err := d.pulock.Acquire(ctx, flock.WithTimeout(10*time.Second))
+		if err != nil {
+			return kubeletplugin.PrepareResult{
+				Err: fmt.Errorf("error acquiring prep/unprep lock: %w", err),
+			}
+		}
+		defer release()
+		klog.V(6).Infof("t_prep_lock_acq %.3f s", time.Since(t0).Seconds())
+	}
 
 	tprep0 := time.Now()
 	devs, err := d.state.Prepare(ctx, claim)
 	klog.V(6).Infof("t_prep %.3f s (claim %s)", time.Since(tprep0).Seconds(), cs)
-	klog.V(6).Infof("t_prep_including_lockacq %.3f s (claim %s)", time.Since(t0).Seconds(), cs)
 
 	if err != nil {
 		return kubeletplugin.PrepareResult{
@@ -324,18 +335,20 @@ func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.Res
 
 func (d *driver) nodeUnprepareResource(ctx context.Context, claimRef kubeletplugin.NamespacedObject) error {
 	cs := claimRef.String()
-	t0 := time.Now()
-	release, err := d.pulock.Acquire(ctx, flock.WithTimeout(300*time.Second))
-	if err != nil {
-		return fmt.Errorf("error acquiring prep/unprep lock: %w", err)
+
+	if !featuregates.Enabled(featuregates.DynamicMIG) {
+		t0 := time.Now()
+		release, err := d.pulock.Acquire(ctx, flock.WithTimeout(10*time.Second))
+		if err != nil {
+			return fmt.Errorf("error acquiring prep/unprep lock: %w", err)
+		}
+		defer release()
+		klog.V(6).Infof("t_unprep_lock_acq %.3f s", time.Since(t0).Seconds())
 	}
-	defer release()
-	klog.V(6).Infof("t_unprep_lock_acq %.3f s", time.Since(t0).Seconds())
 
 	tunprep0 := time.Now()
-	err = d.state.Unprepare(ctx, claimRef)
+	err := d.state.Unprepare(ctx, claimRef)
 	klog.V(6).Infof("t_unprep %.3f s (claim %s)", time.Since(tunprep0).Seconds(), cs)
-	klog.V(7).Infof("t_unprep_with_lock_acq %.3f s (claim %s)", time.Since(t0).Seconds(), cs)
 
 	if err != nil {
 		return fmt.Errorf("error unpreparing devices for claim %v: %w", claimRef.String(), err)
