@@ -120,40 +120,6 @@ func (d AllocatableDevice) UUID() string {
 	panic("unexpected type for AllocatableDevice")
 }
 
-// Required for implementing UUIDProvider. Meant to return full GPU UUIDs and
-// MIG device UUIDs. Must not be used when the DynamicMIG featuregate is
-// enabled. Unsure what it's supposed to return for VFIO devices.
-func (d AllocatableDevices) UUIDs() []string {
-	var uuids []string
-	for _, dev := range d {
-		uuids = append(uuids, dev.UUID())
-	}
-	return uuids
-}
-
-// Required for implementing UUIDProvider. Meant to return (only) full GPU UUIDs.
-func (d AllocatableDevices) GpuUUIDs() []string {
-	var uuids []string
-	for _, dev := range d {
-		if dev.Type() == GpuDeviceType {
-			uuids = append(uuids, dev.UUID())
-		}
-	}
-	return uuids
-}
-
-// Required for implementing UUIDProvider. Meant to return MIG device UUIDs.
-// Must not be called when the DynamicMIG featuregate is enabled.
-func (d AllocatableDevices) MigDeviceUUIDs() []string {
-	var uuids []string
-	for _, dev := range d {
-		if dev.Type() == MigStaticDeviceType {
-			uuids = append(uuids, dev.UUID())
-		}
-	}
-	return uuids
-}
-
 func (d AllocatableDevices) getDevicesByGPUPCIBusID(pcieBusID string) AllocatableDeviceList {
 	var devices AllocatableDeviceList
 	for _, device := range d {
@@ -211,6 +177,29 @@ func (d AllocatableDevices) GetVfioDevices() AllocatableDeviceList {
 	return devices
 }
 
+// Required for implementing UUIDProvider. Meant to return (only) full GPU UUIDs.
+func (d AllocatableDevices) GpuUUIDs() []string {
+	var uuids []string
+	for _, dev := range d {
+		if dev.Type() == GpuDeviceType {
+			uuids = append(uuids, dev.UUID())
+		}
+	}
+	return uuids
+}
+
+// Required for implementing UUIDProvider. Meant to return MIG device UUIDs.
+// Must not be called when the DynamicMIG featuregate is enabled.
+func (d AllocatableDevices) MigDeviceUUIDs() []string {
+	var uuids []string
+	for _, dev := range d {
+		if dev.Type() == MigStaticDeviceType {
+			uuids = append(uuids, dev.UUID())
+		}
+	}
+	return uuids
+}
+
 func (d AllocatableDevices) VfioDeviceUUIDs() []string {
 	var uuids []string
 	for _, device := range d {
@@ -219,6 +208,17 @@ func (d AllocatableDevices) VfioDeviceUUIDs() []string {
 		}
 	}
 	slices.Sort(uuids)
+	return uuids
+}
+
+// Required for implementing UUIDProvider. Meant to return full GPU UUIDs and
+// MIG device UUIDs. Must not be used when the DynamicMIG featuregate is
+// enabled. Unsure what it's supposed to return for VFIO devices.
+func (d AllocatableDevices) UUIDs() []string {
+	var uuids []string
+	for _, dev := range d {
+		uuids = append(uuids, dev.UUID())
+	}
 	return uuids
 }
 
