@@ -136,8 +136,10 @@ func (m *MigDeviceInfo) LiveTuple() *MigLiveTuple {
 	}
 }
 
-// User-facing name for a specific (concrete) MIG device. Must encode especially
-// the three Ps: parent, profile, placement.
+// Return the canonical MIG device name which is the same regardless of
+// DynamicMIG or static MIG. The name unambiguously defines the physical
+// configuration, but doesn't reflect the fact that this represents a
+// curently-live MIG device.
 func (d *MigDeviceInfo) CanonicalName() string {
 	return d.SpecTuple().ToCanonicalName(d.Profile)
 }
