@@ -441,21 +441,20 @@ func (s *DeviceState) Unprepare(ctx context.Context, claimRef kubeletplugin.Name
 	return nil
 }
 
-// Revert potential previous MIG device creation which was not acknowledged by
-// transitioning the claim state to PrepareCompleted. Can we safely revert that
-// based on the information in checkpoint? As we didn't pull through with the
-// regular creation/prepare flow, we conceptually cannot use a a specific MIG
+// Revert previous and potentially partial MIG device creation (not acknowledged
+// by transitioning the claim state to PrepareCompleted). Can we safely revert
+// that based on the information in checkpoint? As we didn't pull through with
+// the regular creation/prepare flow, we conceptually cannot use a specific MIG
 // device UUID as input to this cleanup operation. The precise physical MIG
 // device configuration however is known: it is encoded in the canonical device
 // name. That is, we have the chance to reliably identify and tear down an
 // orphaned MIG device (which was created by us, but never got user workload
 // assigned). It is absolutely critical, however, that this cleanup method does
-// not accidentally tear down a device in use by workload. At the time of
-// writing, I believe that the correct way to achieve that is to verify that
-// currently no other claim in the PrepareCompleted state refers to the same
-// device.
+// not accidentally tear down the wrong device. At the time of writing, I
+// believe that the correct way to achieve that is to verify that currently no
+// other claim in the PrepareCompleted state refers to the same device.
 //
-// Note that the information available to us here is sparse -- for example:
+// The information available to us here is sparse -- for example:
 //
 //	"checkpointState": "PrepareStarted", "status": {
 //	  "allocation": {
@@ -479,18 +478,17 @@ func (s *DeviceState) Unprepare(ctx context.Context, claimRef kubeletplugin.Name
 //
 // This is called either for a claim that is known to be stale (not in the API
 // server) or for a claim that is not stale but that _we_ are currently
-// preparing for us. In both cases, the `checkpoint` data is fresh enough; there
-// is no other entity that currently legitimately owns the device represented in
-// `pc`,
+// preparing. In both cases, the `checkpoint` data is fresh enough; there is no
+// other entity that currently legitimately owns the device represented in `pc`.
 func (s *DeviceState) unpreparePartiallyPrepairedClaim(cuid string, pc PreparedClaim, checkpoint *Checkpoint) error {
-
-	// For now, thing to do when DynamicMIG is not enabled.
+	// For now, there's nothing to do when DynamicMIG is not enabled.
 	if !featuregates.Enabled(featuregates.DynamicMIG) {
 		klog.Infof("unprepare noop: preparation started but not completed for claim %s (devices: %v)", PreparedClaimToString(&pc, cuid), pc.Status.Allocation.Devices.Results)
 	}
 
-	// When DynamicMIG is enabled, try to identify orphaned MIG device. To that
-	// end, we need to know which currently prepared claims use which devices.
+	// When DynamicMIG is enabled, try to identify an orphaned MIG device
+	// corresponding to `pc`. To that end, inspect which currently (completely)
+	// prepared claims use which devices.
 	completedClaims := make(PreparedClaimsByUIDV2)
 	for cuid, c := range checkpoint.V2.PreparedClaims {
 		if c.CheckpointState == ClaimCheckpointStatePrepareCompleted {
@@ -549,9 +547,11 @@ func (s *DeviceState) getCheckpoint(ctx context.Context) (*Checkpoint, error) {
 }
 
 // Read checkpoint from store, perform mutation, and write checkpoint back. Any
-// mutation of the checkpoint must go through this function. The
-// read-mutate-write sequence must be performed under a lock: we must be
-// conceptually certain that multiple read-mutate-write actions never overlap.
+// mutation of the checkpoint must go through this function. Perform the
+// read-mutate-write sequence under a dedicated lock: we must be conceptually
+// certain that multiple read-mutate-write actions never overlap. Currently,
+// this is also ensured by the global PU lock -- but this inner lock is
+// explicit, tested, and can replace the global PU lock if desired.
 func (s *DeviceState) updateCheckpoint(ctx context.Context, mutate func(*Checkpoint)) error {
 	tucp0 := time.Now()
 	klog.V(7).Info("acquire cplock (updateCheckpoint)")
@@ -562,7 +562,6 @@ func (s *DeviceState) updateCheckpoint(ctx context.Context, mutate func(*Checkpo
 	defer release()
 	klog.V(7).Info("acquired cplock (updateCheckpoint)")
 
-	// get checkpoint w/o acquiring lock (we have it already)
 	checkpoint := &Checkpoint{}
 	if err := s.checkpointManager.GetCheckpoint(DriverPluginCheckpointFileBasename, checkpoint); err != nil {
 		return err
@@ -572,7 +571,6 @@ func (s *DeviceState) updateCheckpoint(ctx context.Context, mutate func(*Checkpo
 	}
 	mutate(checkpoint)
 
-	// create w/o lock acqu, we already have the lock
 	err = s.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFileBasename, checkpoint)
 	if err != nil {
 		return fmt.Errorf("unable to create checkpoint: %w", err)
@@ -727,8 +725,8 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 		for _, result := range results {
 			cdiDevices := []string{}
 			// The claim-specific CDI spec (of kind `k8s.gpu.nvidia.com/claim`)
-			// has not yet been generated. But we already know the name of one
-			// of the ClaimDevice entries it enumerates, by convention.
+			// has not yet been generated. But we already know the name of a
+			// ClaimDevice entry that it will enumerate (by convention).
 			if d := s.cdi.GetClaimDeviceName(string(claim.UID), s.allocatable[result.Device], preparedDeviceGroupConfigState[c].containerEdits); d != "" {
 				cdiDevices = append(cdiDevices, d)
 			}
@@ -757,7 +755,7 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 				}
 			case MigDynamicDeviceType:
 				migspec := adev.MigDynamic
-				// Note: immediately after createMigDevice() returns we could
+				// Note: immediately after createMigDevice() returns, we could
 				// persist data to disk that may be useful for cleaning up a
 				// partial prepare more reliably (such as the MIG device UUID).
 				tcmig0 := time.Now()
