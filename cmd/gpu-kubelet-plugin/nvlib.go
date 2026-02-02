@@ -1256,14 +1256,12 @@ func (l deviceLib) FindMigDevBySpec(ms *MigSpecTuple) (*MigLiveTuple, error) {
 		ciId, ret = migHandle.GetComputeInstanceId()
 		if ret != nvml.SUCCESS {
 			klog.V(4).Infof("FindMigDevBySpec(): failed to get CI ID: %v", ret)
-			// return nil, fmt.Errorf("failed to get CI ID: %v", ret)
 		}
 
 		uuid := ""
 		uuid, ret = migHandle.GetUUID()
 		if ret != nvml.SUCCESS {
 			klog.V(4).Infof("FindMigDevBySpec(): failed to get MIG UUID: %v", ret)
-			// return nil, fmt.Errorf("failed to get MIG UUID: %v", ret)
 		}
 
 		// Found device matching the spec, return handle. For subsequent

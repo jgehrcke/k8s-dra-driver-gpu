@@ -24,7 +24,7 @@ import (
 
 // Reflects a prepared MIG device, regardless of its origin (static MIG, or
 // dynamic MIG). This string may(?) be exposed in the API (is it, though?).
-// Before the dynamic MIG capatbility, we used "mig", so keep using it for now.
+// Before the dynamic MIG capability, we used "mig", so keep using it for now.
 // May just be an implementation detail.
 const PreparedMigDeviceType = "mig"
 
@@ -35,7 +35,7 @@ type PreparedDevice struct {
 	// Represents a prepared full GPU.
 	Gpu *PreparedGpu `json:"gpu"`
 	// Represents a prepared MIG device, regardless of whether this was created
-	// via the 'dynamic MIG' flow or if it a pre-created (static) MIG device.
+	// via the 'dynamic MIG' flow or if it is a pre-created (static) MIG device.
 	Mig  *PreparedMigDevice  `json:"mig"`
 	Vfio *PreparedVfioDevice `json:"vfio"`
 }

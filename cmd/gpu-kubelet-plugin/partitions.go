@@ -30,8 +30,8 @@ import (
 
 type PartCapacityMap map[resourceapi.QualifiedName]resourceapi.DeviceCapacity
 
-// KEP 4815 device announcement: return announce device attributes for this
-// physical/full GPU.
+// KEP 4815 device announcement: return device attributes for a partition that
+// represents the full, regular GPU.
 func (d *GpuInfo) PartDevAttributes() map[resourceapi.QualifiedName]resourceapi.DeviceAttribute {
 	pciBusIDAttrName := resourceapi.QualifiedName(deviceattribute.StandardDeviceAttributePrefix + "pciBusID")
 	return map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
@@ -68,9 +68,8 @@ func (d *GpuInfo) PartDevAttributes() map[resourceapi.QualifiedName]resourceapi.
 	}
 }
 
-// KEP 4815 device announcement: return the full (physical) device capacity for
-// this devices (this also uses information from looking at all MIG profiles
-// beforehand).
+// KEP 4815 device announcement: return the full device capacity for this device
+// (uses information from looking at all MIG profiles beforehand).
 func (d *GpuInfo) PartCapacities() PartCapacityMap {
 	return d.maxCapacities
 }
@@ -206,7 +205,6 @@ func (i MigSpec) PartAttributes() map[resourceapi.QualifiedName]resourceapi.Devi
 		"parentUUID": {
 			StringValue: &i.Parent.UUID,
 		},
-
 		"parentMinor": {
 			IntValue: ptr.To(int64(i.Parent.minor)),
 		},
@@ -266,7 +264,7 @@ func capacitiesToCounters(m PartCapacityMap) map[string]resourceapi.Counter {
 // parent's counter set is referred to by name. Use a naming convention:
 // currently, a full GPU has precisely one counter set associated with it, and
 // its name has the form 'gpu-%d-counter-set' where the placeholder is the GPU
-// index (change to UUID)?
+// minor.
 func (i MigSpec) PartConsumesCounters() []resourceapi.DeviceCounterConsumption {
 	return []resourceapi.DeviceCounterConsumption{{
 		CounterSet: i.Parent.GetSharedCounterSetName(),
