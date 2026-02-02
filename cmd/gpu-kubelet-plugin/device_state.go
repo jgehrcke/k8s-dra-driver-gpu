@@ -130,19 +130,14 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 		mpsManager = NewMpsManager(config, nvdevlib, hostDriverRoot, MpsControlDaemonTemplatePath)
 	}
 
+	// Validate passthrough support if feature gate is enabled.
 	var vfioPciManager *VfioPciManager
-
 	if featuregates.Enabled(featuregates.PassthroughSupport) {
 		vfioPciManager = NewVfioPciManager(string(containerDriverRoot), string(hostDriverRoot), nvdevlib, true /* nvidiaEnabled */)
 		if err := vfioPciManager.ValidatePassthroughSupport(); err != nil {
 			klog.Fatalf("Failed to validate passthrough support: %v", err)
 		}
 	}
-
-	// Can only do that for devices that exist (not for not-yet-incarnated MIG devices).
-	// if err := cdi.CreateStandardDeviceSpecFile(allocatable); err != nil {
-	// 	return nil, fmt.Errorf("unable to create base CDI spec file: %v", err)
-	// }
 
 	checkpointManager, err := checkpointmanager.NewCheckpointManager(config.DriverPluginPath())
 	if err != nil {
@@ -223,8 +218,9 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 	}
 
 	// Relevant for DynamicMIG: a previous preparation attempt for the same
-	// claim might have resulted in complete or partial GI/CI creation -- roll
-	// that back.
+	// claim might have resulted in complete or partial GI/CI creation. Roll
+	// that back, and retry creation from scratch (that maybe can later be
+	// optimized into filling the gaps).
 	if exists && preparedClaim.CheckpointState == ClaimCheckpointStatePrepareStarted {
 		klog.V(4).Infof("Claim %s already in PrepareStarted state: attempt rollback before new prepare", ResourceClaimToString(claim))
 		if err := s.unpreparePartiallyPrepairedClaim(claimUID, preparedClaim, cp); err != nil {
@@ -708,10 +704,9 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 			return nil, fmt.Errorf("error validating GPU config: %w", err)
 		}
 
-		// Apply the config to the list of results associated with it. Note(JP):
-		// if this applies to a MIG device then note that this happens before
-		// MIG device creation, i.e. the UUID of the MIG device is not yet
-		// known.
+		// Apply the config to the list of results associated with it. If this
+		// applies to a DynamicMIG device then at this point the device has not
+		// yet been created (i.e., the UUID of the MIG device is not yet known).
 		configState, err := s.applyConfig(ctx, config, claim, results)
 		if err != nil {
 			return nil, fmt.Errorf("error applying config: %w", err)
@@ -731,9 +726,9 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 
 		for _, result := range results {
 			cdiDevices := []string{}
-			// The claim-based CDI spec is generated soon; Expect it to be the
-			// complete CDI spec gererated freshly, with all devices specified
-			// in that spec -- a CDI spec of kind `k8s.gpu.nvidia.com/claim`
+			// The claim-specific CDI spec (of kind `k8s.gpu.nvidia.com/claim`)
+			// has not yet been generated. But we already know the name of one
+			// of the ClaimDevice entries it enumerates, by convention.
 			if d := s.cdi.GetClaimDeviceName(string(claim.UID), s.allocatable[result.Device], preparedDeviceGroupConfigState[c].containerEdits); d != "" {
 				cdiDevices = append(cdiDevices, d)
 			}

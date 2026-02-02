@@ -871,6 +871,17 @@ func (l deviceLib) createMigDevice(migspec *MigSpec) (*MigDeviceInfo, error) {
 	}
 
 	gi, ret := device.CreateGpuInstanceWithPlacement(&giProfileInfo, placement)
+
+	// Ambiguity in the NVML API: when requesting a specific placement that is
+	// already occupied, NVML returns NVML_ERROR_INSUFFICIENT_RESOURCES rather
+	// than NVML_ERROR_ALREADY_EXISTS. Seemingly, to robustly distinguish
+	// "already exists" from "blocked by something else", one cannot rely on the
+	// error code alone. One must check the device state. Unrelatedly, if this
+	// GPU instance already exists, it is unclear if we can and should safely
+	// proceed using it. When we're here, we're not expecting it to exist -- an
+	// active destruction should be performed before retrying creation. Hence,
+	// for now, just return an error without distinguishing "already exists"
+	// from any other type of fault.
 	if ret != nvml.SUCCESS {
 		return nil, fmt.Errorf("error creating GPU instance for '%s': %v", migspec.CanonicalName(), ret)
 	}

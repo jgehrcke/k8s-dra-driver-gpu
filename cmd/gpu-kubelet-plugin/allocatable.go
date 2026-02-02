@@ -225,22 +225,9 @@ func (d AllocatableDevices) UUIDs() []string {
 	return uuids
 }
 
-// Return the names of all allocatable devices, by calling into CanonicalName()
-// for each device. Before the introduction of DynamicMIG, this returned the
-// UUID, but we made the transition to first-classing minor numbers a while ago
-// -- so, where was this ever useful and correct?. Also see
-// https://github.com/NVIDIA/k8s-dra-driver-gpu/pull/428 and
-// https://github.com/NVIDIA/k8s-dra-driver-gpu/issues/427#issuecomment-3069573022
-// func (d AllocatableDevices) Names() []string {
-//  var names []string
-//  for _, device := range d {
-//      names = append(names, device.CanonicalName())
-//  }
-//  slices.Sort(names)
-//  return names
-// }
-
 // This needs a code comment, clarifying the complexity and across device types.
+// This function is tied to PassthroughSuppert and hence for now guaranteed to
+// not be exercised when DynamicMIG is enabled.
 func (d AllocatableDevices) RemoveSiblingDevices(device *AllocatableDevice) {
 	var pciBusID string
 	switch device.Type() {

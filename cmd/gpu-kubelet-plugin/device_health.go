@@ -234,7 +234,8 @@ func (m *nvmlDeviceHealthMonitor) markAllMigDevicesUnhealthy(giMap map[uint32]ma
 	}
 }
 
-// What is the significance of this function? Why is it important?
+// What is the significance of this function? Which guarantees do we need to
+// maintain, as we evolve the code base?
 func getDevicePlacementMap(allocatable AllocatableDevices) devicePlacementMap {
 	placementMap := make(devicePlacementMap)
 
@@ -263,7 +264,8 @@ func getDevicePlacementMap(allocatable AllocatableDevices) devicePlacementMap {
 			ciID = d.MigStatic.gIInfo.Id
 
 		default:
-			klog.V(6).Infof("Skipping device with unknown type: %s", d.Type())
+			// This may be a problem; and should be logged
+			klog.V(4).Infof("getDevicePlacementMap: skipping device with type: %s", d.Type())
 			continue
 		}
 		placementMap.addDevice(parentUUID, giID, ciID, d)
