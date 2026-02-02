@@ -81,8 +81,6 @@ var defaultFeatureGates = map[featuregate.Feature]featuregate.VersionedSpecs{
 			Version:    version.MajorMinor(25, 8),
 		},
 	},
-	// Should `PassthroughSupport` be mutually exclusive with `DynamicMIG`?
-	// If yes: howw to express that?
 	PassthroughSupport: {
 		{
 			Default:    false,
@@ -177,6 +175,14 @@ func ValidateFeatureGates() error {
 
 	if Enabled(DynamicMIG) && Enabled(PassthroughSupport) {
 		return fmt.Errorf("feature gate %s is currently mutually exclusive with %s", DynamicMIG, PassthroughSupport)
+	}
+
+	if Enabled(DynamicMIG) && Enabled(NVMLDeviceHealthCheck) {
+		return fmt.Errorf("feature gate %s is currently mutually exclusive with %s", DynamicMIG, NVMLDeviceHealthCheck)
+	}
+
+	if Enabled(DynamicMIG) && Enabled(MPSSupport) {
+		return fmt.Errorf("feature gate %s is currently mutually exclusive with %s", DynamicMIG, MPSSupport)
 	}
 
 	return nil
