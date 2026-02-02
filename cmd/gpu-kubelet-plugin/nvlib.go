@@ -1230,7 +1230,7 @@ func (l deviceLib) FindMigDevBySpec(ms *MigSpecTuple) (*MigLiveTuple, error) {
 			ParentMinor: ms.ParentMinor,
 			GIID:        giId,
 			CIID:        ciId,
-			UUID:        uuid,
+			MigUUID:     uuid,
 		}
 
 		klog.Infof("FindMigDevBySpec result: %+v", mlt)
