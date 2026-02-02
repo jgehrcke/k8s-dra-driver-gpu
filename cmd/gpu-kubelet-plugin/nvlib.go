@@ -86,6 +86,7 @@ func newDeviceLib(driverRoot root) (*deviceLib, error) {
 	// Current design: when DynamicMIG is enabled, use one long-lived NVML
 	// session.
 	if featuregates.Enabled(featuregates.DynamicMIG) {
+		klog.V(1).Infof("DynamicMIG enabled: initialize long-lived NVML session")
 		if err := d.Init(); err != nil {
 			return nil, fmt.Errorf("failed to initialize NVML: %w", err)
 		}
@@ -124,7 +125,7 @@ func setOrOverrideEnvvar(envvars []string, key, value string) []string {
 // may see "in use by another client" errors (they are forbidden by design when
 // DynamicMIG is enabled).
 func (l deviceLib) Init() error {
-	klog.V(6).Infof("Initializing NVML")
+	klog.V(6).Infof("Call NVML Init")
 	ret := l.nvmllib.Init()
 	if ret != nvml.SUCCESS {
 		return fmt.Errorf("error initializing NVML: %v", ret)
@@ -133,7 +134,7 @@ func (l deviceLib) Init() error {
 }
 
 func (l deviceLib) alwaysShutdown() {
-	klog.V(6).Infof("Shutting down NVML")
+	klog.V(6).Infof("Call NVML shutdown")
 	ret := l.nvmllib.Shutdown()
 	if ret != nvml.SUCCESS {
 		klog.Warningf("error shutting down NVML: %v", ret)
@@ -152,6 +153,7 @@ func (l deviceLib) ensureNVML() (func(), nvml.Return) {
 		return func() {}, nvml.SUCCESS
 	}
 
+	klog.V(6).Infof("Initializing NVML")
 	t0 := time.Now()
 	ret := l.nvmllib.Init()
 	if ret != nvml.SUCCESS {
