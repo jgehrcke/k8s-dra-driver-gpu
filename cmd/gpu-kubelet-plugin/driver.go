@@ -286,8 +286,6 @@ func (d *driver) HandleError(ctx context.Context, err error, msg string) {
 }
 
 func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
-	cs := ResourceClaimToString(claim)
-
 	// Instead of a global prepare/unprepare (PU) lock, rely on fine-grained
 	// checkpoint locking in case of DynamicMIG mode. A single plugin instance
 	// may have to manage ~30 individual MIG devices. With many requests
@@ -309,6 +307,8 @@ func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.Res
 		defer release()
 		klog.V(6).Infof("t_prep_lock_acq %.3f s", time.Since(t0).Seconds())
 	}
+
+	cs := ResourceClaimToString(claim)
 
 	tprep0 := time.Now()
 	devs, err := d.state.Prepare(ctx, claim)
@@ -334,8 +334,6 @@ func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.Res
 }
 
 func (d *driver) nodeUnprepareResource(ctx context.Context, claimRef kubeletplugin.NamespacedObject) error {
-	cs := claimRef.String()
-
 	if !featuregates.Enabled(featuregates.DynamicMIG) {
 		t0 := time.Now()
 		release, err := d.pulock.Acquire(ctx, flock.WithTimeout(10*time.Second))
@@ -345,6 +343,8 @@ func (d *driver) nodeUnprepareResource(ctx context.Context, claimRef kubeletplug
 		defer release()
 		klog.V(6).Infof("t_unprep_lock_acq %.3f s", time.Since(t0).Seconds())
 	}
+
+	cs := claimRef.String()
 
 	tunprep0 := time.Now()
 	err := d.state.Unprepare(ctx, claimRef)
