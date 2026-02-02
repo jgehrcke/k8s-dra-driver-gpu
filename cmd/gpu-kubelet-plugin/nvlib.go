@@ -507,9 +507,8 @@ func (l deviceLib) getGpuInfo(index int, device nvdev.Device) (*GpuInfo, error) 
 	}
 
 	gpuInfo := &GpuInfo{
-		UUID:  uuid,
-		minor: minor,
-		// index is not initialized here
+		UUID:                  uuid,
+		minor:                 minor,
 		migEnabled:            migEnabled,
 		memoryBytes:           memory.Total,
 		productName:           productName,
