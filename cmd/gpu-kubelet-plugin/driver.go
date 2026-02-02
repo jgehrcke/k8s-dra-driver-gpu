@@ -296,17 +296,17 @@ func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.Res
 	// correctness; the inner business logic appears to operate correctly.
 	// However, out of caution, retain this global PU lock for non-DynamicMIG
 	// use cases for now.
-	if !featuregates.Enabled(featuregates.DynamicMIG) {
-		t0 := time.Now()
-		release, err := d.pulock.Acquire(ctx, flock.WithTimeout(10*time.Second))
-		if err != nil {
-			return kubeletplugin.PrepareResult{
-				Err: fmt.Errorf("error acquiring prep/unprep lock: %w", err),
-			}
+	//if !featuregates.Enabled(featuregates.DynamicMIG) {
+	t0 := time.Now()
+	release, err := d.pulock.Acquire(ctx, flock.WithTimeout(10*time.Second))
+	if err != nil {
+		return kubeletplugin.PrepareResult{
+			Err: fmt.Errorf("error acquiring prep/unprep lock: %w", err),
 		}
-		defer release()
-		klog.V(6).Infof("t_prep_lock_acq %.3f s", time.Since(t0).Seconds())
 	}
+	defer release()
+	klog.V(6).Infof("t_prep_lock_acq %.3f s", time.Since(t0).Seconds())
+	//}
 
 	cs := ResourceClaimToString(claim)
 
@@ -334,20 +334,20 @@ func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.Res
 }
 
 func (d *driver) nodeUnprepareResource(ctx context.Context, claimRef kubeletplugin.NamespacedObject) error {
-	if !featuregates.Enabled(featuregates.DynamicMIG) {
-		t0 := time.Now()
-		release, err := d.pulock.Acquire(ctx, flock.WithTimeout(10*time.Second))
-		if err != nil {
-			return fmt.Errorf("error acquiring prep/unprep lock: %w", err)
-		}
-		defer release()
-		klog.V(6).Infof("t_unprep_lock_acq %.3f s", time.Since(t0).Seconds())
+	//if !featuregates.Enabled(featuregates.DynamicMIG) {
+	t0 := time.Now()
+	release, err := d.pulock.Acquire(ctx, flock.WithTimeout(10*time.Second))
+	if err != nil {
+		return fmt.Errorf("error acquiring prep/unprep lock: %w", err)
 	}
+	defer release()
+	klog.V(6).Infof("t_unprep_lock_acq %.3f s", time.Since(t0).Seconds())
+	//}
 
 	cs := claimRef.String()
 
 	tunprep0 := time.Now()
-	err := d.state.Unprepare(ctx, claimRef)
+	err = d.state.Unprepare(ctx, claimRef)
 	klog.V(6).Infof("t_unprep %.3f s (claim %s)", time.Since(tunprep0).Seconds(), cs)
 
 	if err != nil {
