@@ -25,11 +25,10 @@ import (
 
 const (
 	GpuDeviceType = "gpu"
-	// Concrete MIG device, pre-created (not managed by the DynamicMIG
-	// capability). Managed out-of-band. Note(JP): I think this is exposed as
-	// part of the API, and was so far always "mig", referring to the "static
-	// MIG" use case. Upon introducing "migdyn" below, I felt inclined to rename
-	// this to "migstatic", but I think we cannot do that.
+	// For business logic, we need distinction between `MigStaticDeviceType` and
+	// `MigDynamicDeviceType`. In the API, however, these types are deliberately
+	// indistinguishbable (just "mig".) That is, we should define these string
+	// constants separately from the types used in code.
 	MigStaticDeviceType = "mig"
 	// Abstract allocatable MIG device is manged by us (DynamicMIG).
 	MigDynamicDeviceType = "migdyn"
