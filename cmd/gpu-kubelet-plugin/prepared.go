@@ -54,8 +54,8 @@ type PreparedMigDevice struct {
 	// Note that this is either created via the 'static MIG' flow or the
 	// 'dynamic MIG' flow -- in any case, it represents a MIG device that
 	// currently exists (incarnated, concrete). TODOMIG: maybe rename to
-	// `Concrete`. Update: after re-vambing MIG-related types, this can now
-	// maybe be of type `MigLiveTuple`.
+	// `Concrete`. Update: after introduction of new MIG-related types, this can
+	// now maybe be of type `MigLiveTuple`.
 	Created *MigDeviceInfo        `json:"created"`
 	Device  *kubeletplugin.Device `json:"device"`
 }
