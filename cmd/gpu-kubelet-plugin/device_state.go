@@ -1178,7 +1178,7 @@ func (s *DeviceState) deleteMigDevIfExistsAndNotUsedByCompletedClaim(ms *MigSpec
 		return nil
 	}
 
-	klog.V(1).Infof("MIG device corresponding to name %s found with UUID %s -- attempt to tear down", dname, mlt.uuid)
+	klog.V(1).Infof("MIG device corresponding to name %s found with UUID %s -- attempt to tear down", dname, mlt.MigUUID)
 	if err := s.nvdevlib.deleteMigDevice(mlt); err != nil {
 		return fmt.Errorf("MIG device deletion failed: %w", err)
 	}

@@ -134,7 +134,7 @@ func (m *MigDeviceInfo) LiveTuple() *MigLiveTuple {
 		ParentMinor: m.ParentMinor,
 		GIID:        m.GIID,
 		CIID:        m.CIID,
-		uuid:        m.UUID,
+		MigUUID:     m.UUID,
 	}
 }
 
