@@ -17,25 +17,23 @@
 package main
 
 import (
-	"fmt"
 	"slices"
 
 	resourceapi "k8s.io/api/resource/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/api/validate/constraints"
 )
 
-// Naming convention: this name is used for announcement (device name announced
-// in a DRA ResourceSlice), and it's also played back to us upon a request,
-// which is when we look it up in the AllocatableDevices map. Conceptually, this
-// is hence the same as kubeletplugin.Device.DeviceName (documented with
-// 'DeviceName identifies the device inside that pool')
+// The device name is the canonical device name announced by us a DRA
+// ResourceSlice). It must be a (node-local) unambiguous device identifier. It's
+// exposed to users in error messages. It's played back to us upon a
+// NodePrepareResources request, which is when we look it up in the
+// `AllocatableDevices` map. Conceptually, this the same as
+// kubeletplugin.Device.DeviceName (documented with 'DeviceName identifies the
+// device inside that pool').
 type DeviceName = string
 
 type AllocatableDevices map[DeviceName]*AllocatableDevice
 
 // AllocatableDevice represents an individual device that can be allocated.
-// This can either be a full GPU or MIG device, but not both.
 type AllocatableDevice struct {
 	Gpu        *GpuInfo
 	MigDynamic *MigSpec
@@ -97,9 +95,10 @@ func (d *AllocatableDevice) GetDevice() resourceapi.Device {
 	panic("unexpected type for AllocatableDevice")
 }
 
-// Note: the UUID is not used for announcing a device. Note that since
-// introduction of DynamicMIG, some allocatable devices are abstract devices
-// that do not have a UUID before actualization anyway.
+// Note: this is here mainly for AllocatableDevices implementing the
+// UUIDProvider interface. Conceptually, at least since introduction of
+// DynamicMIG, some allocatable devices are abstract devices that do not have a
+// UUID before actualization -- hence, this concept is brittle.
 func (d AllocatableDevice) UUID() string {
 	if d.Gpu != nil {
 		return d.Gpu.UUID
@@ -108,13 +107,12 @@ func (d AllocatableDevice) UUID() string {
 		return d.MigStatic.UUID
 	}
 	if d.MigDynamic != nil {
-		// The caller must sure to never call UUID() hat we never get here. An
-		// abstract MIG device must be prepared (created) -- only then, its UUID
-		// can be determined. This method still exists because when the
-		// DynamicMIG feature gate is disabled, `AllocatableDevices` _can_
-		// implement UUIDProvider. This needs restructuring, to be safer.
-		panic("unexpected call to UUID for AllocatableDevice type MigDynamic")
-		//return ""
+		// For now, the caller must sure to never call UUID() on such a device.
+		// This method for now exists because when the DynamicMIG feature gate
+		// is disabled, `AllocatableDevices` _can_ implement UUIDProvider; and
+		// that feature is used throughout the code base. This needs
+		// restructuring and cleanup.
+		panic("unexpected UUID() call for AllocatableDevice of type MigDynamic")
 	}
 	if d.Vfio != nil {
 		return d.Vfio.UUID
@@ -144,7 +142,7 @@ func (d AllocatableDevices) GpuUUIDs() []string {
 	return uuids
 }
 
-// Required for implementing UUIDProvider. Meant to return MIG device GPU UUIDs.
+// Required for implementing UUIDProvider. Meant to return MIG device UUIDs.
 // Must not be called when the DynamicMIG featuregate is enabled.
 func (d AllocatableDevices) MigDeviceUUIDs() []string {
 	var uuids []string
@@ -213,22 +211,6 @@ func (d AllocatableDevices) GetVfioDevices() AllocatableDeviceList {
 	return devices
 }
 
-// TODO: document the relevance of this method -- where are these names used,
-// what are guarantees about them? How does this relate to the UUID concept?
-func (d AllocatableDevices) PossibleMigDeviceNames() []string {
-	var names []string
-	for _, device := range d {
-		if device.Type() == MigStaticDeviceType {
-			names = append(names, device.MigStatic.CanonicalName())
-		}
-		if device.Type() == MigDynamicDeviceType {
-			names = append(names, device.MigDynamic.CanonicalName())
-		}
-	}
-	slices.Sort(names)
-	return names
-}
-
 func (d AllocatableDevices) VfioDeviceUUIDs() []string {
 	var uuids []string
 	for _, device := range d {
@@ -240,34 +222,22 @@ func (d AllocatableDevices) VfioDeviceUUIDs() []string {
 	return uuids
 }
 
-// Returns the names of all allocatable devices, by calling into CanonicalName()
-// for each device. Before the introduction of dynamic MIG this returned the
-// UUID, but we made the transition to first-classing minor numbers a while ago.
-// Also see https://github.com/NVIDIA/k8s-dra-driver-gpu/pull/428 and
+// Return the names of all allocatable devices, by calling into CanonicalName()
+// for each device. Before the introduction of DynamicMIG, this returned the
+// UUID, but we made the transition to first-classing minor numbers a while ago
+// -- so, where was this ever useful and correct?. Also see
+// https://github.com/NVIDIA/k8s-dra-driver-gpu/pull/428 and
 // https://github.com/NVIDIA/k8s-dra-driver-gpu/issues/427#issuecomment-3069573022
-func (d AllocatableDevices) Names() []string {
-	var names []string
-	for _, device := range d {
-		names = append(names, device.CanonicalName())
-	}
-	slices.Sort(names)
-	return names
-}
+// func (d AllocatableDevices) Names() []string {
+//  var names []string
+//  for _, device := range d {
+//      names = append(names, device.CanonicalName())
+//  }
+//  slices.Sort(names)
+//  return names
+// }
 
-// Return canonical name for memory slice (placement) `i` (a zero-based index).
-// Note that this name must be used for memslice-N counters in a SharedCounters
-// counter set, and for corresponding counters in a ConsumesCounters counter
-// set. Counters (as opposed to capacities) are allowed to have hyphens in their
-// name.
-func memsliceCounterName(i int) string {
-	return fmt.Sprintf("memory-slice-%d", i)
-}
-
-// Helper for creating an integer-based DeviceCapacity. Accept any integer type.
-func intcap[T constraints.Integer](i T) resourceapi.DeviceCapacity {
-	return resourceapi.DeviceCapacity{Value: *resource.NewQuantity(int64(i), resource.BinarySI)}
-}
-
+// This needs a code comment, clarifying the complexity and across device types.
 func (d AllocatableDevices) RemoveSiblingDevices(device *AllocatableDevice) {
 	var pciBusID string
 	switch device.Type() {
@@ -311,9 +281,9 @@ func (d *AllocatableDevice) IsHealthy() bool {
 		// TODO: review -- what about the parent?
 		return d.MigStatic.Health == Healthy
 	case MigDynamicDeviceType:
-		// TODO. For now, pretend health -- this device maybe hasn't manifested
-		// yet. Or has it? We could adopt the health status of the parent, but
-		// that's also not meaningful I think.
+		// TODOMIG: For now, pretend health -- this device maybe hasn't
+		// manifested yet. Or has it? We could adopt the health status of the
+		// parent, but that's also not meaningful I think.
 		return true
 	}
 	panic("unexpected type for AllocatableDevice")

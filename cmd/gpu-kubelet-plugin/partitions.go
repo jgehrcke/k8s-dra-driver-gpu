@@ -23,6 +23,7 @@ import (
 	"github.com/Masterminds/semver"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/api/validate/constraints"
 	"k8s.io/dynamic-resource-allocation/deviceattribute"
 	"k8s.io/utils/ptr"
 )
@@ -299,4 +300,18 @@ func addCountersForMemSlices(counters map[string]resourceapi.Counter, start int,
 		counters[memsliceCounterName(i)] = resourceapi.Counter{Value: *resource.NewQuantity(1, resource.BinarySI)}
 	}
 	return counters
+}
+
+// Return canonical name for memory slice (placement) `i` (a zero-based index).
+// Note that this name must be used for memslice-N counters in a SharedCounters
+// counter set, and for corresponding counters in a ConsumesCounters counter
+// set. Counters (as opposed to capacities) are allowed to have hyphens in their
+// name.
+func memsliceCounterName(i int) string {
+	return fmt.Sprintf("memory-slice-%d", i)
+}
+
+// Helper for creating an integer-based DeviceCapacity. Accept any integer type.
+func intcap[T constraints.Integer](i T) resourceapi.DeviceCapacity {
+	return resourceapi.DeviceCapacity{Value: *resource.NewQuantity(int64(i), resource.BinarySI)}
 }
