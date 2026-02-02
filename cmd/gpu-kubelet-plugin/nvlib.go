@@ -309,12 +309,10 @@ func (l deviceLib) discoverGPUByPCIBusID(pcieBusID string) (*AllocatableDevice, 
 		if err != nil {
 			return fmt.Errorf("error getting info for GPU %d: %w", i, err)
 		}
-
-		//TODOMIG: fix code below, un-outcomment.
-		// migs, err = l.discoverMigDevicesByGPU(gpuInfo)
-		// if err != nil {
-		// 	return fmt.Errorf("error discovering MIG devices for GPU %q: %w", gpuInfo.CanonicalName(), err)
-		// }
+		migs, err = l.discoverMigDevicesByGPU(gpuInfo)
+		if err != nil {
+			return fmt.Errorf("error discovering MIG devices for GPU %q: %w", gpuInfo.CanonicalName(), err)
+		}
 		// If no MIG devices are found, allow VFIO devices.
 		gpuInfo.vfioEnabled = len(migs) == 0
 		gpu = &AllocatableDevice{
@@ -369,15 +367,11 @@ func (l deviceLib) obliterateStaleMIGDevices(expectedDeviceNames []DeviceName) e
 		}
 
 		for _, mdi := range migs {
-			// That's the name we announce the device with via DRA, i.e. it's
-			// node-unique, and must (by definition) precisely describe a
-			// specific device within a node.
 			name := mdi.CanonicalName()
-			miglt := mdi.LiveTuple()
 			expected := slices.Contains(expectedDeviceNames, name)
 			if !expected {
-				klog.Warningf("Found unexpected MIG device (%s), destroy", name)
-				if err := l.deleteMigDevice(miglt); err != nil {
+				klog.Warningf("Found unexpected MIG device (%s), attempt to tear down", name)
+				if err := l.deleteMigDevice(mdi.LiveTuple()); err != nil {
 					return fmt.Errorf("could not delete unexpected MIG device (%s): %w", name, err)
 				}
 			}
@@ -904,21 +898,23 @@ func (l deviceLib) createMigDevice(migspec *MigSpec) (*MigDeviceInfo, error) {
 	}
 	klog.V(6).Infof("t_prep_create_mig_dev_cigi %.3f s", time.Since(tcgigi0).Seconds())
 
-	// For obtaining the UUID, we initially walked through all MIG devices on
-	// the parent GPU to identify the one that matches the CIID and GIID of the
-	// MIG device that was just created; we then extracted the UUID from there.
-	// Under load, this 'walk all MIG devices' took up to ten seconds. This can
-	// be simplified by getting the MIG device handle from the CI and then
-	// calling the UUID API on that handle. A MIG device handle maps 1:1 to a CI
-	// in NVML, so once the CI is known, the MIG device handle and its UUID can
-	// be retrieved directly without scanning through indices.
+	// Note(JP): for obtaining the UUID of the just-created MIG device, some
+	// algorithms walk through all MIG devices on the parent GPU to identify the
+	// one that matches the CIID and GIID of the MIG device that was just
+	// created. While that is correct, I measured that the time spent in NVML
+	// API calls for 'walking all MIG devices' under load under can easily be
+	// O(10 s). The UUID can also be obtained by first getting the MIG device
+	// handle from the CI and then calling GetUUID() on that handle. A MIG
+	// device handle maps 1:1 to a CI in NVML, so once the CI is known, the MIG
+	// device handle and its UUID can be retrieved directly without scanning
+	// through indices.
 	uuid, ret := ciInfo.Device.GetUUID()
 	if ret != nvml.SUCCESS {
 		return nil, fmt.Errorf("error getting UUID from CI info/device for CI %d: %v", ciInfo.Id, ret)
 	}
 
-	// Should use two types here, one just for the 3-tuple, and then the rest of
-	// the info. Things get confusing.
+	// This now probably needs consolidation with the new types MigLiveTuple and
+	// MigSpecTuple. Things get confusing.
 	migDevInfo := &MigDeviceInfo{
 		UUID:           uuid,
 		CIID:           int(ciInfo.Id),
@@ -1078,9 +1074,9 @@ func (l deviceLib) maybeDisableMigMode(uuid string, nvmldev nvml.Device) error {
 	return nil
 }
 
-// Returns a flat list of all potentially possible incarnated MIG devices.
-// Specifically, it discovers all possible abstract profiles (device types),
-// then determines each specific placement for each profile.
+// Returns a flat list of all possible physical MIG configurations for a
+// specific GPU. Specifically, this discovers all possible profiles, and then
+// then determines the possible placements for each profile.
 func (l deviceLib) inspectMigProfilesAndPlacements(gpuInfo *GpuInfo, device nvdev.Device) ([]*MigSpec, error) {
 	var infos []*MigSpec
 
@@ -1158,10 +1154,11 @@ func (l deviceLib) inspectMigProfilesAndPlacements(gpuInfo *GpuInfo, device nvde
 	return infos, nil
 }
 
-// Test if MIG device defined by the provided `MigSpecTuple` exists. If it
-// exists, return pointer to a corresponding `MigLiveTuple`. If it doesn't
-// exist, return a nil pointer. if lookup fails, return a nil pointer and
-// non-nil error.
+// FindMigDevBySpec() tests if a MIG device defined by the provided
+// `MigSpecTuple` exists. If it exists, a pointer to a corresponding
+// `MigLiveTuple` is returned. If it doesn't exist, a nil pointer is returned.
+// if an NVML API call fails along the way, a nil pointer and a non-nil error is
+// returned.
 func (l deviceLib) FindMigDevBySpec(ms *MigSpecTuple) (*MigLiveTuple, error) {
 	parentUUID := l.gpuUUIDbyMinor[ms.ParentMinor]
 	parent, ret := l.DeviceGetHandleByUUIDCached(parentUUID)
