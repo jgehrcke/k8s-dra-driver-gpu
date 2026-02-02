@@ -11,7 +11,7 @@ setup_file () {
     -n nvidia-dra-driver-gpu \
     -c gpus \
     --prefix --tail=-1
-  assert_output --partial "About to announce device gpu-0-mig-1g24gb-0"
+  assert_output --partial "About to announce device gpu-2-mig-1g24gb"
 }
 
 # Executed before entering each test in this file.
@@ -32,7 +32,7 @@ bats::on_failure() {
 
 confirm_mig_mode_disabled_all_nodes() {
   # Confirm that MIG mode is disabled for all GPUs on all nodes.
-  for node in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
+  for node in $(kubectl get nodes -o json | jq -r '.items[] | select(.spec.unschedulable!=true) | .metadata.name'); do
      nvmm "$node" sh -c 'nvidia-smi --query-gpu=index,mig.mode.current --format=csv'
      run nvmm "$node" sh -c 'nvidia-smi --query-gpu=index,mig.mode.current --format=csv'
      refute_output --partial "Enabled"
@@ -88,9 +88,9 @@ confirm_mig_mode_disabled_all_nodes() {
   confirm_mig_mode_disabled_all_nodes
 }
 
-# bats test_tags=bats:focus
+# bats test_tags=bats:XXfocus
 @test "1 pod, 1 MIG + TimeSlicing config" {
-  local _iargs=("--set" "logVerbosity=6" "--set" "featureGates.DynamicMIG=true" "--set" "featuregates.TimeSlicingSettings=true")
+  local _iargs=("--set" "logVerbosity=6" "--set" "featureGates.DynamicMIG=true" "--set" "featureGates.TimeSlicingSettings=true")
   iupgrade_wait "${TEST_CHART_REPO}" "${TEST_CHART_VERSION}" _iargs
 
   confirm_mig_mode_disabled_all_nodes

@@ -57,6 +57,7 @@ log() {
 }
 
 log "RUNID $RUNID | fault type $FAULT_TYPE | $SPECPATH | $BASE_NAME | $JOB_NAME | $CD_NAME"
+log "current working directory: $(pwd)"
 
 log "do: delete -f ${SPECPATH} (and wait)"
 kubectl delete -f "${SPECPATH}" --ignore-not-found > /dev/null
@@ -233,6 +234,7 @@ while true; do
         set -e
 
         log "done"
+        log "output files can be found in the cwd at: $(pwd)"
         break
     fi
 

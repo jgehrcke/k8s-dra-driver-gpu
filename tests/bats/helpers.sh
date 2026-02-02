@@ -237,13 +237,6 @@ mig_ensure_teardown_on_all_nodes() {
 }
 
 
-get_gpu_resource_slice_name_for_node() {
-  local NODE_NAME="$1"
-  local rsname=$(kubectl get resourceslices.resource.k8s.io | grep gb-nvl-027-compute08 | grep gpu | awk '{print $1}')
-  return "$rsname"
-}
-
-
 restart_kubelet_on_node() {
   local NODEIP="$1"
   echo "sytemctl restart kubelet.service on ${NODEIP}"
@@ -288,34 +281,6 @@ kplog () {
   kubectl logs -n nvidia-dra-driver-gpu "$pod" -c "$cont" "$@"
 }
 
-<<<<<<< HEAD
-=======
-show_all_mig_devices_all_nodes() {
-  for node in $(kubectl get nodes -o=jsonpath='{.items[*].metadata.name}'); do
-    nvmm "$node" nvidia-smi -L
-    #mig -lgi
-  done
-}
-
-show_processes_on_migs_all_nodes() {
-  for node in $(kubectl get nodes -o=jsonpath='{.items[*].metadata.name}'); do
-    nvmm "$node" sh -c 'nvidia-smi mig -lgi | grep MIG; nvidia-smi | grep -A10 Processes | grep -E '[0-9]+''
-  done
-}
-
-show_mig_mode_all_gpus_all_nodes() {
-  for node in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
-     nvmm "$node" sh -c 'nvidia-smi --query-gpu=index,mig.mode.current --format=csv'
-  done
-}
-
-
-show_utilization_all_gpus_all_nodes() {
-  for node in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
-     nvmm "$node" nvidia-smi --query-gpu=memory.used,temperature.gpu --format=csv
-  done
-}
->>>>>>> a3c87562 (dynmig: introduce dynamig MIG device management)
 
 _log_ts_no_newline() {
     echo -n "$(date -u +'%Y-%m-%dT%H:%M:%S.%3NZ ')"
@@ -329,8 +294,4 @@ log() {
   _DUR=$(echo "$_TNOW - $_T0" | bc)
   _log_ts_no_newline
   printf "[%6.1fs] $1\n" "$_DUR"
-<<<<<<< HEAD
 }
-=======
-}
->>>>>>> a3c87562 (dynmig: introduce dynamig MIG device management)
