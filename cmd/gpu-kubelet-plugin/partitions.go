@@ -134,17 +134,17 @@ func (i *MigSpec) PartGetDevice() resourceapi.Device {
 
 // Return the KEP 4818 capacities of an abstract MIG device.
 //
-// TODOMIG(JP): add memory slices or not?
+// TODOMIG(JP): announce memory slices as capacities or not?
 //
-// Note(JP): for now, I feel like we may want to keep capacity agnostic to
+// Note(JP): for now, I feel like we may want to decouple capacity from
 // placement. That would imply not announcing specific memory slices as part of
 // capacity (specific memory slices encode placement). That makes sense to me,
 // but I may of course miss something here.
 //
-// I have noted that in an example spec in KEP 4815 we _do_ enumerate memory
-// slices in a partition's capacity. Example:
+// I noticed that in an example spec in KEP 4815 we enumerate memory slices in a
+// partition's capacity. Example:
 //
-//   - name: gpu-0-mig-2g.10gb-0-1
+//   - name: gpu-2-mig-1g24gb-19-0
 //     attributes:
 //     ...
 //     capacity:
@@ -167,14 +167,12 @@ func (i *MigSpec) PartGetDevice() resourceapi.Device {
 // capacity dimensions which (in the example above) are enumerated despite
 // having a value of zero (e.g. `encoders` above).
 //
-// 2) Semantically, to me, capacity I think can (and should?) be
-// placement-agnostic. I am happy to be convinced otherwise.
+// 2) Semantically, to me, capacity I think can (and should?) be independent of
+// placement. I am happy to be convinced otherwise.
 //
 // 3) If `capacity“ is in our case always encoding the _same_ information as
-// `consumesCounters` then that's duplication and feels like an API design flaw
-// or API usage flow. It feels like these parts of the resource slice device
-// spec serve a different meaning, and hence allow for different information
-// content. Again, I may miss something.
+// `consumesCounters` then that is a lot of duplication and feels a bit wrong.
+// They serve a different need, and hence there may be differences.
 func (i MigSpec) PartCapacities() PartCapacityMap {
 	p := i.GIProfileInfo
 	return PartCapacityMap{
@@ -184,32 +182,31 @@ func (i MigSpec) PartCapacities() PartCapacityMap {
 		"encoders":        intcap(p.EncoderCount),
 		"jpegEngines":     intcap(p.JpegCount),
 		"ofaEngines":      intcap(p.OfaCount),
-		// In the k8s world, we love announcing unit-less memory :-). However,
-		// it's important to know that `memory` here must be announced with the
-		// unit "Bytes". The MIG profile's MemorySizeMB` property comes straight
-		// from NVML and is documented in the public API docs with "Memory size
-		// in MBytes". As it says "MB" and not MiB", one could assume that unit
-		// to be 10^6 Bytes. However Update: in nvml.h this type's property is
-		// documented with `memorySizeMB; //!< Device memory size (in MiB)`.
-		// Hence, the unit is 2^20 Bytes (1024 * 1024 Bytes).
+		// In the k8s world, we love announcing unit-less memory :-). `memory`
+		// here is announced implicitly with the unit "Bytes". The MIG profile's
+		// MemorySizeMB` property comes straight from NVML and is documented in
+		// the public API docs with "Memory size in MBytes". As it says "MB" and
+		// not MiB", one could assume that unit to be 10^6 Bytes. However, in
+		// nvml.h this type's property is documented with `memorySizeMB; //!<
+		// Device memory size (in MiB)`. Hence, the unit is 2^20 Bytes (1024 *
+		// 1024 Bytes).
 		"memory": intcap(int64(p.MemorySizeMB * 1024 * 1024)),
 	}
 }
 
 func (i MigSpec) PartAttributes() map[resourceapi.QualifiedName]resourceapi.DeviceAttribute {
 	return map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+		// TODOMIG:
+		// - do not hard-code "mig"?
+		// - expose parent index?
+		// - really expose parent minor?
 		"type": {
-			// TODO: make "mig" dynamic again? This is exposed in the public API
 			StringValue: ptr.To("mig"),
 		},
 		"parentUUID": {
 			StringValue: &i.Parent.UUID,
 		},
-		// TODOMIG: expose parent index?
-		// "parentIndex": {
-		// 	IntValue: ptr.To(int64(i.Parent.index)), // TODO: really expose?
-		// },
-		// TODOMIG: really expose parent minor?
+
 		"parentMinor": {
 			IntValue: ptr.To(int64(i.Parent.minor)),
 		},

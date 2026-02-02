@@ -56,13 +56,14 @@ type MigSpecTuple struct {
 // device is known to be alive (otherwise those IDs may refer to a different
 // device than assumed because they may be re-used for a potentially different
 // physical configuration -- at least, there doesn't seem to be any guarantee
-// that that is not the case). Hence, another parameter is tracked by this type:
-// `uuid` -- a MIG device UUID changes across destruction/re-creation of the
-// same physical configuration. The `uuid` carried by this type can therefore be
-// used to distinguish actual vs. expected MIG device UUID after looking up a
-// MIG device by (parent, CIID, GIID). What's expressed above, in other words:
-// as far as I understand, there is no guaranteed relationship between GIID+CIID
-// on the one hand and profileID+placementStart on the other hand.
+// that that is not the case). Hence, another parameter is tracked: the MIG
+// device's `uuid`. A MIG device UUID changes across destruction/re-creation of
+// the same physical configuration. The `uuid` carried by this type can
+// therefore be used to distinguish actual vs. expected MIG device UUID after
+// looking up a MIG device by (parent, CIID, GIID). What's expressed above, in
+// other words: as far as I understand, there is no guaranteed relationship
+// between GIID+CIID on the one hand and profileID+placementStart on the other
+// hand.
 type MigLiveTuple struct {
 	ParentMinor GPUMinor
 	GIID        int
@@ -70,10 +71,11 @@ type MigLiveTuple struct {
 	uuid        string
 }
 
-// MigSpec is similar to `MigSpecTuple` as it also fundamentally encodes parent,
-// profile, and placement. In that sense, it is abstract description of a
-// specific MIG device configuration. Compared to `MigSpecTuple`, though, the
-// properties of this type are richer objects for convenience.
+// MigSpec is similar to `MigSpecTuple` as it also fundamentally encodes the
+// three Ps: parent, profile, and placement. In that sense, it is an abstract
+// description of a specific MIG device configuration. Compared to
+// `MigSpecTuple`, though, the properties in this struct are richer objects for
+// convenience.
 type MigSpec struct {
 	Parent        *GpuInfo
 	Profile       nvdev.MigProfile
@@ -90,17 +92,43 @@ func (m *MigSpec) Tuple() *MigSpecTuple {
 }
 
 // Turns MigSpecTuple into a canonical MIG device name. Needs additional input:
-// The stringified MIG profile name (deliberately not stored on the type;
-// implicitly stored via profile ID).
+// The stringified MIG profile name (deliberately not stored on the type because
+// it is not a fundamental dimension; but directly implied by profile ID).
 func (m *MigSpecTuple) ToCanonicalName(profileName string) DeviceName {
 	pname := toRFC1123Compliant(strings.ReplaceAll(profileName, ".", ""))
 	return fmt.Sprintf("gpu-%d-mig-%s-%d-%d", m.ParentMinor, pname, m.ProfileID, m.PlacementStart)
 }
 
-// NewMigSpecTupleFromCanonicalName parses a canonical MIG device name into a
-// MigSpecTuple struct.
+// NewMigSpecTupleFromCanonicalName() attempts to parse a canonical MIG device
+// name into a MigSpecTuple struct.
 func NewMigSpecTupleFromCanonicalName(n DeviceName) (*MigSpecTuple, error) {
-	return fromCanonicalName(n)
+	matches := canonicalMigNameRegex.FindStringSubmatch(string(n))
+	if matches == nil {
+		return nil, fmt.Errorf("failed to match MIG device name regex: '%s'", n)
+	}
+
+	// matches[0]: the whole string
+	// matches[1]: ParentMinor
+	// matches[2]: MIG profile name (ignore this for building the struct)
+	// matches[3]: ProfileID
+	// matches[4]: PlacementStart
+
+	// The regex guarantees that these groups are digits, and the expected
+	// values are small. That is, Atoi() errors are not expected. Handle them
+	// anyway for correctness.
+	parentMinor, err1 := strconv.Atoi(matches[1])
+	profileID, err2 := strconv.Atoi(matches[3])
+	placementStart, err3 := strconv.Atoi(matches[4])
+
+	if err1 != nil || err2 != nil || err3 != nil {
+		return nil, fmt.Errorf("integer parsing failed (dev name: %s)", n)
+	}
+
+	return &MigSpecTuple{
+		ParentMinor:    GPUMinor(parentMinor),
+		ProfileID:      profileID,
+		PlacementStart: placementStart,
+	}, nil
 }
 
 func (m *MigSpec) CanonicalName() DeviceName {
@@ -120,63 +148,13 @@ type MigDevicePlacement struct {
 	nvml.GpuInstancePlacement
 }
 
-// Update Jan 2026: one only needs parent UUID (or minor), Placement.Start, and
-// ProfileID for a complete description of the physical configuration. The
-// Profile ID implies slice count.  The tuple (ParentMinor, ProfileID,
-// Placement.Start) is sufficient to uniquely identify a physically instantiated
-// MIG device. For recovery logic, this means when iterating through existing
-// devices to find a match, we only need to check: does the device's Profile ID
-// match? Does the device's Placement.Start match? If both are true, that is
-// the device we're looking for.
-//
-// `profile string` must be what's returned by profile.String(), the
-// classical/canonical profile string notation, with a dot. This must not crash
-// when fed with data from a MigDeviceInfo object deserialized from JSON.
-// func migppCanonicalName(mt *MigSpecTuple, profileName string) string {
-// 	// `profileName` is for exampole `4g.95gb` -- DRA device names must not
-// 	// contain dots, and this is used in a device name. The outer
-// 	// `toRFC1123Compliant()` call is just to be safe; I don't see a clear need
-// 	// for it given profileNames that I have seen.
-// 	pname := toRFC1123Compliant(strings.ReplaceAll(profileName, ".", ""))
-// 	return fmt.Sprintf("gpu-%d-mig-%s-%d-%d", mt.ParentMinor, pname, mt.ProfileID, mt.PlacementStart)
-// }
-
 // Capture 4 groups:
 // 1. ParentMinor (digits)
 // 2. Profile name (greedy match of anything in the middle)
 // 3. ProfileID (digits)
 // 4. PlacementStart (digits)
 // Anchors ^ and $ ensure that the exact, full string must match.
-var canonicalNameRegex = regexp.MustCompile(`^gpu-(\d+)-mig-(.+)-(\d+)-(\d+)$`)
-
-func fromCanonicalName(name DeviceName) (*MigSpecTuple, error) {
-	matches := canonicalNameRegex.FindStringSubmatch(string(name))
-	if matches == nil {
-		return nil, fmt.Errorf("malformed device name: %q", name)
-	}
-
-	// matches[0]: the whole string.
-	// matches[1]: = ParentMinor
-	// matches[2]: MIG profile name (ignore this for building the struct)
-	// matches[3]: ProfileID
-	// matches[4]: PlacementStart
-
-	// The regex guarantees these groups are digits, and the expected values are
-	// small, Atoi errors are not expected. Handle them anyway for correctness.
-	parentMinor, err1 := strconv.Atoi(matches[1])
-	profileID, err2 := strconv.Atoi(matches[3])
-	placementStart, err3 := strconv.Atoi(matches[4])
-
-	if err1 != nil || err2 != nil || err3 != nil {
-		return nil, fmt.Errorf("integer parsing failed for name %q", name)
-	}
-
-	return &MigSpecTuple{
-		ParentMinor:    GPUMinor(parentMinor),
-		ProfileID:      profileID,
-		PlacementStart: placementStart,
-	}, nil
-}
+var canonicalMigNameRegex = regexp.MustCompile(`^gpu-(\d+)-mig-(.+)-(\d+)-(\d+)$`)
 
 // toRFC1123Compliant converts the input to a DNS name compliant with RFC 1123.
 // Note that a device name in DRA must not contain dots either (this function
