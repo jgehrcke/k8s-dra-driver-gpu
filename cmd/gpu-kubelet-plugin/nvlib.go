@@ -984,7 +984,7 @@ func (l deviceLib) createMigDevice(migspec *MigSpec) (*MigDeviceInfo, error) {
 
 // Assume long-lived NVML session.
 func (l deviceLib) deleteMigDevice(miglt *MigLiveTuple) error {
-	parentUUID := l.gpuUUIDbyMinor[miglt.ParentMinor]
+	parentUUID := miglt.ParentUUID
 	giId := miglt.GIID
 	ciId := miglt.CIID
 
@@ -1269,6 +1269,7 @@ func (l deviceLib) FindMigDevBySpec(ms *MigSpecTuple) (*MigLiveTuple, error) {
 		// CIID and uuid are zero values.
 		mlt := MigLiveTuple{
 			ParentMinor: ms.ParentMinor,
+			ParentUUID:  parentUUID,
 			GIID:        giId,
 			CIID:        ciId,
 			MigUUID:     uuid,

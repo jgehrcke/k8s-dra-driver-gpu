@@ -275,7 +275,7 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 				// is that `nvcdiDevice.GetDeviceSpecsByID(MIG_UUID)` may yield
 				// an incomplete spec for MIG devices, see
 				// https://github.com/NVIDIA/k8s-dra-driver-gpu/issues/787.
-				uuid = dev.Mig.Created.parent.UUID
+				uuid = dev.Mig.Concrete.ParentUUID
 				// Get (copy of) cached device spec (is safe to be mutated below,
 				// w/o compromising cache).
 				dspecsmig, err := cdi.GetDeviceSpecsByUUIDCached(uuid)
@@ -284,7 +284,7 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 				}
 				dspec = dspecsmig[0]
 
-				devnodesForMig, err := cdi.GetDevNodesForMigDevice(dev.Mig.Created.LiveTuple())
+				devnodesForMig, err := cdi.GetDevNodesForMigDevice(dev.Mig.Concrete)
 				if err != nil {
 					return fmt.Errorf("failed to construct MIG device DeviceNode edits: %w", err)
 				}

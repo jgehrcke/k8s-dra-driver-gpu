@@ -56,18 +56,20 @@ type MigSpecTuple struct {
 // device than assumed because they may be re-used for a potentially different
 // physical configuration -- at least, there doesn't seem to be any guarantee
 // that that is not the case). Hence, another parameter is tracked: the MIG
-// device's `uuid`. A MIG device UUID changes across destruction/re-creation of
-// the same physical configuration. The `uuid` carried by this type can
-// therefore be used to distinguish actual vs. expected MIG device UUID after
-// looking up a MIG device by (parent, CIID, GIID). What's expressed above, in
-// other words: as far as I understand, there is no guaranteed relationship
-// between GIID+CIID on the one hand and profileID+placementStart on the other
-// hand.
+// device UUID. A MIG device UUID changes across destruction/re-creation of the
+// same physical configuration. This uuid can therefore be used for example to
+// distinguish actual vs. expected MIG device UUID after looking up a MIG device
+// by a (parent, CIID, GIID) tuple. What's expressed above, in other words: as
+// far as I understand, there is no guaranteed relationship between GIID+CIID on
+// the one hand and profileID+placementStart on the other hand.
 type MigLiveTuple struct {
 	ParentMinor GPUMinor `json:"parentMinor"`
 	GIID        int      `json:"giId"`
 	CIID        int      `json:"ciId"`
 	MigUUID     string   `json:"migUUID"`
+
+	// Not orthogonal to `ParentMinor`, but convenient for consumers.
+	ParentUUID string `json:"parentUUID"`
 }
 
 // MigSpec is similar to `MigSpecTuple` as it also fundamentally encodes the

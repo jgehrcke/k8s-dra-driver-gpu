@@ -755,8 +755,8 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 				}
 			case MigStaticDeviceType:
 				preparedDevice.Mig = &PreparedMigDevice{
-					Created: adev.MigStatic,
-					Device:  device,
+					Concrete: adev.MigStatic.LiveTuple(),
+					Device:   device,
 				}
 			case MigDynamicDeviceType:
 				migspec := adev.MigDynamic
@@ -770,8 +770,8 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 					return nil, fmt.Errorf("error creating MIG device: %w", err)
 				}
 				preparedDevice.Mig = &PreparedMigDevice{
-					Created: migdev,
-					Device:  device,
+					Concrete: migdev.LiveTuple(),
+					Device:   device,
 				}
 			case VfioDeviceType:
 				preparedDevice.Vfio = &PreparedVfioDevice{
@@ -813,8 +813,8 @@ func (s *DeviceState) unprepareDevices(ctx context.Context, claimUID string, dev
 				klog.V(4).Infof("Unprepare: regular GPU: noop (GPU %s)", device.Gpu.Info.String())
 			case PreparedMigDeviceType:
 				if featuregates.Enabled(featuregates.DynamicMIG) {
-					mig := device.Mig.Created
-					klog.V(4).Infof("Unprepare: tear down MIG device '%s' for claim '%s'", mig.UUID, claimUID)
+					mig := device.Mig.Concrete
+					klog.V(4).Infof("Unprepare: tear down MIG device '%s' for claim '%s'", mig.MigUUID, claimUID)
 					// Errors during MIG device deletion are generally rare but
 					// have to be expected, and should fail the
 					// NodeUnprepareResources() operation. This may for example
@@ -822,13 +822,13 @@ func (s *DeviceState) unprepareDevices(ctx context.Context, claimUID string, dev
 					// client' and resolve itself soon; when the conflicting
 					// party goes away. Log an explicit warning, in addition to
 					// returning an error.
-					err := s.nvdevlib.deleteMigDevice(mig.LiveTuple())
+					err := s.nvdevlib.deleteMigDevice(mig)
 					if err != nil {
-						klog.Warningf("Error deleting MIG device %s: %s", mig.CanonicalName(), err)
-						return fmt.Errorf("error deleting MIG device %s: %w", mig.CanonicalName(), err)
+						klog.Warningf("Error deleting MIG device %s: %s", device.Mig.Device.DeviceName, err)
+						return fmt.Errorf("error deleting MIG device %s: %w", device.Mig.Device.DeviceName, err)
 					}
 				} else {
-					klog.V(4).Infof("Unprepare: static MIG: noop (MIG %s)", device.Mig.Created.UUID)
+					klog.V(4).Infof("Unprepare: static MIG: noop (MIG %s)", device.Mig.Concrete.MigUUID)
 				}
 			}
 		}

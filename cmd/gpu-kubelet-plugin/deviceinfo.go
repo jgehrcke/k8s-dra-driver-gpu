@@ -131,6 +131,7 @@ func (m *MigDeviceInfo) SpecTuple() *MigSpecTuple {
 func (m *MigDeviceInfo) LiveTuple() *MigLiveTuple {
 	return &MigLiveTuple{
 		ParentMinor: m.ParentMinor,
+		ParentUUID:  m.ParentUUID,
 		GIID:        m.GIID,
 		CIID:        m.CIID,
 		MigUUID:     m.UUID,
