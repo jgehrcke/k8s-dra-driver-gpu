@@ -37,6 +37,8 @@ _generate_pods_manifest() {
 }
 
 
+
+# bats test_tags=fastfeedback
 @test "Stress: shared ResourceClaim across ${TEST_GPU_STRESS_PODS_N} pods x ${TEST_GPU_STRESS_ITERATIONS} repetitions" {
   for loop in $(seq 1 "${TEST_GPU_STRESS_ITERATIONS}"); do
     echo "=== Loop $loop/${TEST_GPU_STRESS_ITERATIONS} ==="

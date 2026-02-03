@@ -21,6 +21,7 @@ setup() {
   log_objects
 }
 
+
 bats::on_failure() {
   echo -e "\n\nFAILURE HOOK START"
   log_objects
@@ -29,6 +30,7 @@ bats::on_failure() {
   kubectl describe pods | grep -A20 "Events:"
   echo -e "FAILURE HOOK END\n\n"
 }
+
 
 confirm_mig_mode_disabled_all_nodes() {
   # Confirm that MIG mode is disabled for all GPUs on all nodes.
@@ -39,6 +41,8 @@ confirm_mig_mode_disabled_all_nodes() {
   done
 }
 
+
+# bats test_tags=fastfeedback
 @test "1 pod, 1 MIG" {
   confirm_mig_mode_disabled_all_nodes
   kubectl apply -f tests/bats/specs/gpu-simple-mig.yaml
@@ -60,6 +64,8 @@ confirm_mig_mode_disabled_all_nodes() {
   confirm_mig_mode_disabled_all_nodes
 }
 
+
+# bats test_tags=fastfeedback
 @test "1 pod, 2 containers (1 MIG each)" {
   confirm_mig_mode_disabled_all_nodes
 
@@ -88,7 +94,8 @@ confirm_mig_mode_disabled_all_nodes() {
   confirm_mig_mode_disabled_all_nodes
 }
 
-# bats test_tags=bats:XXfocus
+
+# bats test_tags=fastfeedback
 @test "1 pod, 1 MIG + TimeSlicing config" {
   local _iargs=("--set" "logVerbosity=6" "--set" "featureGates.DynamicMIG=true" "--set" "featureGates.TimeSlicingSettings=true")
   iupgrade_wait "${TEST_CHART_REPO}" "${TEST_CHART_VERSION}" _iargs

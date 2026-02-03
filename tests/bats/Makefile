@@ -147,16 +147,17 @@ runner-image:
 # cmdline args).
 .PHONY: tests-gpu tests-cd
 
-# Run GPU plugin specific tests
+# Run a subset covering mainly the GPU plugin
 tests-gpu: runner-image
 	$(call RUN_BATS, \
 		tests/bats/test_basics.bats \
 		tests/bats/test_gpu_basic.bats \
 		tests/bats/test_gpu_dynmig.bats \
 		tests/bats/test_gpu_mig.bats \
-		tests/bats/test_gpu_stress.bats)
+		tests/bats/test_gpu_stress.bats
+	)
 
-# Run Compute Domain specific tests
+# Run a subset covering mainly the CD plugin
 tests-cd: runner-image
 	$(call RUN_BATS, \
 		tests/bats/test_basics.bats \
@@ -165,19 +166,21 @@ tests-cd: runner-image
 		tests/bats/test_cd_misc.bats \
 		tests/bats/test_cd_logging.bats \
 		tests/bats/test_cd_failover.bats \
-		tests/bats/test_cd_updowngrade.bats)
+		tests/bats/test_cd_updowngrade.bats
+	)
 
-# Run complete tests
+# Run the complete test suite (the reference!)
 tests: runner-image
 	$(call RUN_BATS, \
 		tests/bats/test_basics.bats \
 		tests/bats/test_gpu_basic.bats \
 		tests/bats/test_gpu_dynmig.bats \
 		tests/bats/test_gpu_mig.bats \
+		tests/bats/test_gpu_stress.bats \
 		tests/bats/test_cd_imex_chan_inject.bats \
 		tests/bats/test_cd_mnnvl_workload.bats \
 		tests/bats/test_cd_misc.bats \
 		tests/bats/test_cd_logging.bats \
 		tests/bats/test_cd_failover.bats \
-		tests/bats/test_cd_updowngrade.bats \
-		tests/bats/test_gpu_stress.bats)
+		tests/bats/test_cd_updowngrade.bats
+	)
