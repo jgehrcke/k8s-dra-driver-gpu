@@ -27,6 +27,11 @@ setup () {
   kubectl delete -f npie-job.yaml.rendered
   kubectl wait --for=delete  --timeout=60s job/nickelpie-test
   echo "${output}" | grep -E '^.*broadcast-.*RESULT bandwidth: [0-9]+\.[0-9]+ GB/s.*$'
+
+  # TODO: here, it might be good to wait for CD daemon pod deletion: I have seen
+  # that sometimes they might spend significant time in `Terminating`, I didn't
+  # get logs so far, though. Test for that here, and capture logs upon timeout
+  # condition.
 }
 
 # The MPI operator dependency is slightly heavy for CI, pulling the image was
