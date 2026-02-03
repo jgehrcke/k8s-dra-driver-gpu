@@ -164,7 +164,7 @@ func newApp() *cli.App {
 
 			// Store klog's log verbosity setting in this program's config for
 			// later runtime inspection (it's otherwise not accessible anymore
-			// because do not expose the raw `cliFlags`.
+			// because we do not expose the raw `cliFlags`.
 			flags.klogVerbosity = int(loggingConfig.Config.Verbosity)
 			pkgflags.LogStartupConfig(flags, loggingConfig)
 			return err
