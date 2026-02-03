@@ -266,10 +266,10 @@ func (d AllocatableDevices) RemoveSiblingDevices(device *AllocatableDevice) {
 func (d *AllocatableDevice) IsHealthy() bool {
 	switch d.Type() {
 	case GpuDeviceType:
-		return d.Gpu.Health == Healthy
+		return d.Gpu.health == Healthy
 	case MigStaticDeviceType:
 		// TODO: review -- what about the parent?
-		return d.MigStatic.Health == Healthy
+		return d.MigStatic.health == Healthy
 	case MigDynamicDeviceType:
 		// TODOMIG: For now, pretend health -- this device maybe hasn't
 		// manifested yet. Or has it? We could adopt the health status of the

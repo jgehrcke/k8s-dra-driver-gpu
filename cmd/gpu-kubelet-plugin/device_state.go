@@ -542,6 +542,7 @@ func (s *DeviceState) getCheckpoint(ctx context.Context) (*Checkpoint, error) {
 	if err := s.checkpointManager.GetCheckpoint(DriverPluginCheckpointFileBasename, checkpoint); err != nil {
 		return nil, err
 	}
+
 	klog.V(7).Info("checkpoint read")
 	return checkpoint.ToLatestVersion(), nil
 }
@@ -569,9 +570,14 @@ func (s *DeviceState) updateCheckpoint(ctx context.Context, mutate func(*Checkpo
 	if err != nil {
 		return fmt.Errorf("unable to get checkpoint: %w", err)
 	}
-	mutate(checkpoint)
 
-	err = s.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFileBasename, checkpoint)
+	// Potentially migrate to newest version. This also creates an empty
+	// `PreparedClaims` map if that field is so far `nil` (so that insertion is
+	// always safe). This is also called in the getCheckpoint() helper.
+	cp := checkpoint.ToLatestVersion()
+	mutate(cp)
+
+	err = s.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFileBasename, cp)
 	if err != nil {
 		return fmt.Errorf("unable to create checkpoint: %w", err)
 	}
@@ -749,9 +755,8 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 				}
 			case MigStaticDeviceType:
 				preparedDevice.Mig = &PreparedMigDevice{
-					RequestedCanonicalName: adev.MigStatic.CanonicalName(), //  Expected to be the same as `device.DeviceName``
-					Created:                adev.MigStatic,
-					Device:                 device,
+					Created: adev.MigStatic,
+					Device:  device,
 				}
 			case MigDynamicDeviceType:
 				migspec := adev.MigDynamic
@@ -765,9 +770,8 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 					return nil, fmt.Errorf("error creating MIG device: %w", err)
 				}
 				preparedDevice.Mig = &PreparedMigDevice{
-					RequestedCanonicalName: migspec.CanonicalName(),
-					Created:                migdev,
-					Device:                 device,
+					Created: migdev,
+					Device:  device,
 				}
 			case VfioDeviceType:
 				preparedDevice.Vfio = &PreparedVfioDevice{
@@ -824,7 +828,7 @@ func (s *DeviceState) unprepareDevices(ctx context.Context, claimUID string, dev
 						return fmt.Errorf("error deleting MIG device %s: %w", mig.CanonicalName(), err)
 					}
 				} else {
-					klog.V(4).Infof("Unprepare: static MIG: noop (MIG %s)", device.Gpu.Info.String())
+					klog.V(4).Infof("Unprepare: static MIG: noop (MIG %s)", device.Mig.Created.UUID)
 				}
 			}
 		}
@@ -1078,7 +1082,7 @@ func (s *DeviceState) UpdateDeviceHealthStatus(d *AllocatableDevice, hs HealthSt
 
 	switch d.Type() {
 	case GpuDeviceType:
-		d.Gpu.Health = hs
+		d.Gpu.health = hs
 	case MigDynamicDeviceType:
 		// Here we do not have access to a concrete MIG device. The
 		// 'allocatable' MIG device is an abstract representation to a specific
@@ -1088,7 +1092,7 @@ func (s *DeviceState) UpdateDeviceHealthStatus(d *AllocatableDevice, hs HealthSt
 		// Does it make sense to update the health for a MIG device? Do we
 		// receive health events that are specific to individual MIG devices? If
 		// yes: does this allow for making conclusions about the parent device?
-		d.MigStatic.Health = hs
+		d.MigStatic.health = hs
 	default:
 		klog.V(6).Infof("Cannot update health status for unknown device type: %s", d.Type())
 		return

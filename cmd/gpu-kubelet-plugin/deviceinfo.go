@@ -52,9 +52,8 @@ type GpuInfo struct {
 	pcieBusID             string
 	pcieRootAttr          *deviceattribute.DeviceAttribute
 	migProfiles           []*MigProfileInfo
-	MigCapable            bool
 	addressingMode        *string
-	Health                HealthStatus
+	health                HealthStatus
 
 	// The following properties that can only be known after inspecting MIG
 	// profiles.
@@ -90,7 +89,7 @@ type MigDeviceInfo struct {
 	ciProfileInfo *nvml.ComputeInstanceProfileInfo
 	pcieBusID     string
 	pcieRootAttr  *deviceattribute.DeviceAttribute
-	Health        HealthStatus
+	health        HealthStatus
 }
 
 type VfioDeviceInfo struct {

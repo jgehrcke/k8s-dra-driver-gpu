@@ -46,10 +46,6 @@ type PreparedGpu struct {
 }
 
 type PreparedMigDevice struct {
-	// Captures the canonical name used to request this device in the first
-	// place.
-	RequestedCanonicalName DeviceName `json:"requestedCanonicalName"`
-
 	// Specifc, created device. Detail needed for deletion and book-keeping.
 	// Note that this is either created via the 'static MIG' flow or the
 	// 'dynamic MIG' flow -- in any case, it represents a MIG device that
@@ -88,7 +84,7 @@ func (d *PreparedDevice) CanonicalName() string {
 	case GpuDeviceType:
 		return d.Gpu.Info.CanonicalName()
 	case PreparedMigDeviceType:
-		return d.Mig.RequestedCanonicalName
+		return d.Mig.Device.DeviceName
 	case VfioDeviceType:
 		return d.Vfio.Info.CanonicalName()
 	}
@@ -164,7 +160,7 @@ func (g *PreparedDeviceGroup) GetDeviceNames() []DeviceName {
 		case GpuDeviceType:
 			names = append(names, device.Gpu.Info.CanonicalName())
 		case PreparedMigDeviceType:
-			names = append(names, device.Mig.RequestedCanonicalName)
+			names = append(names, device.Mig.Device.DeviceName)
 		}
 	}
 	return names

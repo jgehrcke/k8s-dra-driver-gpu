@@ -23,7 +23,7 @@ type PreparedClaim = PreparedClaimV2
 
 type CheckpointV2 struct {
 	Checksum       checksum.Checksum     `json:"checksum"`
-	PreparedClaims PreparedClaimsByUIDV2 `json:"preparedClaims"`
+	PreparedClaims PreparedClaimsByUIDV2 `json:"preparedClaims,omitempty"`
 }
 
 type PreparedClaimsByUIDV2 map[string]PreparedClaimV2
@@ -31,7 +31,7 @@ type PreparedClaimsByUIDV2 map[string]PreparedClaimV2
 type PreparedClaimV2 struct {
 	CheckpointState ClaimCheckpointState            `json:"checkpointState"`
 	Status          resourceapi.ResourceClaimStatus `json:"status,omitempty"`
-	PreparedDevices PreparedDevices                 `json:"preparedDevices"`
+	PreparedDevices PreparedDevices                 `json:"preparedDevices,omitempty"`
 	Name            string                          `json:"name,omitempty"`
 	Namespace       string                          `json:"namespace,omitempty"`
 }
