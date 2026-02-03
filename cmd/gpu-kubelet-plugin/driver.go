@@ -234,8 +234,11 @@ func (d *driver) Shutdown() error {
 		d.healthcheck.Stop()
 	}
 
-	// TODO: only do this when Dynmig enabled!
-	d.state.nvdevlib.alwaysShutdown()
+	// Shut down long-lived NVML session.
+	if featuregates.Enabled(featuregates.DynamicMIG) {
+		d.state.nvdevlib.alwaysShutdown()
+	}
+
 	if d.deviceHealthMonitor != nil {
 		d.deviceHealthMonitor.Stop()
 	}
