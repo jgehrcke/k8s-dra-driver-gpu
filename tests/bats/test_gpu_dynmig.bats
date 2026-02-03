@@ -4,7 +4,7 @@
 setup_file () {
   load 'helpers.sh'
   _common_setup
-  local _iargs=("--set" "logVerbosity=6")
+  local _iargs=("--set" "logVerbosity=6" "--set" "featureGates.DynamicMIG=true")
   iupgrade_wait "${TEST_CHART_REPO}" "${TEST_CHART_VERSION}" _iargs
   run kubectl logs \
     -l nvidia-dra-driver-gpu-component=kubelet-plugin \
@@ -25,6 +25,7 @@ bats::on_failure() {
   echo -e "\n\nFAILURE HOOK START"
   log_objects
   show_kubelet_plugin_error_logs
+  show_kubelet_plugin_log_tails
   kubectl describe pods | grep -A20 "Events:"
   echo -e "FAILURE HOOK END\n\n"
 }
