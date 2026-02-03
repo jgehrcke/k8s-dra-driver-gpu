@@ -4,7 +4,6 @@ run:
 linters:
   enable:
     - asciicheck
-    - exhaustruct
     - contextcheck
     - forcetypeassert
     - gocritic

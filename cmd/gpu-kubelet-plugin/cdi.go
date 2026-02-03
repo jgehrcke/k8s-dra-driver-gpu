@@ -147,7 +147,10 @@ func (cdi *CDIHandler) writeSpec(spec spec.Interface, specName string) error {
 func (cdi *CDIHandler) GetCommonEditsCached() (*cdiapi.ContainerEdits, error) {
 	key := "commonEdits"
 	if v, ok := cdi.specCache.Get(key); ok {
-		edits := v.(*cdiapi.ContainerEdits)
+		edits, ok := v.(*cdiapi.ContainerEdits)
+		if !ok {
+			return nil, fmt.Errorf("expected *cdiapi.ContainerEdits, got %T", v)
+		}
 		// Return a shallow copy so that cache entry consumer is less likely to
 		// mutate the cache entry.
 		clone := *edits
@@ -179,7 +182,10 @@ func (cdi *CDIHandler) WarmupDevSpecCache(uuids []string) {
 func (cdi *CDIHandler) GetDeviceSpecsByUUIDCached(uuid string) ([]cdispec.Device, error) {
 	key := uuid
 	if v, ok := cdi.specCache.Get(key); ok {
-		devs := v.([]cdispec.Device)
+		devs, ok := v.([]cdispec.Device)
+		if !ok {
+			return nil, fmt.Errorf("expected []cdispec.Device, got %T", v)
+		}
 		clone := make([]cdispec.Device, len(devs))
 		copy(clone, devs)
 		return clone, nil
