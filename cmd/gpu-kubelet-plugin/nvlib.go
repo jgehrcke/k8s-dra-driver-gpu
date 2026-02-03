@@ -1236,12 +1236,12 @@ func (l deviceLib) FindMigDevBySpec(ms *MigSpecTuple) (*MigLiveTuple, error) {
 
 		klog.V(7).Infof("FindMigDevBySpec: saw MIG dev with profile id %d and placement start %d", giInfo.ProfileId, giInfo.Placement.Start)
 
-		if giInfo.ProfileId != uint32(ms.ProfileID) {
-			klog.V(7).Infof("profile ID mismatch: looking for %d", uint32(ms.ProfileID))
+		if int(giInfo.ProfileId) != ms.ProfileID {
+			klog.V(7).Infof("profile ID mismatch: looking for %d", ms.ProfileID)
 			continue
 		}
 
-		if giInfo.Placement.Start != uint32(ms.PlacementStart) {
+		if int(giInfo.Placement.Start) != ms.PlacementStart {
 			klog.V(7).Infof("placement start mismatch: looking for %d", ms.PlacementStart)
 			continue
 		}
