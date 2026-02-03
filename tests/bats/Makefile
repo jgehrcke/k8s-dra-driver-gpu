@@ -154,8 +154,8 @@ tests-gpu: runner-image
 		tests/bats/test_gpu_basic.bats \
 		tests/bats/test_gpu_dynmig.bats \
 		tests/bats/test_gpu_mig.bats \
-		tests/bats/test_gpu_stress.bats
-	)
+		tests/bats/test_gpu_updowngrade.bats \
+		tests/bats/test_gpu_stress.bats)
 
 # Run a subset covering mainly the CD plugin
 tests-cd: runner-image
@@ -166,8 +166,7 @@ tests-cd: runner-image
 		tests/bats/test_cd_misc.bats \
 		tests/bats/test_cd_logging.bats \
 		tests/bats/test_cd_failover.bats \
-		tests/bats/test_cd_updowngrade.bats
-	)
+		tests/bats/test_cd_updowngrade.bats)
 
 # Run the complete test suite (the reference!)
 tests: runner-image
@@ -182,5 +181,4 @@ tests: runner-image
 		tests/bats/test_cd_misc.bats \
 		tests/bats/test_cd_logging.bats \
 		tests/bats/test_cd_failover.bats \
-		tests/bats/test_cd_updowngrade.bats
-	)
+		tests/bats/test_cd_updowngrade.bats)

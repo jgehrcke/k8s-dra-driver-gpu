@@ -37,7 +37,7 @@ type PreparedDevice struct {
 	// Represents a prepared MIG device, regardless of whether this was created
 	// via the 'dynamic MIG' flow or if it is a pre-created (static) MIG device.
 	Mig  *PreparedMigDevice  `json:"mig"`
-	Vfio *PreparedVfioDevice `json:"vfio"`
+	Vfio *PreparedVfioDevice `json:"vfio,omitempty"`
 }
 
 type PreparedGpu struct {

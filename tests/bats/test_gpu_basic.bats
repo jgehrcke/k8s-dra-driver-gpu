@@ -24,6 +24,7 @@ bats::on_failure() {
   echo -e "\n\nFAILURE HOOK START"
   log_objects
   show_kubelet_plugin_error_logs
+  show_gpu_plugin_log_tails
   echo -e "FAILURE HOOK END\n\n"
 }
 
@@ -41,6 +42,7 @@ bats::on_failure() {
   run kubectl logs "${_podname}"
   assert_output --partial "UUID: GPU-"
   echo "${output}" | wc -l | grep 1
+
   kubectl delete -f  "${_specpath}"
   kubectl wait --for=delete pods "${_podname}" --timeout=10s
 }

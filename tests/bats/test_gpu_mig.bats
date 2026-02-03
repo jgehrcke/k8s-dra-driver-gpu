@@ -62,7 +62,7 @@ bats::on_failure() {
   assert_output --partial "UUID: MIG-"
   assert_output --partial "UUID: GPU-"
 
-  kubectl delete -f tests/bats/specs/gpu-anymig.yaml
+  timeout -v 10 kubectl delete -f tests/bats/specs/gpu-anymig.yaml
   kubectl wait --for=delete pods pod-anymig --timeout=10s
 }
 

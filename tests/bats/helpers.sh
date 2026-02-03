@@ -167,6 +167,19 @@ show_kubelet_plugin_log_tails() {
 }
 
 
+show_gpu_plugin_log_tails() {
+  echo -e "\nKUBELET GPU PLUGIN LOG TAILS(50) START"
+  (
+    kubectl logs \
+    -l nvidia-dra-driver-gpu-component=kubelet-plugin \
+    -n nvidia-dra-driver-gpu \
+    --container gpus \
+    --prefix --tail=50
+  ) || true
+  echo -e "KUBELET GPU PLUGIN LOG TAILS(50) END\n\n"
+}
+
+
 # Intended use case: one pod in Running or ContainerCreating state; then this
 # function returns the specific name of that pod. Specifically, ignore pods that
 # were just deleted or are terminating (this is important during the small time
