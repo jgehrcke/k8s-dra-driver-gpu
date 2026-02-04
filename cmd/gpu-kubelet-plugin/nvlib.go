@@ -386,7 +386,8 @@ func (l deviceLib) discoverVfioDevice(gpuInfo *GpuInfo) (*AllocatableDevice, err
 }
 
 // Tear down any MIG devices that are present and don't belong to completed
-// claims. Assume long-lived NVML session.
+// claims. This can be improved for tearing down partial state (GI without CI,
+// for example).
 func (l deviceLib) obliterateStaleMIGDevices(expectedDeviceNames []DeviceName) error {
 	err := l.VisitDevices(func(i int, d nvdev.Device) error {
 		ginfo, err := l.getGpuInfo(i, d)
@@ -844,7 +845,7 @@ func (l deviceLib) DeviceGetHandleByUUID(uuid string) (nvml.Device, nvml.Return)
 	// work.
 	t0 := time.Now()
 	dev, ret = l.nvmllib.DeviceGetHandleByUUID(uuid)
-	klog.V(6).Infof("t_device_get_handle_by_uuid %.3f s", time.Since(t0).Seconds())
+	klog.V(7).Infof("t_device_get_handle_by_uuid %.3f s", time.Since(t0).Seconds())
 
 	if ret != nvml.SUCCESS {
 		return nil, ret
@@ -1116,7 +1117,9 @@ func (l deviceLib) maybeDisableMigMode(uuid string, nvmldev nvml.Device) error {
 		// idea.
 		return fmt.Errorf("error disabling MIG mode for device %s: %v", gpu.String(), ret)
 	}
-	klog.V(1).Infof("MIG mode now disabled for device %s", gpu.String())
+	// Note: when we're here, disabling MIG mode might still have failed.
+	// `activationStatus` may reflect "in use by another client".
+	klog.V(1).Infof("Called nvml.SetMigMode(nvml.DEVICE_MIG_DISABLE) for device %s, got activationStatus: %s", gpu.String(), activationStatus)
 	return nil
 }
 

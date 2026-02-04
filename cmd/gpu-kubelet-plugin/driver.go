@@ -94,7 +94,6 @@ func NewDriver(ctx context.Context, config *Config) (*driver, error) {
 		// scheduler state is equivalent. TODO: review if this logic is correct;
 		// or if it potentially is too invasive for certain edge cases.
 		state.DestroyUnknownMIGDevices(ctx)
-		klog.Infof("skip DestroyUnknownMIGDevices(ctx) this time")
 	}
 
 	puLockPath := filepath.Join(config.DriverPluginPath(), DriverPrepUprepFlockFileName)
