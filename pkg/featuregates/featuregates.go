@@ -45,6 +45,9 @@ const (
 	// NVMLDeviceHealthCheck allows Device Health Checking using NVML.
 	NVMLDeviceHealthCheck featuregate.Feature = "NVMLDeviceHealthCheck"
 
+	// Enable dynamic MIG device management.
+	DynamicMIG featuregate.Feature = "DynamicMIG"
+
 	// ComputeDomainCliques enables using ComputeDomainClique CRD objects instead of
 	// storing daemon info directly in ComputeDomainStatus.Nodes.
 	ComputeDomainCliques featuregate.Feature = "ComputeDomainCliques"
@@ -85,7 +88,13 @@ var defaultFeatureGates = map[featuregate.Feature]featuregate.VersionedSpecs{
 			Version:    version.MajorMinor(25, 12),
 		},
 	},
-
+	DynamicMIG: {
+		{
+			Default:    false,
+			PreRelease: featuregate.Alpha,
+			Version:    version.MajorMinor(25, 12),
+		},
+	},
 	NVMLDeviceHealthCheck: {
 		{
 			Default:    false,
@@ -163,6 +172,19 @@ func ValidateFeatureGates() error {
 	if Enabled(ComputeDomainCliques) && !Enabled(IMEXDaemonsWithDNSNames) {
 		return fmt.Errorf("feature gate %s requires %s to also be enabled", ComputeDomainCliques, IMEXDaemonsWithDNSNames)
 	}
+
+	if Enabled(DynamicMIG) && Enabled(PassthroughSupport) {
+		return fmt.Errorf("feature gate %s is currently mutually exclusive with %s", DynamicMIG, PassthroughSupport)
+	}
+
+	if Enabled(DynamicMIG) && Enabled(NVMLDeviceHealthCheck) {
+		return fmt.Errorf("feature gate %s is currently mutually exclusive with %s", DynamicMIG, NVMLDeviceHealthCheck)
+	}
+
+	if Enabled(DynamicMIG) && Enabled(MPSSupport) {
+		return fmt.Errorf("feature gate %s is currently mutually exclusive with %s", DynamicMIG, MPSSupport)
+	}
+
 	return nil
 }
 

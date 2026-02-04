@@ -148,9 +148,35 @@ show_kubelet_plugin_error_logs() {
     -l nvidia-dra-driver-gpu-component=kubelet-plugin \
     -n nvidia-dra-driver-gpu \
     --all-containers \
-    --prefix --tail=-1 | grep -E "^(E|W)[0-9]{4}" -iE "error"
+    --prefix --tail=-1 | grep -E -e "^(E|W)[0-9]{4}" -e "error"
   ) || true
   echo -e "KUBELET PLUGIN ERROR LOGS END\n\n"
+}
+
+
+show_kubelet_plugin_log_tails() {
+  echo -e "\nKUBELET PLUGIN LOG TAILS START"
+  (
+    kubectl logs \
+    -l nvidia-dra-driver-gpu-component=kubelet-plugin \
+    -n nvidia-dra-driver-gpu \
+    --all-containers \
+    --prefix --tail=400
+  ) || true
+  echo -e "KUBELET PLUGIN LOG TAILS END\n\n"
+}
+
+
+show_gpu_plugin_log_tails() {
+  echo -e "\nKUBELET GPU PLUGIN LOGS TAILS(400) START"
+  (
+    kubectl logs \
+    -l nvidia-dra-driver-gpu-component=kubelet-plugin \
+    -n nvidia-dra-driver-gpu \
+    --container gpus \
+    --prefix --tail=400
+  ) || true
+  echo -e "KUBELET GPU PLUGIN LOG TAILS(400) END\n\n"
 }
 
 
@@ -219,15 +245,8 @@ mig_create_1g0_on_node() {
 # state when entering a test, and 2) a convenient cleanup routine during test
 # development, and 3) a regular cleanup when leaving a test.
 mig_ensure_teardown_on_all_nodes() {
-  nvmm all sh -c 'nvidia-smi mig -dci; nvidia-smi mig -dgi; nvidia-smi -i 0 -mig 0'
+  nvmm all sh -c 'nvidia-smi mig -dci; nvidia-smi mig -dgi; nvidia-smi -mig 0'
   mig_confirm_disabled_on_all_nodes
-}
-
-
-get_gpu_resource_slice_name_for_node() {
-  local NODE_NAME="$1"
-  local rsname=$(kubectl get resourceslices.resource.k8s.io | grep gb-nvl-027-compute08 | grep gpu | awk '{print $1}')
-  return "$rsname"
 }
 
 

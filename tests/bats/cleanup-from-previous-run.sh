@@ -53,24 +53,38 @@ iupgrade_wait "${TEST_CHART_REPO}" "${TEST_CHART_VERSION}" NOARGS
 # deliberately not set here.
 timeout -v 5 kubectl delete -f demo/specs/imex/channel-injection.yaml 2> /dev/null
 timeout -v 5 kubectl delete -f demo/specs/imex/channel-injection-all.yaml 2> /dev/null
+
 timeout -v 5 kubectl delete jobs nickelpie-test 2> /dev/null
 timeout -v 5 kubectl delete computedomain nickelpie-test-compute-domain 2> /dev/null
+
 timeout -v 5 kubectl delete -f demo/specs/imex/nvbandwidth-test-job-1.yaml 2> /dev/null
 timeout -v 5 kubectl delete -f demo/specs/imex/nvbandwidth-test-job-2.yaml 2> /dev/null
 timeout -v 5 kubectl delete -f tests/bats/specs/nvb2.yaml 2> /dev/null
+
 timeout -v 2 kubectl delete resourceclaim batssuite-rc-bad-opaque-config --force 2> /dev/null
-timeout -v 2 kubectl delete -f demo/specs/imex/simple-mig-test 2> /dev/null
+
+timeout -v 5 kubectl delete -f tests/bats/specs/rc-shared-gpu.yaml 2> /dev/null
+timeout -v 5 kubectl delete -f tests/bats/specs/gpu-simple-full.yaml 2> /dev/null
+timeout -v 5 kubectl delete -f tests/bats/specs/gpu-anymig.yaml 2> /dev/null
+timeout -v 5 kubectl delete -f tests/bats/specs/gpu-multiple-mig.yaml 2> /dev/null
+timeout -v 5 kubectl delete -f tests/bats/specs/gpu-simple-mig.yaml 2> /dev/null
+timeout -v 5 kubectl delete -f tests/bats/specs/gpu-simple-mig-ts.yaml 2> /dev/null
+
 timeout -v 10 kubectl delete pods -l 'env=batssuite' 2> /dev/null
 
-# Cleanup any GPU stress test pods left behind
-timeout -v 30 kubectl delete pods -l 'env=batssuite,test=stress-shared' 2> /dev/null
-timeout -v 5 kubectl delete -f tests/bats/specs/rc-shared-gpu.yaml 2> /dev/null
+# Try a little longer cleaning any GPU stress test pods left behind
+timeout -v 30 kubectl delete pods -l 'test=stress-shared' 2> /dev/null
+
 kubectl wait --for=delete pods -l 'env=batssuite,test=stress-shared' \
     --timeout=60s \
     || echo "wait-for-delete failed"
 
 # TODO: make more use of that (currently used for cleanup pods).
 timeout -v 5 kubectl delete --all pods --namespace=batssuite 2> /dev/null
+
+# Delete all RCs and RCTs with the testsuite label.
+kubectl delete resourceclaimtemplate -l env=batssuite
+kubectl delete resourceclaim -l env=batssuite
 
 # Delete any previous remainder of `clean-state-dirs-all-nodes.sh` invocation.
 kubectl delete pods privpod-rm-plugindirs 2> /dev/null

@@ -24,12 +24,13 @@ bats::on_failure() {
   echo -e "\n\nFAILURE HOOK START"
   log_objects
   show_kubelet_plugin_error_logs
+  show_gpu_plugin_log_tails
   echo -e "FAILURE HOOK END\n\n"
 }
 
 
 # bats test_tags=fastfeedback
-@test "1 pod(s), 1 full GPU" {
+@test "GPUs: 1 pod(s), 1 full GPU" {
   local _specpath="tests/bats/specs/gpu-simple-full.yaml"
   local _podname="pod-full-gpu"
 
@@ -41,13 +42,14 @@ bats::on_failure() {
   run kubectl logs "${_podname}"
   assert_output --partial "UUID: GPU-"
   echo "${output}" | wc -l | grep 1
+
   kubectl delete -f  "${_specpath}"
   kubectl wait --for=delete pods "${_podname}" --timeout=10s
 }
 
 
 # bats test_tags=fastfeedback
-@test "2 pod(s), 1 full GPU each" {
+@test "GPUs: 2 pod(s), 1 full GPU each" {
   local _specpath="tests/bats/specs/gpu-2pods-2gpus.yaml"
 
   kubectl apply -f "${_specpath}"
@@ -73,7 +75,7 @@ bats::on_failure() {
 
 
 # bats test_tags=fastfeedback
-@test "2 pod(s), 1 full GPU (shared, 1 RC)" {
+@test "GPUs: 2 pod(s), 1 full GPU (shared, 1 RC)" {
   local _specpath="tests/bats/specs/gpu-2pods-1gpu.yaml"
 
   kubectl apply -f "${_specpath}"
@@ -99,7 +101,7 @@ bats::on_failure() {
 
 
 # bats test_tags=fastfeedback
-@test "1 pod(s), 2 cntrs, 1 full GPU (shared, 1 RCT)" {
+@test "GPUs: 1 pod(s), 2 cntrs, 1 full GPU (shared, 1 RCT)" {
   local _specpath="tests/bats/specs/gpu-1pod-2cnt-1gpu.yaml"
 
   kubectl apply -f "${_specpath}"

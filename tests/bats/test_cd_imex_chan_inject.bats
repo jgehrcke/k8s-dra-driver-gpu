@@ -14,14 +14,14 @@ setup () {
   log_objects
 }
 
-@test "IMEX channel injection (single)" {
+@test "CDs: IMEX channel injection (single)" {
   log_objects
   apply_check_delete_workload_imex_chan_inject
 }
 
 
 # bats test_tags=fastfeedback
-@test "IMEX channel injection (all)" {
+@test "CDs: IMEX channel injection (all)" {
   log_objects
   # Example: with TEST_CHART_VERSION="v25.3.2-12390-chart"
   # the command below returns 0 (true: the tested version is smaller)

@@ -19,7 +19,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"maps"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -62,6 +64,38 @@ func NewDriver(ctx context.Context, config *Config) (*driver, error) {
 		return nil, err
 	}
 
+	if featuregates.Enabled(featuregates.DynamicMIG) {
+		// Could be done in NewDeviceState, but I want to make sure that the
+		// checkpoint machinery is ready to use -- that's more obvious here.
+		//
+		// Generally, when `featuregates.DynamicMIG` is enabled, we have to make
+		// difficult but good decisions about incarnated MIG devices found
+		// during program startup. We could
+		//
+		// 1) assume they are under control of an external entity, and not
+		// announce them. That's likely not true. As hard as we try, as part of
+		// dynamic MIG device management, given enough time and circumstances,
+		// we might actually leave a MIG device behind where we shouldn't (as of
+		// bugs, as of aggressive operations / admin intervention, ...).
+		//
+		// 2) not do anythin special: not good; we would still announce the
+		// corresponding abstract MIG device and once the scheduler assigns a
+		// job, a relevant NodePrepareResources() call will try to create that
+		// specific MIG device. And that will fail, because that MIG device
+		// already exists -- users see something like "prepare devices failed:
+		// error creating MIG device: error creating GPU instance for
+		// 'gpu-0-mig-1g24gb-0': Insufficient Resources.
+		//
+		// 3) Use the node-local checkpoint as the source of truth. Any MIG
+		// device that corresponds to "partially prepared" claims should be
+		// destroyed, and any MIG device that is not mentioned in the checkpoint
+		// at all must be destroyed). Both is done below. Only those of
+		// completely prepared claims can stay; assuming that the central
+		// scheduler state is equivalent. TODO: review if this logic is correct;
+		// or if it potentially is too invasive for certain edge cases.
+		state.DestroyUnknownMIGDevices(ctx)
+	}
+
 	puLockPath := filepath.Join(config.DriverPluginPath(), DriverPrepUprepFlockFileName)
 
 	driver := &driver{
@@ -85,7 +119,7 @@ func NewDriver(ctx context.Context, config *Config) (*driver, error) {
 	}
 	driver.pluginhelper = helper
 
-	healthcheck, err := startHealthcheck(ctx, config)
+	healthcheck, err := startHealthcheck(ctx, config, helper)
 	if err != nil {
 		return nil, fmt.Errorf("start healthcheck: %w", err)
 	}
@@ -117,7 +151,77 @@ func NewDriver(ctx context.Context, config *Config) (*driver, error) {
 		return nil, err
 	}
 
+	klog.V(4).Infof("Current kubelet plugin registration status: %s", helper.RegistrationStatus())
+
 	return driver, nil
+}
+
+// GenerateDriverResources() returns the set of DRA ResourceSlices announced by
+// this DRA driver to the system, using the Partitionable Devices paradigm.
+func (d *driver) GenerateDriverResources(nodeName string) resourceslice.DriverResources {
+	// Note(JP): I first considered model 1, and then implemented model model 2.
+	//
+	// Model 1) Create G+1 resource slices, given G physical GPUs. 1) one slice
+	// with shared counters, for each full GPU 2) for each full GPU, a slice
+	// with the full-GPU-device and all potential MIG profile/placement devices.
+	// That model is inspired by KEP 4815 which talks about "require that
+	// ResourceSlice objects can only contain either SharedCounters or Devices".
+	// In practice, that does not work against k8s 1.34. Which brings us to
+	// model 2, for now.
+	//
+	// Model 2) Create G resource slices, given G physical GPUs. Each slice
+	// describes the physical full device capacity by defining _one_ counter
+	// set as part of `SharedCounters`. Then, in the same resource slice define
+	// all devices allocatable for that physical GPU. That is, M possible MIG
+	// devices, and 1 device representing the full GPU. Hence:
+	//
+	// - G resource slices
+	// - Each resource slice:
+	//   - Defines `SharedCounters` with 1 counter set
+	//   - Defines M+1 devices
+	//
+	// A relevant quote from KEP 4815 does not apply to k8s 1.34: "The decision
+	// to require that ResourceSlice objects can only contain either
+	// SharedCounters or Devices was made to prevent having to enforce overly
+	// strict validation to make sure that ResourceSlice objects can't exceed
+	// the etcd limit."
+	var gpuslices []resourceslice.Slice
+
+	// Iterate through `perGPUAllocatable` map in predictable order so that the
+	// slices get published in predictable order.
+	for _, minor := range slices.Sorted(maps.Keys(d.state.perGPUAllocatable)) {
+		allocatable := d.state.perGPUAllocatable[minor]
+		var slice resourceslice.Slice
+		countersets := []resourceapi.CounterSet{}
+
+		// Stable sort order by devicename -- makes the order of devices
+		// presented in a resource slice reproducible. Good for debuggability /
+		// readability, and leads to a minimal slice diff during kubelet plugin
+		// restart (the slice diff is logged).
+		for _, devname := range slices.Sorted(maps.Keys(allocatable)) {
+			device := allocatable[devname]
+			klog.V(4).Infof("About to announce device %s", devname)
+
+			// Full GPU: take note of countersets, indicating absolute capacity.
+			// For now this is expected to be one counter set.
+			if device.Gpu != nil {
+				countersets = append(countersets, device.Gpu.PartSharedCounterSets()...)
+			}
+
+			// Add all allocatable devices for this physical GPU to this slice.
+			// This includes not-yet-manifested MIG devices, and the physical
+			// GPU itself.
+			slice.Devices = append(slice.Devices, device.PartGetDevice())
+		}
+		slice.SharedCounters = countersets
+		gpuslices = append(gpuslices, slice)
+	}
+
+	return resourceslice.DriverResources{
+		Pools: map[string]resourceslice.Pool{
+			nodeName: {Slices: gpuslices},
+		},
+	}
 }
 
 func (d *driver) Shutdown() error {
@@ -127,6 +231,11 @@ func (d *driver) Shutdown() error {
 
 	if d.healthcheck != nil {
 		d.healthcheck.Stop()
+	}
+
+	// Shut down long-lived NVML session.
+	if featuregates.Enabled(featuregates.DynamicMIG) {
+		d.state.nvdevlib.alwaysShutdown()
 	}
 
 	if d.deviceHealthMonitor != nil {
@@ -144,7 +253,16 @@ func (d *driver) Shutdown() error {
 }
 
 func (d *driver) PrepareResourceClaims(ctx context.Context, claims []*resourceapi.ResourceClaim) (map[types.UID]kubeletplugin.PrepareResult, error) {
-	klog.V(6).Infof("PrepareResourceClaims called with %d claim(s)", len(claims))
+
+	if len(claims) == 0 {
+		// That's probably the health check, log that on higher verbosity level
+		klog.V(7).Infof("PrepareResourceClaims called with %d claim(s)", len(claims))
+	} else {
+		// Log canonical string representation for each claim injected here --
+		// we've noticed that this can greatly facilitate debugging.
+		klog.V(6).Infof("Prepare called for: %v", ClaimsToStrings(claims))
+	}
+
 	results := make(map[types.UID]kubeletplugin.PrepareResult)
 
 	for _, claim := range claims {
@@ -155,10 +273,8 @@ func (d *driver) PrepareResourceClaims(ctx context.Context, claims []*resourceap
 }
 
 func (d *driver) UnprepareResourceClaims(ctx context.Context, claimRefs []kubeletplugin.NamespacedObject) (map[types.UID]error, error) {
-	klog.V(6).Infof("UnprepareResourceClaims called with %d claim(s)", len(claimRefs))
-
+	klog.V(6).Infof("Unprepare called for: %v", ClaimRefsToStrings(claimRefs))
 	results := make(map[types.UID]error)
-
 	for _, claimRef := range claimRefs {
 		results[claimRef.UID] = d.nodeUnprepareResource(ctx, claimRef)
 	}
@@ -173,6 +289,12 @@ func (d *driver) HandleError(ctx context.Context, err error, msg string) {
 }
 
 func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
+	// Instead of a global prepare/unprepare (PU) lock, we could rely on
+	// fine-grained checkpoint locking, which was proven to work correctly in
+	// case of DynamicMIG mode. However, out of caution, retain this global PU
+	// lock for now in all modes (re-evaluate the performance impact at a later
+	// time).
+	t0 := time.Now()
 	release, err := d.pulock.Acquire(ctx, flock.WithTimeout(10*time.Second))
 	if err != nil {
 		return kubeletplugin.PrepareResult{
@@ -180,12 +302,16 @@ func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.Res
 		}
 	}
 	defer release()
+	klog.V(6).Infof("t_prep_lock_acq %.3f s", time.Since(t0).Seconds())
 
+	cs := ResourceClaimToString(claim)
+	tprep0 := time.Now()
 	devs, err := d.state.Prepare(ctx, claim)
+	klog.V(6).Infof("t_prep %.3f s (claim %s)", time.Since(tprep0).Seconds(), cs)
 
 	if err != nil {
 		return kubeletplugin.PrepareResult{
-			Err: fmt.Errorf("error preparing devices for claim %v: %w", claim.UID, err),
+			Err: fmt.Errorf("error preparing devices for claim %s: %w", cs, err),
 		}
 	}
 
@@ -198,19 +324,26 @@ func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.Res
 		}
 	}
 
-	klog.Infof("Returning newly prepared devices for claim '%v': %v", claim.UID, devs)
+	klog.Infof("Returning newly prepared devices for claim '%s': %v", cs, devs)
 	return kubeletplugin.PrepareResult{Devices: devs}
 }
 
-func (d *driver) nodeUnprepareResource(ctx context.Context, claimNs kubeletplugin.NamespacedObject) error {
+func (d *driver) nodeUnprepareResource(ctx context.Context, claimRef kubeletplugin.NamespacedObject) error {
+	t0 := time.Now()
 	release, err := d.pulock.Acquire(ctx, flock.WithTimeout(10*time.Second))
 	if err != nil {
 		return fmt.Errorf("error acquiring prep/unprep lock: %w", err)
 	}
 	defer release()
+	klog.V(6).Infof("t_unprep_lock_acq %.3f s", time.Since(t0).Seconds())
 
-	if err := d.state.Unprepare(ctx, string(claimNs.UID)); err != nil {
-		return fmt.Errorf("error unpreparing devices for claim %v: %w", claimNs.UID, err)
+	cs := claimRef.String()
+	tunprep0 := time.Now()
+	err = d.state.Unprepare(ctx, claimRef)
+	klog.V(6).Infof("t_unprep %.3f s (claim %s)", time.Since(tunprep0).Seconds(), cs)
+
+	if err != nil {
+		return fmt.Errorf("error unpreparing devices for claim %v: %w", claimRef.String(), err)
 	}
 
 	if featuregates.Enabled(featuregates.PassthroughSupport) {
@@ -224,9 +357,27 @@ func (d *driver) nodeUnprepareResource(ctx context.Context, claimNs kubeletplugi
 }
 
 func (d *driver) publishResources(ctx context.Context, config *Config) error {
+
+	if featuregates.Enabled(featuregates.DynamicMIG) {
+		// From KEP 4815: "we will add client-side validation in the
+		// ResourceSlice controller helper, so that any errors in the
+		// ResourceSlices will be caught before they even are applied to the
+		// APIServer" -- the helper below is being referred to.
+		//
+		// TODO: implement error handler for bad slices:
+		// https://github.com/kubernetes/kubernetes/commit/a171795e313ee9f407fef4897c1a1e2052120991
+		klog.V(1).Infof("featuregates.DynamicMIG enabled: construct ResourceSlice objects according to KEP 4815 (partitionable devices)")
+		resources := d.GenerateDriverResources(config.flags.nodeName)
+		if err := d.pluginhelper.PublishResources(ctx, resources); err != nil {
+			return err
+		}
+		return nil
+	}
+
 	// Enumerate the set of GPU, MIG and VFIO devices and publish them
 	var resourceSlice resourceslice.Slice
 	for _, device := range d.state.allocatable {
+		klog.V(4).Infof("About to announce device %s", device.GetDevice().Name)
 		resourceSlice.Devices = append(resourceSlice.Devices, device.GetDevice())
 	}
 
@@ -241,6 +392,7 @@ func (d *driver) publishResources(ctx context.Context, config *Config) error {
 	}
 
 	return nil
+
 }
 
 func (d *driver) deviceHealthEvents(ctx context.Context, nodeName string) {

@@ -7,6 +7,7 @@ setup_file() {
   iupgrade_wait "${TEST_CHART_REPO}" "${TEST_CHART_VERSION}" _iargs
 }
 
+
 # Executed before entering each test in this file.
 setup() {
    load 'helpers.sh'
@@ -15,27 +16,17 @@ setup() {
 }
 
 
-@test "CDs: downgrade: current-dev -> last-stable" {
-  # Stage 1: apply workload, but do not delete.
-  kubectl apply -f demo/specs/imex/channel-injection.yaml
-  kubectl wait --for=condition=READY pods imex-channel-injection --timeout=60s
-  run kubectl logs imex-channel-injection
-  assert_output --partial "channel0"
-
-  # Stage 2: upgrade as users would do (explicitly not downgrade the CRD).
-  iupgrade_wait "$TEST_CHART_LASTSTABLE_REPO" "$TEST_CHART_LASTSTABLE_VERSION" NOARGS
-
-  # Stage 3: confirm workload deletion works post-upgrade.
-  timeout -v 80 kubectl delete -f demo/specs/imex/channel-injection.yaml
-  kubectl wait --for=delete pods imex-channel-injection --timeout=10s
-
-  # Stage 4: fresh create-confirm-delete workload cycle.
-  apply_check_delete_workload_imex_chan_inject
+bats::on_failure() {
+  echo -e "\n\nFAILURE HOOK START"
+  log_objects
+  show_kubelet_plugin_error_logs
+  show_gpu_plugin_log_tails
+  echo -e "FAILURE HOOK END\n\n"
 }
 
 
 # bats test_tags=fastfeedback
-@test "CDs: upgrade: wipe-state, install-last-stable, upgrade-to-current-dev" {
+@test "GPUs: upgrade: wipe-state, install-last-stable, upgrade-to-current-dev" {
   # Stage 1: clean slate
   helm uninstall "${TEST_HELM_RELEASE_NAME}" -n nvidia-dra-driver-gpu --wait --timeout=30s
   kubectl wait --for=delete pods -A -l app.kubernetes.io/name=nvidia-dra-driver-gpu --timeout=10s
@@ -48,10 +39,13 @@ setup() {
 
   # Stage 3: apply workload, do not delete (users care about old workloads to
   # ideally still run, but at the very least be deletable after upgrade).
-  kubectl apply -f demo/specs/imex/channel-injection.yaml
-  kubectl wait --for=condition=READY pods imex-channel-injection --timeout=60s
-  run kubectl logs imex-channel-injection
-  assert_output --partial "channel0"
+  local _specpath="tests/bats/specs/gpu-simple-full.yaml"
+  local _podname="pod-full-gpu"
+  kubectl apply -f "${_specpath}"
+  kubectl wait --for=condition=READY pods "${_podname}" --timeout=8s
+  run kubectl logs "${_podname}"
+  assert_output --partial "UUID: GPU-"
+  echo "${output}" | wc -l | grep 1
 
   # Stage 4: update CRD, as a user would do.
   kubectl apply -f "${CRD_UPGRADE_URL}"
@@ -60,9 +54,14 @@ setup() {
   iupgrade_wait "${TEST_CHART_REPO}" "${TEST_CHART_VERSION}" NOARGS
 
   # Stage 6: confirm deleting old workload works (critical, see above).
-  timeout -v 60 kubectl delete -f demo/specs/imex/channel-injection.yaml
-  kubectl wait --for=delete pods imex-channel-injection --timeout=60s
+  kubectl delete -f  "${_specpath}"
+  kubectl wait --for=delete pods "${_podname}" --timeout=15s
 
   # Stage 7: fresh create-confirm-delete workload cycle.
-  apply_check_delete_workload_imex_chan_inject
+  kubectl apply -f "${_specpath}"
+  kubectl wait --for=condition=READY pods "${_podname}" --timeout=8s
+  run kubectl logs "${_podname}"
+  assert_output --partial "UUID: GPU-"
+  kubectl delete -f  "${_specpath}"
+  kubectl wait --for=delete pods "${_podname}" --timeout=15s
 }

@@ -157,10 +157,10 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 
 	preparedClaim, exists := checkpoint.V2.PreparedClaims[claimUID]
 	if exists && preparedClaim.CheckpointState == ClaimCheckpointStatePrepareCompleted {
-		// Make this a noop. Associated device(s) has/ave been prepared by us.
-		// Prepare() must be idempotent, as it may be invoked more than once per
-		// claim (and actual device preparation must happen at most once).
-		klog.V(4).Infof("Skip prepare: claim %v found in checkpoint", claimUID)
+		// Associated device(s) has/ave been prepared by us. Prepare() must be
+		// idempotent, as it may be invoked more than once per claim (and actual
+		// device preparation must happen at most once).
+		klog.V(4).Infof("Skip prepare: claim already in PrepareCompleted state: %s", ResourceClaimToString(claim))
 		return preparedClaim.PreparedDevices.GetDevices(), nil
 	}
 
@@ -238,9 +238,9 @@ func (s *DeviceState) Unprepare(ctx context.Context, claimRef kubeletplugin.Name
 		return nil
 	}
 
-	// If pc.Status.Allocation is 'nil', attempt to pull the status from the
-	// API server. This should only ever happen if we have unmarshaled from a
-	// legacy checkpoint format that did not include the Status field.
+	// If pc.Status.Allocation is 'nil', attempt to pull the status from the API
+	// server. This should only ever happen if we have unmarshaled from a legacy
+	// checkpoint format that did not include the Status field.
 	//
 	// TODO: Remove this one release cycle following the v25.3.0 release
 	if pc.Status.Allocation == nil {

@@ -33,6 +33,7 @@ import (
 
 	"github.com/NVIDIA/k8s-dra-driver-gpu/internal/common"
 	"github.com/NVIDIA/k8s-dra-driver-gpu/internal/info"
+	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
 	pkgflags "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/flags"
 )
 
@@ -54,6 +55,7 @@ type Flags struct {
 	kubeletRegistrarDirectoryPath string
 	kubeletPluginsDirectoryPath   string
 	healthcheckPort               int
+	klogVerbosity                 int
 	additionalXidsToIgnore        string
 }
 
@@ -174,10 +176,19 @@ func newApp() *cli.App {
 			}
 			// `loggingConfig` must be applied before doing any logging
 			err := loggingConfig.Apply()
+
+			// Store klog's log verbosity setting in this program's config for
+			// later runtime inspection (it's otherwise not accessible anymore
+			// because we do not expose the raw `cliFlags`.
+			flags.klogVerbosity = int(loggingConfig.Config.Verbosity)
 			pkgflags.LogStartupConfig(flags, loggingConfig)
 			return err
 		},
 		Action: func(c *cli.Context) error {
+			if err := featuregates.ValidateFeatureGates(); err != nil {
+				return fmt.Errorf("feature gate validation failed: %w", err)
+			}
+
 			clientSets, err := flags.kubeClientConfig.NewClientSets()
 			if err != nil {
 				return fmt.Errorf("create client: %w", err)

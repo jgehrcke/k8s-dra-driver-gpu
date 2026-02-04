@@ -1,9 +1,9 @@
 # shellcheck disable=SC2148
 # shellcheck disable=SC2329
 
-: "${STRESS_PODS_N:=15}"
-: "${STRESS_LOOPS:=5}"
-: "${STRESS_DELAY:=30}"
+: "${TEST_GPU_STRESS_PODS_N:=15}"
+: "${TEST_GPU_STRESS_ITERATIONS:=5}"
+: "${TEST_GPU_STRESS_DELAY:=2}"
 
 setup_file () {
   load 'helpers.sh'
@@ -30,15 +30,18 @@ _generate_pods_manifest() {
   local out="$1"
   local template="tests/bats/specs/pods-shared-gpu.yaml"
   : > "$out"
-  for i in $(seq 1 "${STRESS_PODS_N}"); do
+  for i in $(seq 1 "${TEST_GPU_STRESS_PODS_N}"); do
     sed "s/__INDEX__/${i}/g" "${template}" >> "$out"
     echo "---" >> "$out"
   done
 }
 
-@test "Stress: shared ResourceClaim across ${STRESS_PODS_N} pods x ${STRESS_LOOPS} loops" {
-  for loop in $(seq 1 "${STRESS_LOOPS}"); do
-    echo "=== Loop $loop/${STRESS_LOOPS} ==="
+
+
+# bats test_tags=fastfeedback
+@test "GPUs: shared RC across ${TEST_GPU_STRESS_PODS_N} pods, ${TEST_GPU_STRESS_ITERATIONS} repetitions" {
+  for loop in $(seq 1 "${TEST_GPU_STRESS_ITERATIONS}"); do
+    echo "=== Loop $loop/${TEST_GPU_STRESS_ITERATIONS} ==="
 
     # Apply ResourceClaim
     kubectl apply -f tests/bats/specs/rc-shared-gpu.yaml
@@ -68,9 +71,10 @@ _generate_pods_manifest() {
     kubectl delete -f tests/bats/specs/rc-shared-gpu.yaml --timeout=90s
     kubectl wait  --for=delete pods -l 'env=batssuite,test=stress-shared' --timeout=60s
 
-    if [[ "$loop" -lt "$STRESS_LOOPS" ]]; then
-      echo "Sleeping ${STRESS_DELAY}s before next loop..."
-      sleep "${STRESS_DELAY}"
+    # Why do we wait before entering the next iteration?
+    if [[ "$loop" -lt "$TEST_GPU_STRESS_ITERATIONS" ]]; then
+      echo "Sleeping ${TEST_GPU_STRESS_DELAY}s before next iteration..."
+      sleep "${TEST_GPU_STRESS_DELAY}"
     fi
   done
 }

@@ -33,13 +33,14 @@ bats::on_failure() {
   echo -e "\n\nFAILURE HOOK START"
   log_objects
   show_kubelet_plugin_error_logs
+  show_kubelet_plugin_log_tails
   kubectl describe pods | grep -A20 "Events:"
   echo -e "FAILURE HOOK END\n\n"
 }
 
-
+# bats test_tags=XXbats:focus
 # bats test_tags=fastfeedback
-@test "static MIG: allocate (1 cnt)" {
+@test "StaticMIG: allocate (1 cnt)" {
   # Pick a node to work on for the remainder of the test.
   local node=$(kubectl get nodes | grep worker | head -n1 | awk '{print $1}')
   log "selected node: $node"
@@ -60,11 +61,14 @@ bats::on_failure() {
   run kubectl logs pod-anymig
   assert_output --partial "UUID: MIG-"
   assert_output --partial "UUID: GPU-"
+
+  timeout -v 10 kubectl delete -f tests/bats/specs/gpu-anymig.yaml
+  kubectl wait --for=delete pods pod-anymig --timeout=10s
 }
 
 
 # bats test_tags=fastfeedback
-@test "static MIG: mutual exclusivity with physical GPU" {
+@test "StaticMIG: mutual exclusivity with physical GPU" {
   # Pick a node to work on for the remainder of the test.
   local node=$(kubectl get nodes | grep worker | head -n1 | awk '{print $1}')
   echo "selected node: $node"

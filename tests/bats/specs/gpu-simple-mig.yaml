@@ -1,27 +1,31 @@
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaimTemplate
 metadata:
-  name: rct-anymig
+  name: rct-mig1g
   labels:
     env: batssuite
 spec:
   spec:
     devices:
       requests:
-      - name: anymig
+      - name: mig1g
         exactly:
           deviceClassName: mig.nvidia.com
+          selectors:
+          - cel:
+              # For now, rely on (G)B200
+              expression: "device.attributes['gpu.nvidia.com'].profile == '1g.24gb'"
 ---
 apiVersion: v1
 kind: Pod
 metadata:
-  name: pod-anymig
+  name: pod-mig1g
   labels:
     env: batssuite
 spec:
   containers:
   - name: ctr
-    image: ubuntu:24.04
+    image: ubuntu:22.04
     command: ["bash", "-c"]
     args: ["nvidia-smi -L; trap 'exit 0' TERM; sleep 9999 & wait"]
     resources:
@@ -29,4 +33,4 @@ spec:
       - name: migdev
   resourceClaims:
   - name: migdev
-    resourceClaimTemplateName: rct-anymig
+    resourceClaimTemplateName: rct-mig1g

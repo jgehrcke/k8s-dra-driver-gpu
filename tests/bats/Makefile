@@ -80,8 +80,14 @@ TMPDIR ?= "/tmp"
 DOCKER_RUN_FLAGS :=
 ifeq ($(CI),)
   DOCKER_RUN_FLAGS += -it
+  TEST_GPU_STRESS_PODS_N = 12
+  TEST_GPU_STRESS_ITERATIONS = 2
+  TEST_GPU_STRESS_DELAY = 1
 else
   TMPDIR=$(CURDIR)
+  TEST_GPU_STRESS_PODS_N = 20
+  TEST_GPU_STRESS_ITERATIONS = 1
+  TEST_GPU_STRESS_DELAY = 1
 endif
 
 RUNDIR_PARENT ?= $(TMPDIR)/k8s-dra-driver-gpu-tests-out-$(USER)
@@ -92,6 +98,9 @@ DOCKER_ENVS = \
 	--env TEST_CHART_VERSION=$(TEST_CHART_VERSION) \
 	--env TEST_CHART_LASTSTABLE_REPO=$(TEST_CHART_LASTSTABLE_REPO) \
 	--env TEST_CHART_LASTSTABLE_VERSION=$(TEST_CHART_LASTSTABLE_VERSION) \
+	--env TEST_GPU_STRESS_PODS_N=$(TEST_GPU_STRESS_PODS_N) \
+	--env TEST_GPU_STRESS_ITERATIONS=$(TEST_GPU_STRESS_ITERATIONS) \
+	--env TEST_GPU_STRESS_DELAY=$(TEST_GPU_STRESS_DELAY) \
 	--env TEST_CRD_UPGRADE_TARGET_GIT_REF=$(TEST_CRD_UPGRADE_TARGET_GIT_REF) \
 	--env TEST_NVIDIA_DRIVER_ROOT=$(TEST_NVIDIA_DRIVER_ROOT) \
 	--env TEST_EXPECTED_IMAGE_SPEC_SUBSTRING=$(TEST_EXPECTED_IMAGE_SPEC_SUBSTRING)
@@ -138,15 +147,17 @@ runner-image:
 # cmdline args).
 .PHONY: tests-gpu tests-cd
 
-# Run GPU plugin specific tests
+# Run a subset covering mainly the GPU plugin
 tests-gpu: runner-image
 	$(call RUN_BATS, \
 		tests/bats/test_basics.bats \
 		tests/bats/test_gpu_basic.bats \
+		tests/bats/test_gpu_dynmig.bats \
 		tests/bats/test_gpu_mig.bats \
+		tests/bats/test_gpu_updowngrade.bats \
 		tests/bats/test_gpu_stress.bats)
 
-# Run Compute Domain specific tests
+# Run a subset covering mainly the CD plugin
 tests-cd: runner-image
 	$(call RUN_BATS, \
 		tests/bats/test_basics.bats \
@@ -157,16 +168,18 @@ tests-cd: runner-image
 		tests/bats/test_cd_failover.bats \
 		tests/bats/test_cd_updowngrade.bats)
 
-# Run complete tests
+# Run the complete test suite (the reference!)
 tests: runner-image
 	$(call RUN_BATS, \
 		tests/bats/test_basics.bats \
 		tests/bats/test_gpu_basic.bats \
+		tests/bats/test_gpu_stress.bats \
+		tests/bats/test_gpu_dynmig.bats \
 		tests/bats/test_gpu_mig.bats \
+		tests/bats/test_gpu_updowngrade.bats \
 		tests/bats/test_cd_imex_chan_inject.bats \
 		tests/bats/test_cd_mnnvl_workload.bats \
 		tests/bats/test_cd_misc.bats \
 		tests/bats/test_cd_logging.bats \
 		tests/bats/test_cd_failover.bats \
-		tests/bats/test_cd_updowngrade.bats \
-		tests/bats/test_gpu_stress.bats)
+		tests/bats/test_cd_updowngrade.bats)

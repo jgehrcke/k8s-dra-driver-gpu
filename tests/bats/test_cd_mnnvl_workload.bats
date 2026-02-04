@@ -15,7 +15,7 @@ setup () {
 }
 
 # bats test_tags=fastfeedback
-@test "nickelpie (NCCL send/recv/broadcast, 2 pods, 2 nodes, small payload)" {
+@test "CDs: nickelpie (NCCL send/recv/broadcast, 2 pods, 2 nodes, small payload)" {
   # Do not run in checkout dir (to not pollute that).
   cd "${BATS_TEST_TMPDIR}"
   git clone https://github.com/jgehrcke/jpsnips-nv
@@ -27,12 +27,17 @@ setup () {
   kubectl delete -f npie-job.yaml.rendered
   kubectl wait --for=delete  --timeout=60s job/nickelpie-test
   echo "${output}" | grep -E '^.*broadcast-.*RESULT bandwidth: [0-9]+\.[0-9]+ GB/s.*$'
+
+  # TODO: here, it might be good to wait for CD daemon pod deletion: I have seen
+  # that sometimes they might spend significant time in `Terminating`, I didn't
+  # get logs so far, though. Test for that here, and capture logs upon timeout
+  # condition.
 }
 
 # The MPI operator dependency is slightly heavy for CI, pulling the image was
 # seen to take long. Maybe make this a prerequisite (to be pre-installed).
 # bats test_tags=fastfeedback
-@test "nvbandwidth (2 nodes, 2 GPUs each)" {
+@test "CDs: nvbandwidth (2 nodes, 2 GPUs each)" {
   kubectl create -f https://github.com/kubeflow/mpi-operator/releases/download/v0.6.0/mpi-operator.yaml || echo "ignore"
   kubectl apply -f demo/specs/imex/nvbandwidth-test-job-1.yaml
   # The canonical k8s job interface works even for MPIJob (the MPIJob has an

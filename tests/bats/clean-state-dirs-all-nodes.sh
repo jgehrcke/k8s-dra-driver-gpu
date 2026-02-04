@@ -20,6 +20,7 @@ set -o nounset
 set -o pipefail
 
 # TODO: clean up /run/cdi/* (not everything in there, more selectively).
+
 rm_kubelet_plugin_dirs_from_node () {
     local NODE_NAME="$1"
     echo "Run privileged pod to remove kubelet plugin directories on node ${NODE_NAME}"
