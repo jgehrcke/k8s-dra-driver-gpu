@@ -289,18 +289,17 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 			// device name.
 			dspec.Name = dname
 
+			// If there are edits passed as part of the device config state (set
+			// on the group), add them to the spec for this device.
+			if group.ConfigState.containerEdits != nil {
+				deviceEdits := &cdiapi.ContainerEdits{
+					ContainerEdits: &dspec.ContainerEdits,
+				}
+				deviceEdits = deviceEdits.Append(group.ConfigState.containerEdits)
+				dspec.ContainerEdits = *deviceEdits.ContainerEdits
+			}
 			klog.V(7).Infof("Number of device nodes about to inject for device %s: %d", dname, len(dspec.ContainerEdits.DeviceNodes))
 			deviceSpecs = append(deviceSpecs, dspec)
-
-			// If there are edits passed as part of the device config state (set
-			// on the group), add them to the spec of each device in that group.
-			if group.ConfigState.containerEdits != nil {
-				deviceSpec := cdispec.Device{
-					Name:           fmt.Sprintf("%s-%s", claimUID, dname),
-					ContainerEdits: *group.ConfigState.containerEdits.ContainerEdits,
-				}
-				deviceSpecs = append(deviceSpecs, deviceSpec)
-			}
 		}
 	}
 
