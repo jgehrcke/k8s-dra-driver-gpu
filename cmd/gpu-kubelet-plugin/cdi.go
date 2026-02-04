@@ -224,13 +224,6 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 		return fmt.Errorf("failed to get common CDI spec edits: %w", err)
 	}
 
-	// Make sure that NVIDIA_VISIBLE_DEVICES is set to void to avoid the
-	// nvidia-container-runtime honoring it in addition to the underlying
-	// runtime honoring CDI.
-	commonEdits.Env = append(
-		commonEdits.Env,
-		"NVIDIA_VISIBLE_DEVICES=void")
-
 	var deviceSpecs []cdispec.Device
 
 	for _, group := range preparedDevices {

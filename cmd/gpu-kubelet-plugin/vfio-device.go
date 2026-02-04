@@ -274,6 +274,10 @@ func GetVfioCommonCDIContainerEdits() *cdiapi.ContainerEdits {
 					Path: filepath.Join(vfioDevicesRoot, "vfio"),
 				},
 			},
+			// Make sure that NVIDIA_VISIBLE_DEVICES is set to void to avoid the
+			// nvidia-container-runtime honoring it in addition to the underlying
+			// runtime honoring CDI.
+			Env: []string{"NVIDIA_VISIBLE_DEVICES=void"},
 		},
 	}
 }
