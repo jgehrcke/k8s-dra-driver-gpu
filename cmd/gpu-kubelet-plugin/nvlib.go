@@ -410,6 +410,11 @@ func (l deviceLib) obliterateStaleMIGDevices(expectedDeviceNames []DeviceName) e
 			}
 		}
 
+		// If no MIG device was found on this GPU, MIG mode might still be
+		// enabled. Disable it in this case.
+		if err := l.maybeDisableMigMode(ginfo.UUID, d); err != nil {
+			return fmt.Errorf("maybeDisableMigMode failed for GPU %s: %w", ginfo.UUID, err)
+		}
 		return nil
 	})
 
