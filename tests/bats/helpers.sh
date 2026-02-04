@@ -168,15 +168,15 @@ show_kubelet_plugin_log_tails() {
 
 
 show_gpu_plugin_log_tails() {
-  echo -e "\nKUBELET GPU PLUGIN LOG TAILS(50) START"
+  echo -e "\nKUBELET GPU PLUGIN LOGS TAILS(400) START"
   (
     kubectl logs \
     -l nvidia-dra-driver-gpu-component=kubelet-plugin \
     -n nvidia-dra-driver-gpu \
     --container gpus \
-    --prefix --tail=50
+    --prefix --tail=400
   ) || true
-  echo -e "KUBELET GPU PLUGIN LOG TAILS(50) END\n\n"
+  echo -e "KUBELET GPU PLUGIN LOG TAILS(400) END\n\n"
 }
 
 

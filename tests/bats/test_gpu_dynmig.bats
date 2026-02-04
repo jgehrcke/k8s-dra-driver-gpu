@@ -26,7 +26,7 @@ bats::on_failure() {
   echo -e "\n\nFAILURE HOOK START"
   log_objects
   show_kubelet_plugin_error_logs
-  show_kubelet_plugin_log_tails
+  show_gpu_plugin_log_tails
   kubectl describe pods | grep -A20 "Events:"
   echo -e "FAILURE HOOK END\n\n"
 }
