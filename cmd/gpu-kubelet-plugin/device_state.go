@@ -104,7 +104,6 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 		WithTargetDriverRoot(hostDriverRoot),
 		WithNVIDIACDIHookPath(config.flags.nvidiaCDIHookPath),
 		WithCDIRoot(config.flags.cdiRoot),
-		WithVendor(cdiVendor),
 		WithLogger(cdilogger),
 	)
 	if err != nil {

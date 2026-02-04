@@ -59,9 +59,7 @@ type CDIHandler struct {
 
 	specCache *utilcache.Expiring
 
-	cdiRoot    string
-	vendor     string
-	claimClass string
+	cdiRoot string
 }
 
 func NewCDIHandler(opts ...cdiOption) (*CDIHandler, error) {
@@ -83,12 +81,6 @@ func NewCDIHandler(opts ...cdiOption) (*CDIHandler, error) {
 	if h.nvdevice == nil {
 		h.nvdevice = nvdevice.New(h.nvml)
 	}
-	if h.vendor == "" {
-		h.vendor = cdiVendor
-	}
-	if h.claimClass == "" {
-		h.claimClass = cdiClaimClass
-	}
 
 	if h.nvcdiClaim == nil {
 		nvcdilib, err := nvcdi.New(
@@ -98,8 +90,8 @@ func NewCDIHandler(opts ...cdiOption) (*CDIHandler, error) {
 			nvcdi.WithLogger(h.logger),
 			nvcdi.WithNvmlLib(h.nvml),
 			nvcdi.WithMode("nvml"),
-			nvcdi.WithVendor(h.vendor),
-			nvcdi.WithClass(h.claimClass),
+			nvcdi.WithVendor(cdiVendor),
+			nvcdi.WithClass(cdiClaimClass),
 			nvcdi.WithNVIDIACDIHookPath(h.nvidiaCDIHookPath),
 			nvcdi.WithFeatureFlags(nvcdi.FeatureDisableNvsandboxUtils),
 		)

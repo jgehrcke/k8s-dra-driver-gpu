@@ -74,13 +74,6 @@ func WithDeviceLib(nvdevice nvdevice.Interface) cdiOption {
 	}
 }
 
-// WithVendor provides an cdiOption to set the vendor used by the 'cdi' interface.
-func WithVendor(vendor string) cdiOption {
-	return func(c *CDIHandler) {
-		c.vendor = vendor
-	}
-}
-
 // WithVendor provides an cdiOption to set the logger used by the 'cdi' interface.
 func WithLogger(logger *logrus.Logger) cdiOption {
 	return func(c *CDIHandler) {
