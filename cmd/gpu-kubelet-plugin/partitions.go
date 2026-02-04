@@ -223,12 +223,6 @@ func (i MigSpec) PartAttributes() map[resourceapi.QualifiedName]resourceapi.Devi
 		"cudaComputeCapability": {
 			VersionValue: ptr.To(semver.MustParse(i.Parent.cudaComputeCapability).String()),
 		},
-		"driverVersion": {
-			VersionValue: ptr.To(semver.MustParse(i.Parent.driverVersion).String()),
-		},
-		"cudaDriverVersion": {
-			VersionValue: ptr.To(semver.MustParse(i.Parent.cudaDriverVersion).String()),
-		},
 		"pcieBusID": {
 			StringValue: &i.Parent.pcieBusID,
 		},
