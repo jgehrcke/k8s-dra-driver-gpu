@@ -19,6 +19,8 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -50,7 +52,6 @@ type CDIHandler struct {
 	nvml              nvml.Interface
 	nvdevice          nvdevice.Interface
 	nvcdiClaim        nvcdi.Interface
-	cache             *cdiapi.Cache
 	driverRoot        string
 	devRoot           string
 	targetDriverRoot  string
@@ -107,15 +108,6 @@ func NewCDIHandler(opts ...cdiOption) (*CDIHandler, error) {
 		}
 		h.nvcdiClaim = nvcdilib
 	}
-	if h.cache == nil {
-		cache, err := cdiapi.NewCache(
-			cdiapi.WithSpecDirs(h.cdiRoot),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("unable to create a new CDI cache: %w", err)
-		}
-		h.cache = cache
-	}
 
 	// The expiration time is defined upon key insert, not cache-globally.
 	h.specCache = utilcache.NewExpiring()
@@ -134,14 +126,8 @@ func (cdi *CDIHandler) writeSpec(spec spec.Interface, specName string) error {
 		return fmt.Errorf("failed to transform driver root in CDI spec: %w", err)
 	}
 
-	// Update the spec to include only the minimum version necessary.
-	minVersion, err := cdispec.MinimumRequiredVersion(spec.Raw())
-	if err != nil {
-		return fmt.Errorf("failed to get minimum required CDI spec version: %w", err)
-	}
-	spec.Raw().Version = minVersion
 	klog.V(7).Infof("Write CDI spec: %s", specName)
-	return cdi.cache.WriteSpec(spec.Raw(), specName)
+	return spec.Save(filepath.Join(cdi.cdiRoot, specName+".yaml"))
 }
 
 func (cdi *CDIHandler) GetCommonEditsCached() (*cdiapi.ContainerEdits, error) {
@@ -328,7 +314,11 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 func (cdi *CDIHandler) DeleteClaimSpecFile(claimUID string) error {
 	specName := cdiapi.GenerateTransientSpecName(cdiVendor, cdiClaimClass, claimUID)
 	klog.V(6).Infof("Delete CDI spec file: '%s', claim '%s'", specName, claimUID)
-	return cdi.cache.RemoveSpec(specName)
+	err := os.Remove(filepath.Join(cdi.cdiRoot, specName+".yaml"))
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 // Philosophy: all devices to be injected into a container are defined in a
