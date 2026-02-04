@@ -30,7 +30,7 @@ bats::on_failure() {
 
 
 # bats test_tags=fastfeedback
-@test "1 pod(s), 1 full GPU" {
+@test "GPUs: 1 pod(s), 1 full GPU" {
   local _specpath="tests/bats/specs/gpu-simple-full.yaml"
   local _podname="pod-full-gpu"
 
@@ -49,7 +49,7 @@ bats::on_failure() {
 
 
 # bats test_tags=fastfeedback
-@test "2 pod(s), 1 full GPU each" {
+@test "GPUs: 2 pod(s), 1 full GPU each" {
   local _specpath="tests/bats/specs/gpu-2pods-2gpus.yaml"
 
   kubectl apply -f "${_specpath}"
@@ -75,7 +75,7 @@ bats::on_failure() {
 
 
 # bats test_tags=fastfeedback
-@test "2 pod(s), 1 full GPU (shared, 1 RC)" {
+@test "GPUs: 2 pod(s), 1 full GPU (shared, 1 RC)" {
   local _specpath="tests/bats/specs/gpu-2pods-1gpu.yaml"
 
   kubectl apply -f "${_specpath}"
@@ -101,7 +101,7 @@ bats::on_failure() {
 
 
 # bats test_tags=fastfeedback
-@test "1 pod(s), 2 cntrs, 1 full GPU (shared, 1 RCT)" {
+@test "GPUs: 1 pod(s), 2 cntrs, 1 full GPU (shared, 1 RCT)" {
   local _specpath="tests/bats/specs/gpu-1pod-2cnt-1gpu.yaml"
 
   kubectl apply -f "${_specpath}"

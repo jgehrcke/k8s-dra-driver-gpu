@@ -15,7 +15,7 @@ setup() {
 }
 
 
-@test "downgrade: current-dev -> last-stable" {
+@test "CDs: downgrade: current-dev -> last-stable" {
   # Stage 1: apply workload, but do not delete.
   kubectl apply -f demo/specs/imex/channel-injection.yaml
   kubectl wait --for=condition=READY pods imex-channel-injection --timeout=60s
@@ -35,7 +35,7 @@ setup() {
 
 
 # bats test_tags=fastfeedback
-@test "upgrade: wipe-state, install-last-stable, upgrade-to-current-dev" {
+@test "CDs: upgrade: wipe-state, install-last-stable, upgrade-to-current-dev" {
   # Stage 1: clean slate
   helm uninstall "${TEST_HELM_RELEASE_NAME}" -n nvidia-dra-driver-gpu --wait --timeout=30s
   kubectl wait --for=delete pods -A -l app.kubernetes.io/name=nvidia-dra-driver-gpu --timeout=10s

@@ -16,7 +16,7 @@ bats::on_failure() {
 
 # A test that covers local dev tooling; we don't want to
 # unintentionally change/break these targets.
-@test "test VERSION_W_COMMIT, VERSION_GHCR_CHART, VERSION" {
+@test "basics: test VERSION_W_COMMIT, VERSION_GHCR_CHART, VERSION" {
   run make print-VERSION
   assert_output --regexp '^v[0-9]+\.[0-9]+\.[0-9]+-dev$'
   run make print-VERSION_W_COMMIT
@@ -26,24 +26,24 @@ bats::on_failure() {
 }
 
 
-@test "confirm no kubelet plugin pods running" {
+@test "basics: confirm no kubelet plugin pods running" {
   run kubectl get pods -A -l nvidia-dra-driver-gpu-component=kubelet-plugin
   [ "$status" -eq 0 ]
   refute_output --partial 'Running'
 }
 
 # Make it explicit when major dependency is missing
-@test "GPU Operator installed" {
+@test "basics: GPU Operator installed" {
   run helm list -A
   assert_output --partial 'gpu-operator'
 }
 
-@test "helm-install ${TEST_CHART_REPO}/${TEST_CHART_VERSION}" {
+@test "basics: helm-install ${TEST_CHART_REPO}/${TEST_CHART_VERSION}" {
   iupgrade_wait "${TEST_CHART_REPO}" "${TEST_CHART_VERSION}" NOARGS
 }
 
 
-@test "helm list: validate output" {
+@test "basics: helm list: validate output" {
   # Sanity check: one chart installed.
   helm list -n nvidia-dra-driver-gpu -o json | jq 'length == 1'
 
@@ -55,12 +55,12 @@ bats::on_failure() {
 }
 
 
-@test "get crd computedomains.resource.nvidia.com" {
+@test "basics: get crd computedomains.resource.nvidia.com" {
   kubectl get crd computedomains.resource.nvidia.com
 }
 
 
-@test "wait for plugin & controller pods READY" {
+@test "basics: wait for plugin & controller pods READY" {
   kubectl wait --for=condition=READY pods -A \
     -l nvidia-dra-driver-gpu-component=kubelet-plugin --timeout=10s
   kubectl wait --for=condition=READY pods -A \
@@ -68,7 +68,7 @@ bats::on_failure() {
 }
 
 
-@test "validate CD controller container image spec" {
+@test "basics: validate CD controller container image spec" {
   local ACTUAL_IMAGE_SPEC
   ACTUAL_IMAGE_SPEC=$(kubectl get pod \
     -n nvidia-dra-driver-gpu \
@@ -85,7 +85,7 @@ bats::on_failure() {
 }
 
 
-@test "SIGUSR2 handler: GPU plugin, CD plugin" {
+@test "basics: SIGUSR2 handler: GPU plugin, CD plugin" {
   local PNAME="$(get_one_kubelet_plugin_pod_name)"
   # Assume that GPU plugin has PID 1.
   kubectl exec -n nvidia-dra-driver-gpu "${PNAME}" -c gpus -- kill -s SIGUSR2 1

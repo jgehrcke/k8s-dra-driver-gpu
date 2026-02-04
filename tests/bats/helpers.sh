@@ -245,7 +245,7 @@ mig_create_1g0_on_node() {
 # state when entering a test, and 2) a convenient cleanup routine during test
 # development, and 3) a regular cleanup when leaving a test.
 mig_ensure_teardown_on_all_nodes() {
-  nvmm all sh -c 'nvidia-smi mig -dci; nvidia-smi mig -dgi; nvidia-smi -i 0 -mig 0'
+  nvmm all sh -c 'nvidia-smi mig -dci; nvidia-smi mig -dgi; nvidia-smi -mig 0'
   mig_confirm_disabled_on_all_nodes
 }
 

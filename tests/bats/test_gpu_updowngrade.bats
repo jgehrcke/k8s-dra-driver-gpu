@@ -26,7 +26,7 @@ bats::on_failure() {
 
 
 # bats test_tags=fastfeedback
-@test "upgrade: wipe-state, install-last-stable, upgrade-to-current-dev" {
+@test "GPUs: upgrade: wipe-state, install-last-stable, upgrade-to-current-dev" {
   # Stage 1: clean slate
   helm uninstall "${TEST_HELM_RELEASE_NAME}" -n nvidia-dra-driver-gpu --wait --timeout=30s
   kubectl wait --for=delete pods -A -l app.kubernetes.io/name=nvidia-dra-driver-gpu --timeout=10s

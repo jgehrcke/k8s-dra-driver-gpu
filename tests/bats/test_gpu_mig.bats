@@ -40,7 +40,7 @@ bats::on_failure() {
 
 # bats test_tags=XXbats:focus
 # bats test_tags=fastfeedback
-@test "static MIG: allocate (1 cnt)" {
+@test "StaticMIG: allocate (1 cnt)" {
   # Pick a node to work on for the remainder of the test.
   local node=$(kubectl get nodes | grep worker | head -n1 | awk '{print $1}')
   log "selected node: $node"
@@ -68,7 +68,7 @@ bats::on_failure() {
 
 
 # bats test_tags=fastfeedback
-@test "static MIG: mutual exclusivity with physical GPU" {
+@test "StaticMIG: mutual exclusivity with physical GPU" {
   # Pick a node to work on for the remainder of the test.
   local node=$(kubectl get nodes | grep worker | head -n1 | awk '{print $1}')
   echo "selected node: $node"

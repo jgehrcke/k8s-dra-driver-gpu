@@ -43,7 +43,7 @@ confirm_mig_mode_disabled_all_nodes() {
 
 
 # bats test_tags=fastfeedback
-@test "1 pod, 1 MIG" {
+@test "DynMIG: 1 pod, 1 MIG" {
   confirm_mig_mode_disabled_all_nodes
   kubectl apply -f tests/bats/specs/gpu-simple-mig.yaml
   kubectl wait --for=condition=READY pods pod-mig1g --timeout=10s
@@ -66,7 +66,7 @@ confirm_mig_mode_disabled_all_nodes() {
 
 
 # bats test_tags=fastfeedback
-@test "1 pod, 2 containers (1 MIG each)" {
+@test "DynMIG: 1 pod, 2 containers (1 MIG each)" {
   confirm_mig_mode_disabled_all_nodes
 
   local _specpath="tests/bats/specs/gpu-multiple-mig.yaml"
@@ -96,7 +96,7 @@ confirm_mig_mode_disabled_all_nodes() {
 
 
 # bats test_tags=fastfeedback
-@test "1 pod, 1 MIG + TimeSlicing config" {
+@test "DynMIG: 1 pod, 1 MIG + TimeSlicing config" {
   local _iargs=("--set" "logVerbosity=6" "--set" "featureGates.DynamicMIG=true" "--set" "featureGates.TimeSlicingSettings=true")
   iupgrade_wait "${TEST_CHART_REPO}" "${TEST_CHART_VERSION}" _iargs
 
