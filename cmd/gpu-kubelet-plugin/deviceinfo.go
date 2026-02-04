@@ -106,15 +106,15 @@ type VfioDeviceInfo struct {
 	addressableMemoryBytes uint64
 }
 
-// CanonicalName() is used for device announcement (in ResourceSlice objects).
-// There is quite a bit of history to using the minor number for device
-// announcement. Some context can be found at
+// CanonicalName returns the nameused for device announcement (in ResourceSlice
+// objects). There is quite a bit of history to using the minor number for
+// device announcement. Some context can be found at
 // https://github.com/NVIDIA/k8s-dra-driver-gpu/issues/563#issuecomment-3345631087.
 func (d *GpuInfo) CanonicalName() DeviceName {
 	return fmt.Sprintf("gpu-%d", d.minor)
 }
 
-// String() contains both the GPU minor for easy recognizability, but also the
+// String returns both the GPU minor for easy recognizability, but also the
 // UUID for precision. It is intended for usage in log messages.
 func (d *GpuInfo) String() string {
 	return fmt.Sprintf("%s-%s", d.CanonicalName(), d.UUID)

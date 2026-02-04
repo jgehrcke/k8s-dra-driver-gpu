@@ -20,6 +20,8 @@ import (
 	"slices"
 
 	resourceapi "k8s.io/api/resource/v1"
+
+	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
 )
 
 // The device name is the canonical device name announced by us a DRA
@@ -88,6 +90,8 @@ func (d *AllocatableDevice) GetDevice() resourceapi.Device {
 		return d.Gpu.GetDevice()
 	case MigStaticDeviceType:
 		return d.MigStatic.GetDevice()
+	case MigDynamicDeviceType:
+		panic("GetDevice() must currently not be called for MigDynamicDeviceType")
 	case VfioDeviceType:
 		return d.Vfio.GetDevice()
 	}
@@ -192,6 +196,9 @@ func (d AllocatableDevices) GpuUUIDs() []string {
 // Required for implementing UUIDProvider. Meant to return MIG device UUIDs.
 // Must not be called when the DynamicMIG featuregate is enabled.
 func (d AllocatableDevices) MigDeviceUUIDs() []string {
+	if featuregates.Enabled(featuregates.DynamicMIG) {
+		panic("MigDeviceUUIDs() unexpectedly called (DynamicMIG is enabled)")
+	}
 	var uuids []string
 	for _, dev := range d {
 		if dev.Type() == MigStaticDeviceType {
@@ -225,9 +232,9 @@ func (d AllocatableDevices) UUIDs() []string {
 	return uuids
 }
 
-// This needs a code comment, clarifying the complexity and across device types.
-// This function is tied to PassthroughSuppert and hence for now guaranteed to
-// not be exercised when DynamicMIG is enabled.
+// TODO: This needs a code comment, clarifying the complexity across device
+// types. This function is tied to PassthroughSuppert and hence for now
+// guaranteed to not be exercised when DynamicMIG is enabled.
 func (d AllocatableDevices) RemoveSiblingDevices(device *AllocatableDevice) {
 	var pciBusID string
 	switch device.Type() {
@@ -236,10 +243,12 @@ func (d AllocatableDevices) RemoveSiblingDevices(device *AllocatableDevice) {
 	case VfioDeviceType:
 		pciBusID = device.Vfio.pcieBusID
 	case MigStaticDeviceType:
-		// TODO: Implement once dynamic MIG is supported.
+		// TODO: Implement once/if static MIG is supported in the context of
+		// PassthroughSupport.
 		return
 	case MigDynamicDeviceType:
-		// TODO
+		// TODO: Implement once/if dynamic MIG is supported in the context of
+		// PassthroughSupport.
 		return
 	}
 

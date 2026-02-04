@@ -306,8 +306,6 @@ func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (PerGPUMinorAlloc
 		return nil, fmt.Errorf("error visiting devices: %w", err)
 	}
 
-	// Should we try to return an object here that retains a stable sort oder
-	// over devices, by name? (a normal map does not cut it).
 	return perGPUAllocatable, nil
 }
 

@@ -234,8 +234,11 @@ func (m *nvmlDeviceHealthMonitor) markAllMigDevicesUnhealthy(giMap map[uint32]ma
 	}
 }
 
-// What is the significance of this function? Which guarantees do we need to
-// maintain, as we evolve the code base?
+// The purpose of this function is to allow for a O(1) lookup of
+// AllocatableDevice by ([parent]UUID, GI, CI) when processing health events. It
+// currently assumes that this is constant for the lifetime of the healthchecker
+// which does not hold for Dynamic MIG. This will have to be resolved once we
+// support device health checking with dynamic MIG.
 func getDevicePlacementMap(allocatable AllocatableDevices) devicePlacementMap {
 	placementMap := make(devicePlacementMap)
 
