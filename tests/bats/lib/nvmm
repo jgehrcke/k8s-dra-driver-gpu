@@ -38,7 +38,16 @@ fi
 
 set -o nounset
 
-WORKDIR_PATH="${TMPDIR:-/tmp}/migutils-${USER:-defaultuser}"
+# Support the scenario where the same user runs nvmm processes with a
+# _different_ $KUBECONFIG environment variable value: these processes must use
+# different caches. Calculate MD5 hash of the $KUBECONFIG value (a path,
+# typically) and use that in the cache/workdir path construction below. If
+# $KUBECONFIG happens to be a full config that also works. If the path stays the
+# same but the config changes then we don't pick that up immediately but that's
+# fine.
+KUBECONFIG_HASH=$(echo -n "$KUBECONFIG" | md5sum | awk '{print $1}')
+
+WORKDIR_PATH="${TMPDIR:-/tmp}/migutils-${USER:-defaultuser}-${KUBECONFIG_HASH}"
 mkdir -p "${WORKDIR_PATH}"
 cd "${WORKDIR_PATH}"
 
@@ -52,7 +61,8 @@ maybe_refresh_node_cache() {
 	local cachefn
 	cachefn="${NODES_FILE_NAME}"
 	if [ ! -f "$cachefn" ] || ! find "$cachefn" -type f -newermt '-120 seconds' -printf . -quit | grep -q .; then
-		# echo "refreshing nodes" >&2 Exclude nodes explicitly marked with
+		# echo "refreshing nodes" >&2
+		# Exclude nodes explicitly marked with
 		# SchedulingDisabled (cordoned,drained,tainted,...).
 		kubectl get nodes -o json | jq -r '.items[] | select(.spec.unschedulable!=true) | .metadata.name' > "$NODES_FILE_NAME"
 		kubectl get nodes -o wide | grep -v SchedulingDisabled > "$NODES_WIDE_FILE_NAME"
