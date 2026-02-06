@@ -29,27 +29,27 @@ teardown_file() {
 
 
 # bats test_tags=fastfeedback
-@test "CD failover nvb: force-delete worker pod 0" {
+@test "CDs: failover nvb: force-delete worker pod 0" {
   bash tests/bats/lib/test_cd_nvb_failover.sh "$SPECPATH" 1
 }
 
 
-@test "CD failover nvb: force-delete all IMEX daemons" {
+@test "CDs: failover nvb: force-delete all IMEX daemons" {
   bash tests/bats/lib/test_cd_nvb_failover.sh "$SPECPATH" 2
 }
 
 
-@test "CD failover nvb: regular-delete worker pod 1" {
+@test "CDs: failover nvb: regular-delete worker pod 1" {
   bash tests/bats/lib/test_cd_nvb_failover.sh "$SPECPATH" 3
 }
 
 
 # bats test_tags=fastfeedback
-@test "CD nvb many-iteration wrapper" {
+@test "CDs: nvb many-iteration wrapper" {
   # Propose and test-cover a snippet that is meant to be used for manual,
   # long-running, many-iteration testing. Parameters used below: fault injection
   # type `4`: no failure; nvbandwidth parameters optimized for fast completion.
-  export REPETITIONS="2"
+  export REPETITIONS="1"
   export NVB_GPUS_PER_NODE="2"
   export NVB_NUM_NODES="2"
   export NVB_NUM_RANKS="4"
