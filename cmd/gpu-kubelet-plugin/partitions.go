@@ -35,33 +35,34 @@ type PartCapacityMap map[resourceapi.QualifiedName]resourceapi.DeviceCapacity
 func (d *GpuInfo) PartDevAttributes() map[resourceapi.QualifiedName]resourceapi.DeviceAttribute {
 	pciBusIDAttrName := resourceapi.QualifiedName(deviceattribute.StandardDeviceAttributePrefix + "pciBusID")
 	return map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-		"type": {
+		qualifyAttr("type"): {
 			StringValue: ptr.To(GpuDeviceType),
 		},
-		"uuid": {
+		qualifyAttr("uuid"): {
 			StringValue: &d.UUID,
 		},
-		"productName": {
+		qualifyAttr("productName"): {
 			StringValue: &d.productName,
 		},
-		"brand": {
+		qualifyAttr("brand"): {
 			StringValue: &d.brand,
 		},
-		"architecture": {
+		qualifyAttr("architecture"): {
 			StringValue: &d.architecture,
 		},
-		"cudaComputeCapability": {
+		qualifyAttr("cudaComputeCapability"): {
 			VersionValue: ptr.To(semver.MustParse(d.cudaComputeCapability).String()),
 		},
-		"driverVersion": {
+		qualifyAttr("driverVersion"): {
 			VersionValue: ptr.To(semver.MustParse(d.driverVersion).String()),
 		},
-		"cudaDriverVersion": {
+		qualifyAttr("cudaDriverVersion"): {
 			VersionValue: ptr.To(semver.MustParse(d.cudaDriverVersion).String()),
 		},
-		"pcieBusID": {
-			StringValue: &d.pcieBusID,
-		},
+		// this was a merge conflict oversight.
+		// qualifyAttr("pcieBusID"): {
+		// 	StringValue: &d.pcieBusID,
+		// },
 		pciBusIDAttrName: {
 			StringValue: &d.pcieBusID,
 		},
@@ -199,31 +200,31 @@ func (i MigSpec) PartAttributes() map[resourceapi.QualifiedName]resourceapi.Devi
 		// - do not hard-code "mig"?
 		// - expose parent index?
 		// - really expose parent minor?
-		"type": {
+		qualifyAttr("type"): {
 			StringValue: ptr.To("mig"),
 		},
-		"parentUUID": {
+		qualifyAttr("parentUUID"): {
 			StringValue: &i.Parent.UUID,
 		},
-		"parentMinor": {
+		qualifyAttr("parentMinor"): {
 			IntValue: ptr.To(int64(i.Parent.minor)),
 		},
-		"profile": {
+		qualifyAttr("profile"): {
 			StringValue: ptr.To(i.Profile.String()),
 		},
-		"productName": {
+		qualifyAttr("productName"): {
 			StringValue: &i.Parent.productName,
 		},
-		"brand": {
+		qualifyAttr("brand"): {
 			StringValue: &i.Parent.brand,
 		},
-		"architecture": {
+		qualifyAttr("architecture"): {
 			StringValue: &i.Parent.architecture,
 		},
-		"cudaComputeCapability": {
+		qualifyAttr("cudaComputeCapability"): {
 			VersionValue: ptr.To(semver.MustParse(i.Parent.cudaComputeCapability).String()),
 		},
-		"pcieBusID": {
+		qualifyAttr("pcieBusID"): {
 			StringValue: &i.Parent.pcieBusID,
 		},
 	}
@@ -303,4 +304,13 @@ func memsliceCounterName(i int) string {
 // Helper for creating an integer-based DeviceCapacity. Accept any integer type.
 func intcap[T constraints.Integer](i T) resourceapi.DeviceCapacity {
 	return resourceapi.DeviceCapacity{Value: *resource.NewQuantity(int64(i), resource.BinarySI)}
+}
+
+// qualifyAttr returns a qualified attribute name with the `gpu.nvidia.com/`
+// prefix. Device attributes should always be exposed fully qualified. Note that
+// in the special case of the type attribute, it must certainly be exposed as
+// `gpu.nvidia.com/type` to match the Extendend Resource CEL selector as
+// expressed in the gpu.nvidia.com DeviceClass.
+func qualifyAttr(name string) resourceapi.QualifiedName {
+	return resourceapi.QualifiedName(DriverName + "/" + name)
 }

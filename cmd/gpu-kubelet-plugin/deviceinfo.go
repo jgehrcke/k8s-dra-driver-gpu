@@ -171,7 +171,7 @@ func (d *GpuInfo) GetDevice() resourceapi.Device {
 		device.Attributes[d.pcieRootAttr.Name] = d.pcieRootAttr.Value
 	}
 	if d.addressingMode != nil {
-		device.Attributes["addressingMode"] = resourceapi.DeviceAttribute{
+		device.Attributes[qualifyAttr("addressingMode")] = resourceapi.DeviceAttribute{
 			StringValue: d.addressingMode,
 		}
 	}
@@ -184,7 +184,7 @@ func (d *MigDeviceInfo) GetDevice() resourceapi.Device {
 	device := resourceapi.Device{
 		Name: d.CanonicalName(),
 		Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-			"type": {
+			qualifyAttr("type"): {
 				// Note: for API stability, it's critical we use the string
 				// "mig" here. In order to not confuse this with implementation
 				// details, I've now hard-coded it here. Replace again with a
@@ -193,31 +193,31 @@ func (d *MigDeviceInfo) GetDevice() resourceapi.Device {
 				// introduction of the dyn MIG feature.
 				StringValue: ptr.To("mig"),
 			},
-			"uuid": {
+			qualifyAttr("uuid"): {
 				StringValue: &d.UUID,
 			},
-			"parentUUID": {
+			qualifyAttr("parentUUID"): {
 				StringValue: &d.parent.UUID,
 			},
-			"profile": {
+			qualifyAttr("profile"): {
 				StringValue: &d.Profile,
 			},
-			"productName": {
+			qualifyAttr("productName"): {
 				StringValue: &d.parent.productName,
 			},
-			"brand": {
+			qualifyAttr("brand"): {
 				StringValue: &d.parent.brand,
 			},
-			"architecture": {
+			qualifyAttr("architecture"): {
 				StringValue: &d.parent.architecture,
 			},
-			"cudaComputeCapability": {
+			qualifyAttr("cudaComputeCapability"): {
 				VersionValue: ptr.To(semver.MustParse(d.parent.cudaComputeCapability).String()),
 			},
-			"driverVersion": {
+			qualifyAttr("driverVersion"): {
 				VersionValue: ptr.To(semver.MustParse(d.parent.driverVersion).String()),
 			},
-			"cudaDriverVersion": {
+			qualifyAttr("cudaDriverVersion"): {
 				VersionValue: ptr.To(semver.MustParse(d.parent.cudaDriverVersion).String()),
 			},
 			pciBusIDAttrName: {
@@ -259,7 +259,7 @@ func (d *MigDeviceInfo) GetDevice() resourceapi.Device {
 		device.Attributes[d.pcieRootAttr.Name] = d.pcieRootAttr.Value
 	}
 	if d.parent.addressingMode != nil {
-		device.Attributes["addressingMode"] = resourceapi.DeviceAttribute{
+		device.Attributes[qualifyAttr("addressingMode")] = resourceapi.DeviceAttribute{
 			StringValue: d.parent.addressingMode,
 		}
 	}
@@ -272,25 +272,25 @@ func (d *VfioDeviceInfo) GetDevice() resourceapi.Device {
 	device := resourceapi.Device{
 		Name: d.CanonicalName(),
 		Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-			"type": {
+			qualifyAttr("type"): {
 				StringValue: ptr.To(VfioDeviceType),
 			},
-			"uuid": {
+			qualifyAttr("uuid"): {
 				StringValue: &d.UUID,
 			},
-			"deviceID": {
+			qualifyAttr("deviceID"): {
 				StringValue: &d.deviceID,
 			},
-			"vendorID": {
+			qualifyAttr("vendorID"): {
 				StringValue: &d.vendorID,
 			},
-			"numa": {
+			qualifyAttr("numa"): {
 				IntValue: ptr.To(int64(d.numaNode)),
 			},
 			pciBusIDAttrName: {
 				StringValue: &d.pcieBusID,
 			},
-			"productName": {
+			qualifyAttr("productName"): {
 				StringValue: &d.productName,
 			},
 		},
