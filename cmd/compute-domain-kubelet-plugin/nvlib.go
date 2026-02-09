@@ -288,9 +288,11 @@ func (l deviceLib) getCliqueIDStrict() (string, error) {
 			klog.Infof("no-clique fallback: NVLink fabric not supported by driver (device %d/%s, error: ERROR_NOT_SUPPORTED)", i, duid)
 			return nil
 		}
+
 		if ret != nvml.SUCCESS {
 			return fmt.Errorf("failed to get GPU fabric info (device %d/%s): %v", i, duid, ret)
 		}
+
 		if info.State == nvml.GPU_FABRIC_STATE_NOT_SUPPORTED {
 			klog.Infof("no-clique fallback: NVLink fabric not supported by device (device %d/%s, error: GPU_FABRIC_STATE_NOT_SUPPORTED)", i, duid)
 			return nil
@@ -306,9 +308,11 @@ func (l deviceLib) getCliqueIDStrict() (string, error) {
 			return fmt.Errorf("NVLink fabric registration error (device %d/%s): status=%v, refusing to start", i, duid, nvml.Return(info.Status))
 		}
 
-		// Check for valid cluster UUID
+		// Cluster UUID with zero value: treat as MNNVL not supported. Expected
+		// for systems which are NVLink-capable, but not MNNVL-capable.
 		if info.ClusterUuid == [16]uint8{} {
-			return fmt.Errorf("NVLink fabric not attached (device %d/%s): empty cluster UUID, refusing to start", i, duid)
+			klog.Infof("no-clique fallback: cluster UUID is zero, treat as fabric not attached (device %d/%s)", i, duid)
+			return nil
 		}
 
 		klog.V(6).Infof("NVLink fabric attached (device %d/%s)", i, duid)
