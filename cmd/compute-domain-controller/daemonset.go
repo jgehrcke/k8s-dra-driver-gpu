@@ -44,7 +44,7 @@ const (
 
 type DaemonSetTemplateData struct {
 	Namespace                 string
-	GenerateName              string
+	Name                      string
 	Finalizer                 string
 	ComputeDomainLabelKey     string
 	ComputeDomainLabelValue   types.UID
@@ -205,7 +205,7 @@ func (m *DaemonSetManager) Create(ctx context.Context, cd *nvapi.ComputeDomain) 
 
 	templateData := DaemonSetTemplateData{
 		Namespace:                 m.config.driverNamespace,
-		GenerateName:              fmt.Sprintf("%s-", cd.Name),
+		Name:                      fmt.Sprintf("computedomain-daemon-%s", cd.UID),
 		Finalizer:                 computeDomainFinalizer,
 		ComputeDomainLabelKey:     computeDomainLabelKey,
 		ComputeDomainLabelValue:   cd.UID,

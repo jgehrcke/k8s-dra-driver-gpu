@@ -33,7 +33,6 @@ teardown_file() {
   bash tests/bats/lib/test_cd_nvb_failover.sh "$SPECPATH" 1
 }
 
-
 @test "CDs: failover nvb: force-delete all IMEX daemons" {
   bash tests/bats/lib/test_cd_nvb_failover.sh "$SPECPATH" 2
 }

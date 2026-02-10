@@ -57,6 +57,8 @@ timeout -v 5 kubectl delete -f demo/specs/imex/channel-injection-all.yaml 2> /de
 timeout -v 5 kubectl delete jobs nickelpie-test 2> /dev/null
 timeout -v 5 kubectl delete computedomain nickelpie-test-compute-domain 2> /dev/null
 
+timeout -v 5 kubectl delete mpijobs.kubeflow.org --all
+
 timeout -v 5 kubectl delete -f demo/specs/imex/nvbandwidth-test-job-1.yaml 2> /dev/null
 timeout -v 5 kubectl delete -f demo/specs/imex/nvbandwidth-test-job-2.yaml 2> /dev/null
 timeout -v 5 kubectl delete -f tests/bats/specs/nvb2.yaml 2> /dev/null

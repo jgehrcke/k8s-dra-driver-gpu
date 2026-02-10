@@ -3,7 +3,7 @@ apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   namespace: {{ .Namespace }}
-  generateName: {{ .GenerateName }}
+  name: {{ .Name }}
   finalizers:
     - {{ .Finalizer }}
   labels:
