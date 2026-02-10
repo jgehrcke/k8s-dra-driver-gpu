@@ -52,11 +52,15 @@ bats::on_failure() {
 
   local LOGPATH="${BATS_TEST_TMPDIR}/cd-daemon.log"
   local PNAME
+  local CD_UID
+  CD_UID=$(kubectl describe computedomains.resource.nvidia.com imex-channel-injection | grep UID | awk '{print $2}')
+  log "CD UID: ${CD_UID}"
   PNAME=$( \
     kubectl get pods -n nvidia-dra-driver-gpu | \
-    grep imex-channel-injection | \
+    grep "${CD_UID}" | \
     awk '{print $1}'
   )
+  log "CD daemon pod name: ${PNAME}"
 
   # Expect `nodes` key to be present in CD status.
   run bats_pipe kubectl get computedomain imex-channel-injection -o json \| jq '.status'
