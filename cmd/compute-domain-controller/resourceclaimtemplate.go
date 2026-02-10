@@ -45,7 +45,6 @@ const (
 type ResourceClaimTemplateTemplateData struct {
 	Namespace               string
 	Name                    string
-	GenerateName            string
 	Finalizer               string
 	ComputeDomainLabelKey   string
 	ComputeDomainLabelValue types.UID
@@ -319,7 +318,7 @@ func (m *DaemonSetResourceClaimTemplateManager) Create(ctx context.Context, cd *
 
 	templateData := ResourceClaimTemplateTemplateData{
 		Namespace:               m.config.driverNamespace,
-		GenerateName:            fmt.Sprintf("%s-daemon-claim-template-", cd.Name),
+		Name:                    fmt.Sprintf("computedomain-daemon-%s", cd.UID),
 		Finalizer:               computeDomainFinalizer,
 		ComputeDomainLabelKey:   computeDomainLabelKey,
 		ComputeDomainLabelValue: cd.UID,
