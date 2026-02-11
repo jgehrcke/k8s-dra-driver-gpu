@@ -197,16 +197,11 @@ func (i MigSpec) PartAttributes() map[resourceapi.QualifiedName]resourceapi.Devi
 	return map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 		// TODOMIG:
 		// - do not hard-code "mig"?
-		// - expose parent index?
-		// - really expose parent minor?
 		"type": {
 			StringValue: ptr.To("mig"),
 		},
 		"parentUUID": {
 			StringValue: &i.Parent.UUID,
-		},
-		"parentMinor": {
-			IntValue: ptr.To(int64(i.Parent.minor)),
 		},
 		"profile": {
 			StringValue: ptr.To(i.Profile.String()),
