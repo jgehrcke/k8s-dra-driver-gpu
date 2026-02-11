@@ -233,7 +233,7 @@ func capacitiesToCounters(m PartCapacityMap) map[string]resourceapi.Counter {
 	counters := make(map[string]resourceapi.Counter)
 	for name, cap := range m {
 		// Automatically derive counter name from capacity to ensure consistency.
-		counters[toRFC1123Compliant(string(name))] = resourceapi.Counter{Value: cap.Value}
+		counters[camelToDNSName(string(name))] = resourceapi.Counter{Value: cap.Value}
 	}
 	return counters
 }
