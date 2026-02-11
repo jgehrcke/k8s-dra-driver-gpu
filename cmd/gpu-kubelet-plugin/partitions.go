@@ -33,6 +33,7 @@ type PartCapacityMap map[resourceapi.QualifiedName]resourceapi.DeviceCapacity
 // KEP 4815 device announcement: return device attributes for a partition that
 // represents the full, regular GPU.
 func (d *GpuInfo) PartDevAttributes() map[resourceapi.QualifiedName]resourceapi.DeviceAttribute {
+	// TODO: Consume GetPCIBusIDAttribute from https://github.com/kubernetes/kubernetes/blob/4c5746c0bc529439f78af458f8131b5def4dbe5d/staging/src/k8s.io/dynamic-resource-allocation/deviceattribute/attribute.go#L39
 	pciBusIDAttrName := resourceapi.QualifiedName(deviceattribute.StandardDeviceAttributePrefix + "pciBusID")
 	return map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 		"type": {
@@ -191,19 +192,16 @@ func (i MigSpec) PartCapacities() PartCapacityMap {
 }
 
 func (i MigSpec) PartAttributes() map[resourceapi.QualifiedName]resourceapi.DeviceAttribute {
+	// TODO: Consume GetPCIBusIDAttribute from https://github.com/kubernetes/kubernetes/blob/4c5746c0bc529439f78af458f8131b5def4dbe5d/staging/src/k8s.io/dynamic-resource-allocation/deviceattribute/attribute.go#L39
+	pciBusIDAttrName := resourceapi.QualifiedName(deviceattribute.StandardDeviceAttributePrefix + "pciBusID")
 	return map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 		// TODOMIG:
 		// - do not hard-code "mig"?
-		// - expose parent index?
-		// - really expose parent minor?
 		"type": {
 			StringValue: ptr.To("mig"),
 		},
 		"parentUUID": {
 			StringValue: &i.Parent.UUID,
-		},
-		"parentMinor": {
-			IntValue: ptr.To(int64(i.Parent.minor)),
 		},
 		"profile": {
 			StringValue: ptr.To(i.Profile.String()),
@@ -220,7 +218,13 @@ func (i MigSpec) PartAttributes() map[resourceapi.QualifiedName]resourceapi.Devi
 		"cudaComputeCapability": {
 			VersionValue: ptr.To(semver.MustParse(i.Parent.cudaComputeCapability).String()),
 		},
-		"pcieBusID": {
+		"driverVersion": {
+			VersionValue: ptr.To(semver.MustParse(i.Parent.driverVersion).String()),
+		},
+		"cudaDriverVersion": {
+			VersionValue: ptr.To(semver.MustParse(i.Parent.cudaDriverVersion).String()),
+		},
+		pciBusIDAttrName: {
 			StringValue: &i.Parent.pcieBusID,
 		},
 	}
@@ -230,7 +234,7 @@ func capacitiesToCounters(m PartCapacityMap) map[string]resourceapi.Counter {
 	counters := make(map[string]resourceapi.Counter)
 	for name, cap := range m {
 		// Automatically derive counter name from capacity to ensure consistency.
-		counters[toRFC1123Compliant(string(name))] = resourceapi.Counter{Value: cap.Value}
+		counters[camelToDNSName(string(name))] = resourceapi.Counter{Value: cap.Value}
 	}
 	return counters
 }

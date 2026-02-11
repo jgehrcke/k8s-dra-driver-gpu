@@ -180,3 +180,16 @@ func toRFC1123Compliant(name string) string {
 
 	return name
 }
+
+func camelToDNSName(s string) string {
+	// Insert hyphen before uppercase letters that follow lowercase/digits
+	// or before the last uppercase in a sequence of uppercase letters
+	re1 := regexp.MustCompile("([a-z0-9])([A-Z])")
+	result := re1.ReplaceAllString(s, "$1-$2")
+
+	// Insert hyphen before an uppercase letter followed by lowercase (handles HTTPServer -> HTTP-Server)
+	re2 := regexp.MustCompile("([A-Z]+)([A-Z][a-z])")
+	result = re2.ReplaceAllString(result, "$1-$2")
+
+	return toRFC1123Compliant(result)
+}
