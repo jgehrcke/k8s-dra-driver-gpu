@@ -59,9 +59,6 @@ func (d *GpuInfo) PartDevAttributes() map[resourceapi.QualifiedName]resourceapi.
 		"cudaDriverVersion": {
 			VersionValue: ptr.To(semver.MustParse(d.cudaDriverVersion).String()),
 		},
-		"pcieBusID": {
-			StringValue: &d.pcieBusID,
-		},
 		pciBusIDAttrName: {
 			StringValue: &d.pcieBusID,
 		},
