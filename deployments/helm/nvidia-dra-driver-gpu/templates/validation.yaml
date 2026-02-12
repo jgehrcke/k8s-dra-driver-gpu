@@ -38,7 +38,7 @@
 {{- $error = printf "%s\n" $error }}
 {{- $error = printf "%s\n    --set 'gpuResourcesEnabledOverride=true'" $error }}
 {{- $error = printf "%s\n" $error }}
-{{- $error = printf "%s\nOnce KEP 5004 has reached GA, this DRA driver will be able to honour extended resource requests for 'nvidia.com/gpu' alongside requests made using ResourceClaims, essentially obsoleting the need for the standard GPU device plugin altogether. If you want to try this feature now, you can enable it in upstream Kubernetes v1.35+ by setting the 'DRAExtendedResource' feature gate on the 'kube-apiserver', 'kube-scheduler', and 'kubelet'." $error }}
+{{- $error = printf "%s\nOnce KEP 5004 has reached GA, this DRA driver will be able to honour extended resource requests for 'nvidia.com/gpu' alongside requests made using ResourceClaims, essentially obsoleting the need for the standard GPU device plugin altogether. If you want to try this feature now, you can enable it in upstream Kubernetes v1.35+ by setting the 'DRAExtendedResource' feature gate on the 'kube-apiserver', 'kube-scheduler', 'kube-controller-manager', and 'kubelet'." $error }}
 {{- fail $error }}
 {{- end }}
 
