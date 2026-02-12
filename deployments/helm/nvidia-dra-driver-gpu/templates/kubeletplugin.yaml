@@ -112,8 +112,8 @@ spec:
           grpc:
             port: {{ .Values.kubeletPlugin.containers.computeDomains.healthcheckPort }}
             service: liveness
-          failureThreshold: 60
-          periodSeconds: 10
+          failureThreshold: 600
+          periodSeconds: 1
           timeoutSeconds: 10
         livenessProbe:
           grpc:
@@ -213,8 +213,8 @@ spec:
           grpc:
             port: {{ .Values.kubeletPlugin.containers.gpus.healthcheckPort }}
             service: liveness
-          failureThreshold: 60
-          periodSeconds: 10
+          failureThreshold: 600
+          periodSeconds: 1
           timeoutSeconds: 10
         livenessProbe:
           grpc:
